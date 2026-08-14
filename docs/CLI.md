@@ -386,7 +386,11 @@ reports every other USB and network printer it found, exiting successfully.
 Only a failure to enumerate USB devices at all is fatal, exactly like
 `list`. On Linux, when at least one of those warnings is a permission error,
 stderr prints one additional line after the warnings: `Fix USB permissions
-with: sudo escpost printers setup-usb` (see `printers setup-usb` below).
+with: sudo escpost printers setup-usb` (see `printers setup-usb` below). The
+same line follows any other command's fatal USB permission error too — for
+example `print` sending to a USB printer, or `printers add`'s interactive or
+non-interactive USB selection — since those open the device directly instead
+of tolerating the failure the way `discover` does.
 
 ```bash
 escpost printers discover
@@ -483,10 +487,14 @@ wizard it launches prompts for the transport itself.
 
 USB printer device nodes under `/dev/bus/usb/` are root-owned by default on
 most Linux distributions, so `printers discover` degrades to a permission
-warning and `printers list`/`add`/`print` fail outright until something
-grants access. `setup-usb` writes the udev rule that fixes this and exists
-only on Linux: the subcommand is absent from `--help` and unrecognized if
-typed on macOS or Windows, where no equivalent step is needed.
+warning and any command that opens the device directly — `print`, and
+`printers add`'s USB selection — fails outright until something grants
+access. (`printers list` is unaffected: it checks USB presence from
+operating-system metadata alone and never opens the device, so it cannot hit
+this error; see `printers list` above.) `setup-usb` writes the udev rule
+that fixes this and exists only on Linux: the subcommand is absent from
+`--help` and unrecognized if typed on macOS or Windows, where no equivalent
+step is needed.
 
 ```bash
 escpost printers setup-usb

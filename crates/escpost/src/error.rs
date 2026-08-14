@@ -351,3 +351,67 @@ pub(crate) enum CliError {
         stderr: String,
     },
 }
+
+impl CliError {
+    /// Whether this error is a USB **open**-family failure caused by an
+    /// operating system permission denial (Linux's EACCES/EPERM, errno 13)
+    /// — the exact condition a udev rule installed by `printers setup-usb`
+    /// fixes. Covers the three points where escpost calls into nusb's
+    /// blocking open/claim path and a root-owned device node surfaces as a
+    /// permission error today: opening the device itself (`OpenUsbDevice`,
+    /// reached by `printers add`'s USB selection and `print`'s physical
+    /// send path, plus `printers discover`'s tolerant sweep, which turns it
+    /// into a warning instead of a fatal error) and, only from `print`'s
+    /// send path, claiming the interface (`ClaimUsbInterface`) and opening
+    /// its bulk OUT endpoint (`OpenUsbOutEndpoint`). Notably *not*
+    /// `printers list`: its metadata-only `identities()` path never calls
+    /// `.open()` at all (see `printers::list`'s module docs), so it cannot
+    /// hit this condition structurally, regardless of device permissions.
+    /// Deliberately excludes `WriteUsb`/`FlushUsb`: those already had a
+    /// successful open, so a permission error there would mean something
+    /// changed mid-session, not the missing-udev-rule case this hint
+    /// targets. Shared by two call sites:
+    /// the top-level fatal-error print in `lib.rs` (any command) and
+    /// `NusbInventory::list_tolerant` (`printers discover`'s per-device
+    /// warnings), so there is exactly one place that knows what "permission
+    /// denied" means for a `CliError`.
+    pub(crate) fn is_permission_denied_usb_open(&self) -> bool {
+        match self {
+            CliError::OpenUsbDevice { source, .. }
+            | CliError::ClaimUsbInterface { source, .. }
+            | CliError::OpenUsbOutEndpoint { source, .. } => {
+                source.kind() == nusb::ErrorKind::PermissionDenied
+            }
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_non_usb_open_error_is_never_treated_as_a_permission_denial() {
+        assert!(!CliError::MissingProfile.is_permission_denied_usb_open());
+    }
+
+    #[test]
+    fn a_permission_denied_write_after_a_successful_open_is_not_the_open_family_hint() {
+        // `WriteUsb`'s source is a plain `std::io::Error`, so — unlike
+        // `OpenUsbDevice`/`ClaimUsbInterface`/`OpenUsbOutEndpoint`, whose
+        // `nusb::Error` source has no public constructor and so cannot be
+        // built in a test at all — a `PermissionDenied`-kind fixture is
+        // trivial to construct here. Confirms the predicate is scoped to
+        // the open family on purpose, not merely because nothing else was
+        // tested: a permission error surfacing after the device was already
+        // opened successfully is a different condition than the one
+        // `setup-usb` fixes, and must not trigger the hint.
+        let error = CliError::WriteUsb {
+            endpoint: 0x01,
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),
+        };
+
+        assert!(!error.is_permission_denied_usb_open());
+    }
+}

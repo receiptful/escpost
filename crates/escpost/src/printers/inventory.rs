@@ -41,10 +41,16 @@ pub(super) struct UsbDeviceIdentity {
 /// far, plus a warning line for each device that could not be opened or
 /// whose active configuration could not be inspected. A device-level
 /// failure never aborts the rest of the sweep, the same way the network
-/// sweep silently skips unreachable hosts.
+/// sweep silently skips unreachable hosts. `permission_denied` is set when
+/// at least one of those per-device failures was
+/// `CliError::is_permission_denied_usb_open` — the same predicate the
+/// top-level fatal-error print in `lib.rs` uses — computed once here, where
+/// the structured `CliError` is still available, rather than re-derived
+/// from the formatted `warnings` strings by the caller.
 pub(super) struct UsbEnumeration {
     pub(super) printers: Vec<UsbPrinter>,
     pub(super) warnings: Vec<String>,
+    pub(super) permission_denied: bool,
 }
 #[derive(Debug, PartialEq, Eq)]
 struct UsbPrinterInterface {
@@ -95,6 +101,7 @@ pub(super) trait UsbInventory {
         Ok(UsbEnumeration {
             printers: self.list()?,
             warnings: Vec::new(),
+            permission_denied: false,
         })
     }
 }
@@ -304,15 +311,23 @@ impl UsbInventory for NusbInventory {
             .map_err(CliError::EnumerateUsb)?;
         let mut printers = Vec::new();
         let mut warnings = Vec::new();
+        let mut permission_denied = false;
 
         for device_info in devices.filter(is_printer_device) {
             match usb_printers_for_device(&device_info) {
                 Ok(device_printers) => printers.extend(device_printers),
-                Err(error) => warnings.push(describe_usb_enumeration_failure(&error)),
+                Err(error) => {
+                    permission_denied |= error.is_permission_denied_usb_open();
+                    warnings.push(describe_usb_enumeration_failure(&error));
+                }
             }
         }
 
-        Ok(UsbEnumeration { printers, warnings })
+        Ok(UsbEnumeration {
+            printers,
+            warnings,
+            permission_denied,
+        })
     }
 
     fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {

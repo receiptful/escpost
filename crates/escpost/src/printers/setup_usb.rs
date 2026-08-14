@@ -3,11 +3,13 @@
 //!
 //! USB device nodes under `/dev/bus/usb/` are root-owned by default on
 //! Linux, so `printers discover` degrades to a per-device permission
-//! warning and `printers list`/`add`/`print` fail outright until a udev
-//! rule grants broader access. Without root, this command only prints the
-//! plan (the rule it would write and the commands it would run) so a user
-//! can inspect it before running it with `sudo`; with root, it writes the
-//! rule and reloads udev so it takes effect without a reboot.
+//! warning and any command that opens the device directly — `print` and
+//! `printers add`'s USB selection — fails outright until a udev rule grants
+//! broader access (`printers list` never opens the device, so it is
+//! unaffected). Without root, this command only prints the plan (the rule
+//! it would write and the commands it would run) so a user can inspect it
+//! before running it with `sudo`; with root, it writes the rule and reloads
+//! udev so it takes effect without a reboot.
 
 use std::fs::OpenOptions;
 use std::io::Write;
