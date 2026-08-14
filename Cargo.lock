@@ -426,6 +426,7 @@ dependencies = [
  "indicatif",
  "inquire",
  "nusb",
+ "rustix",
  "serde",
  "serde_json",
  "thiserror",

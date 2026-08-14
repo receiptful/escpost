@@ -168,7 +168,15 @@ pub(crate) enum PrintersCommand {
 
     /// Find connected USB printers and network printers listening on the RAW TCP port.
     Discover(DiscoverPrintersArgs),
+
+    /// Grant the current user access to USB printers (writes a udev rule; run with sudo).
+    #[cfg(target_os = "linux")]
+    SetupUsb(SetupUsbArgs),
 }
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Args)]
+pub(crate) struct SetupUsbArgs {}
 
 #[derive(Debug, Args)]
 pub(crate) struct ListPrintersArgs {

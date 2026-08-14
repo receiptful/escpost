@@ -862,6 +862,87 @@ fn printers_list_does_not_create_missing_configuration() {
     fs::remove_dir_all(directory).expect("the test directory should be removable");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn printers_setup_usb_documents_itself() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["printers", "setup-usb", "--help"])
+        .output()
+        .expect("the escpost command should finish");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "command failed:\n{stdout}");
+    assert!(stdout.contains("Grant the current user access to USB printers"));
+    assert!(stdout.contains("Usage: escpost printers setup-usb"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn printers_setup_usb_without_root_prints_the_plan_and_exits_successfully() {
+    // This test must not run as root: the whole point is exercising the
+    // read-only "print the plan" branch, never the branch that writes to
+    // /etc/udev/rules.d or shells out to udevadm.
+    assert_ne!(
+        current_effective_uid(),
+        0,
+        "this test must not run as root; it only covers the without-root plan"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["printers", "setup-usb"])
+        .output()
+        .expect("the escpost command should finish");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "command failed:\n{stdout}\n{stderr}"
+    );
+    assert!(
+        stdout.contains("/etc/udev/rules.d/70-escpost-usb-printers.rules"),
+        "the plan should name the exact rule path:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\""
+        ),
+        "the plan should include the full rule content:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("udevadm control --reload"),
+        "the plan should show the reload command:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("udevadm trigger --subsystem-match=usb"),
+        "the plan should show the trigger command:\n{stdout}"
+    );
+    assert_eq!(
+        stderr.trim_end(),
+        "Run it with: sudo escpost printers setup-usb",
+        "stderr should point at rerunning the same command with sudo:\n{stderr}"
+    );
+}
+
+/// The test binary's own effective UID, read via `/proc/self/status` rather
+/// than linking `libc`/`rustix` into the integration test crate just to
+/// assert this one precondition; the workspace forbids `unsafe_code`
+/// entirely, so this stays a plain filesystem read.
+#[cfg(target_os = "linux")]
+fn current_effective_uid() -> u32 {
+    let status = fs::read_to_string("/proc/self/status")
+        .expect("/proc/self/status should be readable on Linux");
+    let line = status
+        .lines()
+        .find(|line| line.starts_with("Uid:"))
+        .expect("/proc/self/status should report Uid");
+    line.split_whitespace()
+        .nth(2)
+        .expect("the Uid line should have an effective UID field")
+        .parse()
+        .expect("the effective UID should be numeric")
+}
+
 #[cfg(unix)]
 fn run_non_interactive_add(config: &Path, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_escpost"))

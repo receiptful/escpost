@@ -7,6 +7,8 @@ mod discover;
 mod inventory;
 mod list;
 mod output;
+#[cfg(target_os = "linux")]
+mod setup_usb;
 #[cfg(test)]
 mod test_support;
 
@@ -80,6 +82,8 @@ pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Resul
             );
             run_discover(discover, &configuration).await
         }
+        #[cfg(target_os = "linux")]
+        PrintersCommand::SetupUsb(args) => setup_usb::run(args),
     }
 }
 fn add_printer(

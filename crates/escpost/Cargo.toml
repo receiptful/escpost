@@ -32,5 +32,8 @@ tokio.workspace = true
 toml.workspace = true
 webbrowser.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+
 [lints]
 workspace = true
