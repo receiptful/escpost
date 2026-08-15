@@ -10,7 +10,6 @@ mod net;
 mod output;
 mod profiles;
 pub use features::profiles as profiles_cmd;
-mod serve;
 mod source;
 mod watch;
 mod web;
@@ -50,7 +49,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Print(arguments) => {
             features::printing::cli::run(arguments, cli.non_interactive).await
         }
-        Command::Serve(arguments) => serve::run(arguments, cli.non_interactive).await,
+        Command::Serve(arguments) => {
+            features::capture::cli::run(arguments, cli.non_interactive).await
+        }
         Command::Printers(arguments) => {
             features::printers::cli::run(arguments, cli.non_interactive).await
         }

@@ -47,6 +47,86 @@ The Python package is only the render binding; it contains no CLI. The root
 development wrapper routes every command to the Rust executable. Hardware
 inventory and printing live in `escpost`, not the Rust rendering library.
 
+## Native application architecture
+
+The `escpost` crate is organized by capability. Each capability owns its
+application operation and its thin CLI adapter:
+
+```text
+src/
+├── application/              shared context and application errors
+├── cli.rs                    root Clap tree and command dispatch
+├── features/
+│   ├── printers/
+│   │   ├── add/{mod,cli}.rs
+│   │   ├── discover/{mod,cli}.rs
+│   │   ├── grant_usb_permissions/{mod,cli}.rs
+│   │   ├── list/{mod,cli}.rs
+│   │   ├── cli.rs
+│   │   └── inventory.rs
+│   ├── profiles/{mod,cli}.rs
+│   ├── rendering/{mod,cli}.rs
+│   ├── printing/{mod,cli}.rs
+│   └── capture/{mod,cli}.rs
+├── configuration.rs
+├── discovery.rs
+├── net.rs
+├── source.rs
+├── watch.rs
+└── web.rs
+```
+
+A feature's `mod.rs` defines typed requests, responses, and operations. It has
+no dependency on Clap, terminal I/O, web-store updates, or wire serialization.
+Its `cli.rs` translates command input into the application request and renders
+the structured response for the terminal.
+
+```text
+root CLI dispatch ─> feature::cli ─> feature operation ─> configuration, discovery, rendering, hardware
+```
+
+Capability-local `http.rs` adapters are added with the HTTP API for the
+capabilities it exposes; the tree does not reserve empty HTTP adapter
+placeholders. Those adapters will translate typed HTTP input into the same
+feature operations:
+
+```text
+HTTP router ─> feature::http ─> feature operation
+```
+
+The root `cli.rs` and future `http/` module contain shared transport
+infrastructure, not mirrored copies of every operation. Low-level
+operating-system modules remain at the crate root until a concrete boundary
+warrants moving them. A separate application crate is justified only when a
+second executable or library host needs the service layer.
+
+Application requests contain validated execution values. Clap argument types
+and HTTP request DTOs remain adapter-owned and convert explicitly into those
+requests. Application responses contain facts, not terminal prose or HTTP
+status codes. HTTP operations never prompt; interactive workflows belong to
+the CLI or browser.
+
+The capture operation consumes one exact, completed RAW byte vector, a
+validated printer profile, and render parameters, then returns that same byte
+vector with traced render facts. Its CLI adapter resolves the profile before
+binding listeners and owns listener binding, idle-timeout validation, browser
+policy, connection lifecycle, task spawning, terminal output, and `JobStore`
+updates. It runs the synchronous capture operation through `spawn_blocking` so
+a render cannot stall web responses.
+
+### CLI output ownership and testing
+
+The command that produces user-facing output owns its wording. Error types
+represent failure categories and carry any command-specific context needed to
+render them; the error module does not depend on command modules.
+
+Tests assert contracts at the boundary where those contracts exist. Unit tests
+cover semantics and safety invariants such as paths, preserved bytes, required
+commands, and state transitions. They do not duplicate an exact output contract
+already covered at another layer or pin incidental whitespace without a reason.
+Verbatim output comparisons remain appropriate when the complete output is the
+behavior under test and the literal is clearer than fragmented assertions.
+
 ## Rust named-printer output
 
 `escpost` loads a `print` source through the same immutable source loader
@@ -108,26 +188,10 @@ reconnection. A serial number is stored when available; without one,
 simultaneously connected devices with equal VID/PID cannot be distinguished
 reliably and are reported as ambiguous.
 
-The Docker wrapper creates and mounts `.config` at the container user's
-normal ESCPost configuration path. This isolates configuration used by a
-checkout from an independently installed binary while keeping Docker-specific
-paths out of the Rust implementation.
-
-### CLI output ownership and testing
-
-The command that produces user-facing output owns its wording. Error types
-represent failure categories and carry any command-specific context needed to
-render them; the error module does not depend on command modules.
-
-Tests assert contracts at the boundary where those contracts exist. Unit tests
-cover semantics and safety invariants such as paths, preserved bytes, required
-commands, and state transitions. They do not duplicate an exact output contract
-already covered at another layer or pin incidental whitespace without a reason.
-Verbatim output comparisons remain appropriate when the complete output is the
-behavior under test and the literal is clearer than a set of fragmented
-assertions. When exact stdout or stderr is a supported CLI contract, one
-integration test asserts the rendered output. Documentation may show the same
-output for users, but lower-level tests do not maintain additional copies.
+The Docker wrapper creates and mounts `.config` at the container user's normal
+ESCPost configuration path. This isolates configuration used by a checkout from
+an independently installed binary while keeping Docker-specific paths out of
+the Rust implementation.
 
 ## Rust render command
 
@@ -156,17 +220,66 @@ Single-PNG output never drops later sheets. Directory output publishes its
 manifest only after all current sheets are complete. An explicit file and the
 web viewer may consume the same render without parsing or rendering twice.
 
-The web application, CSS, and JavaScript are embedded in the executable.
-Rendered PNGs live in a shared in-memory job store, which is also the intended
-handoff point for the future virtual printer. HTTP binds to loopback by
-default. The viewer reports ordered sheet names and printer-dot dimensions,
-uses one screen pixel per dot initially, and offers only integer,
-nearest-neighbor zoom.
+Rendered PNGs live in a shared in-memory job store. The viewer reports ordered
+sheet names and printer-dot dimensions, uses one screen pixel per dot initially,
+and offers only integer, nearest-neighbor zoom.
 
 Watch mode polls the selected filesystem input and performs each rerender away
 from the asynchronous HTTP task. A successful result atomically replaces the
 visible job. A parse or render failure is reported by the page while the last
 complete sheets remain available.
+
+### Embedded web application
+
+The web UI is a Preact and TypeScript single-page application built with Vite.
+Axum owns HTTP routing, JSON APIs, and static asset delivery. The frontend has
+no server-side JavaScript runtime.
+
+Existing web-enabled commands host the same Axum router and embedded frontend.
+`serve` adds RAW job capture; `render --web`, `render --browser`, and
+`render --watch` seed or update the render job store. Every mode exposes the
+same application operations. There is no daemon, separate backend executable,
+or inter-process API.
+
+RAW capture and HTTP serving remain concurrent tasks in one process. Splitting
+them into subprocesses is reserved for a measured performance or isolation
+problem; the architecture does not introduce IPC speculatively.
+
+HTTP operation paths follow the CLI command tree without an API version prefix:
+
+```text
+escpost printers list       GET  /printers/list
+escpost printers discover   POST /printers/discover
+escpost printers add        POST /printers/add
+escpost profiles list       GET  /profiles/list
+escpost profiles show ID    GET  /profiles/show/{id}
+escpost render              POST /render
+escpost print               POST /print
+```
+
+Names and parameter concepts transfer between CLI and HTTP. HTTP accepts typed
+query parameters or JSON, never argument arrays or shell strings, and returns
+structured data rather than captured stdout or stderr. The web server calls the
+same feature operations as the CLI; it never invokes the `escpost` executable
+or calls Clap handlers. HTTP-only infrastructure such as health checks and
+static assets need no CLI equivalent.
+
+Vite emits fixed-name HTML, JavaScript, and CSS assets. The Cargo build script
+runs the pinned frontend toolchain, writes its output under `OUT_DIR`, and the
+`escpost` crate embeds those bytes at compile time. Release artifacts remain a
+single executable and require neither Node.js nor external web assets at
+runtime. Docker images pin Node.js and install dependencies from the lockfile.
+
+For development, Vite serves the frontend with hot reload and proxies
+application routes to a running escpost server. Production and test builds
+serve only the embedded assets.
+
+Automatic listeners bind to loopback. Explicit `--web-listen` addresses remain
+supported; non-loopback bindings retain the exposure warning. State-changing
+API requests require JSON, reject untrusted origins, and carry a per-process
+same-origin capability so an unrelated browser origin cannot mutate local
+printer state. Authentication, TLS, and remote exposure belong to an operator's
+reverse proxy.
 
 ## Rendering pipeline
 
