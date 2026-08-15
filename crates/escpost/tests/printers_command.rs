@@ -878,14 +878,14 @@ fn printers_grant_usb_permissions_documents_itself() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn printers_grant_usb_permissions_without_root_prints_the_plan_and_exits_successfully() {
+fn printers_grant_usb_permissions_without_root_fails_with_the_two_options() {
     // This test must not run as root: the whole point is exercising the
-    // read-only "print the plan" branch, never the branch that writes to
+    // without-root failure branch, never the branch that writes to
     // /etc/udev/rules.d or shells out to udevadm.
     assert_ne!(
         current_effective_uid(),
         0,
-        "this test must not run as root; it only covers the without-root plan"
+        "this test must not run as root; it only covers the without-root failure"
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
@@ -895,18 +895,29 @@ fn printers_grant_usb_permissions_without_root_prints_the_plan_and_exits_success
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
+    // Was asked to grant access and cannot: that is a failure, not just
+    // an FYI, so this must not exit successfully.
     assert!(
-        output.status.success(),
-        "command failed:\n{stdout}\n{stderr}"
+        !output.status.success(),
+        "without root this must fail, not merely inform:\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    // Exact match, not just substring checks: without root this is the
-    // entire informational payload, and its shape (both options, the
-    // sudo-prefixed bare-metal commands, the flush-left heredoc body) is
-    // exactly what a user is expected to read or paste.
     assert_eq!(
-        stdout,
+        output.status.code(),
+        Some(1),
+        "the exit code should be 1:\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        stdout, "",
+        "nothing should be written to stdout on this failure path:\n{stdout}"
+    );
+    // Exact match, not just substring checks: this is the entire error
+    // path's output, and its shape (the `error: ` prefix `lib.rs` adds,
+    // both options, the sudo-prefixed bare-metal commands, the flush-left
+    // heredoc body) is exactly what a user is expected to read or paste.
+    assert_eq!(
+        stderr,
         "\
-Without root, this only shows how to grant USB printer access. Two ways:
+error: granting USB printer access requires root
 
 Let escpost apply it:
   sudo escpost printers grant-usb-permissions
@@ -919,14 +930,6 @@ EOF
   sudo udevadm control --reload
   sudo udevadm trigger --subsystem-match=usb
 "
-    );
-    // The old "Run it with: sudo ..." stderr hint is now redundant with
-    // "Let escpost apply it:" in the stdout plan above and has been
-    // removed; without root, this command writes nothing anywhere,
-    // including stderr.
-    assert_eq!(
-        stderr, "",
-        "the without-root plan is entirely stdout; stderr should be empty:\n{stderr}"
     );
 }
 

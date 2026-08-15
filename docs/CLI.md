@@ -501,11 +501,13 @@ escpost printers grant-usb-permissions
 sudo escpost printers grant-usb-permissions
 ```
 
-Without root, it changes nothing and prints two ways to grant the access
-instead — on stdout, since this is the entire informational payload:
+Without root it fails — it was asked to grant access and cannot, so this is
+an error, not merely an FYI — with exit code 1 and nothing on stdout. The
+error message still carries the two ways to grant the access, so the
+failure is actionable rather than a bare "requires root":
 
 ```text
-Without root, this only shows how to grant USB printer access. Two ways:
+error: granting USB printer access requires root
 
 Let escpost apply it:
   sudo escpost printers grant-usb-permissions
@@ -525,7 +527,7 @@ into a root shell, it applies the identical rule. The heredoc uses a quoted
 `'EOF'` marker so nothing in the rule is shell-expanded, and its body lines
 are intentionally flush left rather than indented like the surrounding
 commands — any leading whitespace there would become part of the rule file
-`tee` writes. It always exits successfully.
+`tee` writes.
 
 With root and an interactive terminal (no `--non-interactive`, and both
 stdin and stderr attached to a terminal — the same `can_prompt` check
@@ -766,7 +768,7 @@ the completed implementation must satisfy.
 | CLI-M16 | Reserve `printers discover` for a read-only sweep that enumerates USB printer interfaces and probes network hosts with a bare connect-and-drop TCP handshake that never sends a byte; neither ever writes to `printers.toml`. |
 | CLI-M17 | Without `--subnet`, scan only directly connected IPv4 networks at most a `/24` automatically, skipping larger ones; an explicit `--subnet` scans exactly the given networks instead and removes the `/24` cap. |
 | CLI-M18 | Resolve `printers add --discover` from the sweep: zero discovered hosts is always an error naming the probed port, exactly one is selected automatically, and several open an interactive selection menu or, under `--non-interactive`, are an error listing every candidate. |
-| CLI-M19 | On Linux, offer `printers grant-usb-permissions` to install a class-wide, `uaccess`-scoped udev rule granting USB printer access without root each time; without root it only prints the exact plan, and it never silently overwrites a rule whose on-disk content differs from what it would write. Running it as root asks for confirmation before changing anything whenever a prompt is possible (honoring `--non-interactive` and applying without asking otherwise), with no separate force flag to bypass it. Point `discover`'s permission-denied USB warnings at it with one added hint line. |
+| CLI-M19 | On Linux, offer `printers grant-usb-permissions` to install a class-wide, `uaccess`-scoped udev rule granting USB printer access without root each time; without root it fails (exit 1) with an error naming both ways to grant the access instead, and it never silently overwrites a rule whose on-disk content differs from what it would write. Running it as root asks for confirmation before changing anything whenever a prompt is possible (honoring `--non-interactive` and applying without asking otherwise), with no separate force flag to bypass it. Point `discover`'s permission-denied USB warnings at it with one added hint line. |
 
 ### Web requirements
 

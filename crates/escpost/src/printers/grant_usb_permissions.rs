@@ -6,11 +6,14 @@
 //! warning and any command that opens the device directly — `print` and
 //! `printers add`'s USB selection — fails outright until a udev rule grants
 //! broader access (`printers list` never opens the device, so it is
-//! unaffected). Without root, this command does not change anything itself;
-//! it prints two ways to grant the access — rerun this same command with
-//! `sudo`, or paste the equivalent bare-metal `tee`/`udevadm` commands for
-//! anyone who would rather not run this binary as root at all. With root and
-//! an interactive terminal, it shows the same rule and commands, then asks
+//! unaffected). Without root, this command cannot do what it was asked to
+//! do, so it fails (`CliError::GrantUsbPermissionsNeedsRoot`, exit 1)
+//! instead of exiting 0 with an informational print; its error message
+//! embeds the same two ways to grant the access anyway — rerun this same
+//! command with `sudo`, or paste the equivalent bare-metal `tee`/`udevadm`
+//! commands for anyone who would rather not run this binary as root at all
+//! — so the failure is still actionable. With root and an interactive
+//! terminal, it shows the rule and commands it is about to apply, then asks
 //! for confirmation (`inquire::Confirm`, default yes) before touching
 //! anything; declining leaves the system unchanged. With root and no prompt
 //! available (`--non-interactive`, or stdin/stderr not a terminal — the
@@ -55,8 +58,7 @@ pub(super) fn run(
     non_interactive: bool,
 ) -> Result<(), CliError> {
     if !running_as_root() {
-        print!("{}", plan());
-        return Ok(());
+        return Err(CliError::GrantUsbPermissionsNeedsRoot);
     }
 
     let can_prompt = !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal();
@@ -113,22 +115,28 @@ Then run:
     )
 }
 
-/// What `grant-usb-permissions` prints when it is not running as root: two
-/// independent ways to grant the access, since this path changes nothing
-/// itself. Factored out of `run` so its formatting is directly assertable
-/// in a unit test without capturing stdout.
-fn plan() -> String {
+/// The two independent ways to grant the access, embedded in
+/// `CliError::GrantUsbPermissionsNeedsRoot`'s message (see `error.rs`) so
+/// the without-root failure is still actionable rather than a bare
+/// "requires root". `pub(crate)` and re-exported from `printers::mod`
+/// specifically so `error.rs` can build that error's `#[error(...)]` text
+/// from it, the same way several existing `CliError` variants already call
+/// into `crate::configuration::display_path` from their own attributes —
+/// this keeps the guidance defined exactly once rather than duplicated
+/// between the error type and this module. No trailing newline: the
+/// `#[error(...)]` interpolation site and, ultimately, `eprintln!` in
+/// `lib.rs` each contribute exactly the newlines needed around it.
+pub(crate) fn needs_root_guidance() -> String {
     format!(
-        "\
-Without root, this only shows how to grant USB printer access. Two ways:
-
-Let escpost apply it:
+        "Let escpost apply it:
   sudo escpost printers grant-usb-permissions
 
 Or run the commands yourself:
 {}",
         manual_commands()
     )
+    .trim_end()
+    .to_owned()
 }
 
 /// Bare-metal commands a developer can paste directly into a root shell to
@@ -343,16 +351,16 @@ mod tests {
     }
 
     #[test]
-    fn plan_matches_the_exact_two_ways_format() {
-        // A full literal comparison, not just substring checks: this is
-        // the exact text a user sees without root, so its shape (the two
-        // options, the blank lines between them, the indentation, the
-        // heredoc marker) matters as much as its content.
+    fn needs_root_guidance_matches_the_exact_two_ways_format() {
+        // A full literal comparison, not just substring checks: this text
+        // is embedded verbatim in `CliError::GrantUsbPermissionsNeedsRoot`
+        // (see `error.rs`'s own exact-match test for the complete rendered
+        // error), so its shape (the two options, the blank lines between
+        // them, the indentation, the heredoc marker, no trailing newline)
+        // matters as much as its content.
         assert_eq!(
-            plan(),
+            needs_root_guidance(),
             "\
-Without root, this only shows how to grant USB printer access. Two ways:
-
 Let escpost apply it:
   sudo escpost printers grant-usb-permissions
 
@@ -362,8 +370,7 @@ Or run the commands yourself:
 SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
 EOF
   sudo udevadm control --reload
-  sudo udevadm trigger --subsystem-match=usb
-"
+  sudo udevadm trigger --subsystem-match=usb"
         );
     }
 

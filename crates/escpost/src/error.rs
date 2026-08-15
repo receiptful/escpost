@@ -313,6 +313,13 @@ pub(crate) enum CliError {
     },
 
     #[cfg(target_os = "linux")]
+    #[error(
+        "granting USB printer access requires root\n\n{}",
+        crate::printers::needs_root_guidance()
+    )]
+    GrantUsbPermissionsNeedsRoot,
+
+    #[cfg(target_os = "linux")]
     #[error("could not read the confirmation: {0}")]
     ConfirmationPrompt(String),
 
@@ -417,5 +424,30 @@ mod tests {
         };
 
         assert!(!error.is_permission_denied_usb_open());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn grant_usb_permissions_needs_root_message_matches_exactly() {
+        // Exact match, not a substring check: this is what `eprintln!("error:
+        // {error}")` in `lib.rs` renders verbatim (with an `error: ` prefix
+        // on the first line only, and the single trailing newline `eprintln!`
+        // itself supplies), so its shape matters as much as its content.
+        assert_eq!(
+            CliError::GrantUsbPermissionsNeedsRoot.to_string(),
+            "\
+granting USB printer access requires root
+
+Let escpost apply it:
+  sudo escpost printers grant-usb-permissions
+
+Or run the commands yourself:
+  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF'
+# Grant locally logged-in users access to USB printer-class devices (escpost).
+SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
+EOF
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb"
+        );
     }
 }
