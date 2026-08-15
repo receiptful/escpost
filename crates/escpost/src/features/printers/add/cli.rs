@@ -20,7 +20,7 @@ use super::super::discover::{
     prepare as prepare_discovery,
 };
 use super::super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
-use super::{Connection, Request, execute};
+use super::{Connection, Request, Response, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UsbAddTarget {
@@ -146,7 +146,7 @@ fn save_and_report_printer(
             target.in_endpoint,
         )?,
     };
-    let response = execute(Request::new(
+    let response: Response = execute(Request::new(
         config_path.map(std::path::Path::to_owned),
         printer.name.clone(),
         printer.profile.clone(),

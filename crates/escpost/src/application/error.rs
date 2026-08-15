@@ -22,7 +22,7 @@ pub(crate) enum ApplicationError {
     },
 
     #[error("could not read ESC/POS input from stdin: {0}")]
-    ReadStdin(std::io::Error),
+    ReadStdin(#[source] std::io::Error),
 
     #[error("directory is not a recognized ESCPost case: {0}")]
     UnrecognizedDirectory(PathBuf),
@@ -43,7 +43,7 @@ pub(crate) enum ApplicationError {
     InvalidHexByte { token: String, position: usize },
 
     #[error("could not render ESC/POS input: {0}")]
-    Render(String),
+    Render(#[source] escpost_render::RenderError),
 
     #[error("single-PNG output requires exactly one sheet, but rendering produced {0}")]
     MultipleSheets(usize),
@@ -67,10 +67,10 @@ pub(crate) enum ApplicationError {
     SerializeManifest(#[from] serde_json::Error),
 
     #[error("could not enumerate USB devices: {0}")]
-    EnumerateUsb(nusb::Error),
+    EnumerateUsb(#[source] nusb::Error),
 
     #[error("could not enumerate network interfaces: {0}")]
-    EnumerateNetworkInterfaces(std::io::Error),
+    EnumerateNetworkInterfaces(#[source] std::io::Error),
 
     #[error(
         "no directly connected IPv4 network is small enough to scan automatically (at most /24)"
@@ -221,5 +221,35 @@ impl ApplicationError {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::ApplicationError;
+
+    #[test]
+    fn wrapped_stdin_error_remains_in_the_source_chain() {
+        let error = ApplicationError::ReadStdin(std::io::Error::other("stdin disconnected"));
+
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("stdin disconnected")
+        );
+    }
+
+    #[test]
+    fn wrapped_renderer_error_remains_in_the_source_chain() {
+        let error = ApplicationError::Render(escpost_render::RenderError::UnsupportedDataByte {
+            byte: 0x1c,
+            offset: 7,
+        });
+
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("unsupported data byte 0x1c at byte offset 7")
+        );
     }
 }

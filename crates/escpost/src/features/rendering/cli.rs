@@ -138,7 +138,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
         output::write_all(&rendered, output_directory)?;
     }
     if web_enabled {
-        let listener = crate::web::bind(arguments.web_listen).await?;
+        let listener = crate::cli::web::bind(arguments.web_listen).await?;
         let jobs = crate::web::JobStore::with_render(
             TracedRenderResult {
                 render: rendered,
@@ -161,7 +161,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
                 jobs.clone(),
             )?;
         }
-        crate::web::serve(listener, jobs, arguments.browser).await?;
+        crate::cli::web::serve(listener, jobs, arguments.browser).await?;
     }
     Ok(())
 }

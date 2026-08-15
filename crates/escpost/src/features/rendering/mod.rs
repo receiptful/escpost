@@ -32,12 +32,12 @@ pub(crate) fn render(request: Request) -> application::Result<Response> {
     };
     let (render, trace) = if request.trace {
         let traced = render_with_trace_and_options(&request.bytes, profile, &options)
-            .map_err(|error| ApplicationError::Render(error.to_string()))?;
+            .map_err(ApplicationError::Render)?;
         (traced.render, Some(traced.trace))
     } else {
         (
             render_with_options(&request.bytes, profile, &options)
-                .map_err(|error| ApplicationError::Render(error.to_string()))?,
+                .map_err(ApplicationError::Render)?,
             None,
         )
     };

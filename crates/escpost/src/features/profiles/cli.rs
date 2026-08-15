@@ -381,8 +381,17 @@ struct FeaturesJson {
 
 #[derive(Serialize)]
 struct BarcodesJson {
-    function_a: Vec<BarcodeSystem>,
-    function_b: Vec<BarcodeSystem>,
+    function_a: Vec<&'static str>,
+    function_b: Vec<&'static str>,
+}
+
+impl From<&BarcodeFacts> for BarcodesJson {
+    fn from(facts: &BarcodeFacts) -> Self {
+        Self {
+            function_a: facts.function_a.iter().map(barcode_system_label).collect(),
+            function_b: facts.function_b.iter().map(barcode_system_label).collect(),
+        }
+    }
 }
 
 impl From<&ProfileFacts> for ProfileJson {
@@ -410,10 +419,7 @@ impl From<&ProfileFacts> for ProfileJson {
                 },
             },
             features: FeaturesJson {
-                barcodes: BarcodesJson {
-                    function_a: facts.features.barcodes.function_a.iter().copied().collect(),
-                    function_b: facts.features.barcodes.function_b.iter().copied().collect(),
-                },
+                barcodes: BarcodesJson::from(&facts.features.barcodes),
                 graphics: facts.features.graphics,
                 paper_full_cut: facts.features.paper_full_cut,
                 paper_part_cut: facts.features.paper_part_cut,
@@ -428,6 +434,8 @@ impl From<&ProfileFacts> for ProfileJson {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use escpost_profiles::resolver;
 
     use super::*;
@@ -454,5 +462,24 @@ mod tests {
         assert!(detail.contains("80.0 mm"));
         assert!(detail.contains("72.2 mm"));
         assert!(detail.contains("code_128") || detail.contains("upc_a"));
+    }
+
+    #[test]
+    fn barcode_json_projects_domain_values_to_adapter_labels() {
+        let facts = BarcodeFacts {
+            function_a: BTreeSet::from([BarcodeSystem::UpcA, BarcodeSystem::Code39]),
+            function_b: BTreeSet::from([BarcodeSystem::Code93, BarcodeSystem::Code128]),
+        };
+
+        let json = serde_json::to_value(BarcodesJson::from(&facts))
+            .expect("adapter barcode labels should serialize");
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "function_a": ["upc_a", "code_39"],
+                "function_b": ["code_93", "code_128"]
+            })
+        );
     }
 }

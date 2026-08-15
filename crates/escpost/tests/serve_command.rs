@@ -271,7 +271,13 @@ fn serve_reports_a_render_error_without_a_sheet() {
     // viewer reads `error` with no sheets and must report the failure rather
     // than keep waiting for the first job.
     let mut child = start_serve_on_ephemeral_ports();
-    let (raw_port, web_port) = read_listen_ports(&mut child);
+    let mut stderr = BufReader::new(
+        child
+            .stderr
+            .take()
+            .expect("the serve command stderr should be piped"),
+    );
+    let (raw_port, web_port) = read_listen_ports_from(&mut stderr);
     wait_until_listening(&mut child, raw_port);
     wait_until_listening(&mut child, web_port);
 
@@ -280,6 +286,10 @@ fn serve_reports_a_render_error_without_a_sheet() {
 
     let metadata = wait_for_render_error(web_port);
     stop(&mut child);
+    let mut remaining_stderr = String::new();
+    stderr
+        .read_to_string(&mut remaining_stderr)
+        .expect("the render warning should be readable");
 
     assert_eq!(
         metadata["sheets"]
@@ -292,9 +302,11 @@ fn serve_reports_a_render_error_without_a_sheet() {
     let error = metadata["error"]
         .as_str()
         .expect("the render error should be reported");
-    assert!(
-        error.contains("unsupported"),
-        "the error should explain the unsupported byte:\n{error}"
+    assert_eq!(error, "unsupported data byte 0x1c at byte offset 7");
+    assert_eq!(
+        remaining_stderr,
+        "Press Ctrl+C to stop.\n\
+warning: could not render captured job: unsupported data byte 0x1c at byte offset 7\n"
     );
 }
 
@@ -378,6 +390,20 @@ fn read_listen_ports(child: &mut Child) -> (u16, u16) {
             .take()
             .expect("the serve command stderr should be piped"),
     );
+    let ports = read_listen_ports_from(&mut stderr);
+
+    // Keep the stderr pipe open and drained for the rest of the run. Dropping it
+    // here would close the read end, so the server's next status line would hit
+    // a broken pipe and abort. The thread ends at EOF when the child is stopped.
+    thread::spawn(move || {
+        let mut discard = String::new();
+        let _ = stderr.read_to_string(&mut discard);
+    });
+
+    ports
+}
+
+fn read_listen_ports_from(stderr: &mut impl BufRead) -> (u16, u16) {
     let mut raw = None;
     let mut web = None;
     while raw.is_none() || web.is_none() {
@@ -402,14 +428,6 @@ fn read_listen_ports(child: &mut Child) -> (u16, u16) {
             web = Some(port);
         }
     }
-
-    // Keep the stderr pipe open and drained for the rest of the run. Dropping it
-    // here would close the read end, so the server's next status line would hit
-    // a broken pipe and abort. The thread ends at EOF when the child is stopped.
-    thread::spawn(move || {
-        let mut discard = String::new();
-        let _ = stderr.read_to_string(&mut discard);
-    });
 
     (raw.unwrap(), web.unwrap())
 }

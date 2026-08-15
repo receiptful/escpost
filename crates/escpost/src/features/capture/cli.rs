@@ -9,6 +9,7 @@ use escpost_profiles::PrinterProfile;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::cli::web as cli_web;
 use crate::error::CliError;
 use crate::{net, profiles, web};
 
@@ -105,7 +106,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         None => eprintln!("Idle timeout: disabled (jobs end when the connection closes)"),
     }
 
-    let web_listener = web::bind(arguments.web_listen).await?;
+    let web_listener = cli_web::bind(arguments.web_listen).await?;
     let jobs = web::JobStore::awaiting_jobs(
         arguments.profile.clone(),
         format!(
@@ -131,7 +132,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         std::env::var("BROWSER").ok().as_deref(),
         std::env::var_os("CI").is_some(),
     );
-    let result = web::serve(web_listener, jobs, open_browser).await;
+    let result = cli_web::serve(web_listener, jobs, open_browser).await;
     acceptor.abort();
     result
 }
@@ -251,8 +252,12 @@ async fn finalize(
                 .await;
         }
         Ok(Err(error)) => {
-            eprintln!("warning: could not render captured job: {error}");
-            jobs.set_error(error.to_string()).await;
+            let message = match error {
+                crate::application::ApplicationError::Render(source) => source.to_string(),
+                error => error.to_string(),
+            };
+            eprintln!("warning: could not render captured job: {message}");
+            jobs.set_error(message).await;
         }
         // A panic or cancellation in the render task leaves no job to preview.
         Err(_) => {}

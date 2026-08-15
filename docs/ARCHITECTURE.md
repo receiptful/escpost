@@ -54,11 +54,14 @@ application operation and its thin CLI adapter:
 
 ```text
 src/
-├── application/              shared context and application errors
-├── cli.rs                    root Clap tree and command dispatch
+├── application/              shared application error/result boundary
+├── cli.rs                    root Clap tree
+├── cli/
+│   └── web.rs                shared web-viewer CLI presentation
+├── lib.rs                    root command dispatch
 ├── features/
 │   ├── printers/
-│   │   ├── add/{mod,cli}.rs
+│   │   ├── add/{mod,operation,cli}.rs
 │   │   ├── discover/{mod,cli}.rs
 │   │   ├── list/{mod,cli}.rs
 │   │   ├── cli.rs              shared CLI and command dispatch
@@ -103,7 +106,8 @@ feature operations:
 HTTP router ─> feature::http ─> feature operation
 ```
 
-The root `cli.rs` and future `http/` module contain shared transport
+The root `cli.rs` contains the Clap tree, while CLI-wide adapter infrastructure
+lives under `cli/`; a future `http/` module will contain shared HTTP transport
 infrastructure, not mirrored copies of every operation. Low-level
 operating-system modules remain at the crate root until a concrete boundary
 warrants moving them. A separate application crate is justified only when a

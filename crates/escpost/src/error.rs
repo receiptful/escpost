@@ -28,7 +28,7 @@ pub(crate) enum CliError {
     MissingOutput,
 
     #[error("could not write PNG output to stdout: {0}")]
-    WriteStdout(std::io::Error),
+    WriteStdout(#[source] std::io::Error),
 
     #[error("refusing to write binary PNG data to an interactive terminal")]
     BinaryOutputToTerminal,
@@ -46,7 +46,7 @@ pub(crate) enum CliError {
     NoAutomaticWebPort,
 
     #[error("web viewer failed: {0}")]
-    ServeWeb(std::io::Error),
+    ServeWeb(#[source] std::io::Error),
 
     #[error("could not bind RAW printer to {address}: {source}")]
     BindRawPrinter {
@@ -58,7 +58,7 @@ pub(crate) enum CliError {
     NoAutomaticRawPort,
 
     #[error("RAW printer failed: {0}")]
-    ServeRawPrinter(std::io::Error),
+    ServeRawPrinter(#[source] std::io::Error),
 
     #[error("idle timeout must be a positive number of seconds")]
     InvalidIdleTimeout,
@@ -85,10 +85,10 @@ pub(crate) enum CliError {
     MissingPrintPrinter,
 
     #[error("could not write command output: {0}")]
-    WriteHumanOutput(std::io::Error),
+    WriteHumanOutput(#[source] std::io::Error),
 
     #[error("could not serialize JSON command output: {0}")]
-    SerializeJsonOutput(serde_json::Error),
+    SerializeJsonOutput(#[source] serde_json::Error),
 
     #[error("printer name is required")]
     MissingPrinterName,
@@ -230,6 +230,8 @@ impl CliError {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+
     use super::*;
 
     #[test]
@@ -289,5 +291,24 @@ mod tests {
         });
 
         assert!(!error.is_permission_denied_usb_open());
+    }
+
+    #[test]
+    fn wrapped_cli_io_error_remains_in_the_source_chain() {
+        let error = CliError::WriteStdout(std::io::Error::other("stdout disconnected"));
+
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("stdout disconnected")
+        );
+    }
+
+    #[test]
+    fn wrapped_cli_serialization_error_remains_in_the_source_chain() {
+        let source = serde_json::from_str::<serde_json::Value>("{")
+            .expect_err("the incomplete object should fail to parse");
+        let error = CliError::SerializeJsonOutput(source);
+
+        assert!(error.source().is_some());
     }
 }

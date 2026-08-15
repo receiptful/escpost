@@ -143,6 +143,31 @@ fn profiles_list_json_with_no_matches_prints_an_empty_json_array() {
 }
 
 #[test]
+fn profiles_list_json_uses_exact_adapter_barcode_labels() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["profiles", "list", "--search", "TM-T88III", "--json"])
+        .output()
+        .expect("the escpost command should finish");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "command failed:\n{stdout}");
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    assert_eq!(
+        value[0]["features"]["barcodes"],
+        serde_json::json!({
+            "function_a": [
+                "upc_a", "upc_e", "ean_13", "ean_8", "code_39", "itf", "codabar"
+            ],
+            "function_b": [
+                "upc_a", "upc_e", "ean_13", "ean_8", "code_39", "itf", "codabar",
+                "code_93", "code_128"
+            ]
+        })
+    );
+}
+
+#[test]
 fn profiles_list_with_no_matches_exits_cleanly_with_a_stderr_note() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["profiles", "list", "--vendor", "doesnotexist"])

@@ -145,6 +145,18 @@ fn profiles_show_json_parses_as_a_single_profile_object() {
             .collect::<Vec<_>>(),
         ["function_a", "function_b"]
     );
+    assert_eq!(
+        value["features"]["barcodes"],
+        serde_json::json!({
+            "function_a": [
+                "upc_a", "upc_e", "ean_13", "ean_8", "code_39", "itf", "codabar"
+            ],
+            "function_b": [
+                "upc_a", "upc_e", "ean_13", "ean_8", "code_39", "itf", "codabar",
+                "code_93", "code_128"
+            ]
+        })
+    );
 }
 
 #[test]

@@ -30,7 +30,7 @@ pub(crate) fn render_job(request: RenderRequest) -> application::Result<RenderRe
     };
     let raw_input = request.bytes;
     let rendered = render_with_trace_and_options(&raw_input, request.profile, &options)
-        .map_err(|error| ApplicationError::Render(error.to_string()))?;
+        .map_err(ApplicationError::Render)?;
 
     Ok(RenderResponse {
         raw_input,

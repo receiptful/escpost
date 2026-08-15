@@ -16,8 +16,6 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-use crate::error::CliError;
-
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const FIRST_AUTOMATIC_PORT: u16 = 9000;
 const LAST_AUTOMATIC_PORT: u16 = 9099;
@@ -474,33 +472,13 @@ fn justification_name(justification: Justification) -> &'static str {
     }
 }
 
-pub(crate) async fn bind(requested: Option<SocketAddr>) -> Result<TcpListener, CliError> {
-    crate::net::bind_loopback(requested, FIRST_AUTOMATIC_PORT..=LAST_AUTOMATIC_PORT)
-        .await
-        .map_err(|failure| match failure {
-            crate::net::BindFailure::Address { address, source } => {
-                CliError::BindWeb { address, source }
-            }
-            crate::net::BindFailure::RangeExhausted => CliError::NoAutomaticWebPort,
-        })
+pub(crate) async fn bind(
+    requested: Option<SocketAddr>,
+) -> Result<TcpListener, crate::net::BindFailure> {
+    crate::net::bind_loopback(requested, FIRST_AUTOMATIC_PORT..=LAST_AUTOMATIC_PORT).await
 }
 
-pub(crate) async fn serve(
-    listener: TcpListener,
-    jobs: JobStore,
-    open_browser: bool,
-) -> Result<(), CliError> {
-    let address = listener.local_addr().map_err(CliError::ServeWeb)?;
-    let url = format!("http://{address}/");
-    if !address.ip().is_loopback() {
-        eprintln!("warning: receipt data is exposed beyond loopback on {address}");
-    }
-    eprintln!("Web viewer: {url}");
-    eprintln!("Press Ctrl+C to stop.");
-    if open_browser && let Err(error) = webbrowser::open(&url) {
-        eprintln!("warning: could not open the browser ({error}); open {url} manually");
-    }
-
+pub(crate) async fn serve(listener: TcpListener, jobs: JobStore) -> std::io::Result<()> {
     let router = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
@@ -511,7 +489,6 @@ pub(crate) async fn serve(
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(CliError::ServeWeb)
 }
 
 async fn index() -> Html<&'static str> {

@@ -6,6 +6,8 @@ use crate::features::printing::cli::PrintArgs;
 use crate::features::profiles::cli::ProfilesArgs;
 use crate::features::rendering::cli::RenderArgs;
 
+pub(crate) mod web;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "escpost",
