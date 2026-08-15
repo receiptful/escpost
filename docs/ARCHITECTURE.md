@@ -60,9 +60,10 @@ src/
 │   ├── printers/
 │   │   ├── add/{mod,cli}.rs
 │   │   ├── discover/{mod,cli}.rs
-│   │   ├── grant_usb_permissions/{mod,cli}.rs
 │   │   ├── list/{mod,cli}.rs
-│   │   ├── cli.rs
+│   │   ├── cli.rs              shared CLI and command dispatch
+│   │   ├── cli/
+│   │   │   └── grant_usb_permissions.rs
 │   │   └── inventory.rs
 │   ├── profiles/{mod,cli}.rs
 │   ├── rendering/{mod,cli}.rs
@@ -76,10 +77,18 @@ src/
 └── web.rs
 ```
 
-A feature's `mod.rs` defines typed requests, responses, and operations. It has
-no dependency on Clap, terminal I/O, web-store updates, or wire serialization.
-Its `cli.rs` translates command input into the application request and renders
-the structured response for the terminal.
+A feature's `mod.rs` defines typed requests, factual responses, and operations.
+Application operations and their low-level dependencies share
+`application::ApplicationError`, whose variants contain factual failure context
+without terminal guidance. A feature operation has no dependency on Clap,
+terminal I/O, web-store updates, or wire serialization.
+
+Its `cli.rs` converts command input into validated application values, wraps
+application failures with adapter-owned recovery guidance, and presents the
+structured response. Wire DTOs, serialization, terminal labels, and prose also
+belong to the adapter. Operation facts retain their native types; for example,
+profile provenance and barcode support remain `ProfileSource` and
+`BarcodeSystem` values until the CLI maps them into human or JSON output.
 
 ```text
 root CLI dispatch ─> feature::cli ─> feature operation ─> configuration, discovery, rendering, hardware
@@ -106,6 +115,12 @@ requests. Application responses contain facts, not terminal prose or HTTP
 status codes. HTTP operations never prompt; interactive workflows belong to
 the CLI or browser.
 
+`printers grant-usb-permissions` is the deliberate CLI-only host-command
+exception. Root checks, confirmation, udev rule mutation, `udevadm` execution,
+and recovery instructions live together under `features/printers/cli/`; there
+is no reusable application or HTTP operation for that host-administration
+workflow.
+
 The capture operation consumes one exact, completed RAW byte vector, a
 validated printer profile, and render parameters, then returns that same byte
 vector with traced render facts. Its CLI adapter resolves the profile before
@@ -116,9 +131,10 @@ a render cannot stall web responses.
 
 ### CLI output ownership and testing
 
-The command that produces user-facing output owns its wording. Error types
-represent failure categories and carry any command-specific context needed to
-render them; the error module does not depend on command modules.
+The command that produces user-facing output owns its wording. Shared
+application errors represent factual failure categories. CLI errors add
+invocation failures, prompts, terminal and viewer failures, and command-specific
+recovery text without making application modules depend on command modules.
 
 Tests assert contracts at the boundary where those contracts exist. Unit tests
 cover semantics and safety invariants such as paths, preserved bytes, required
@@ -129,15 +145,17 @@ behavior under test and the literal is clearer than fragmented assertions.
 
 ## Rust named-printer output
 
-`escpost` loads a `print` source through the same immutable source loader
-as `render`, resolves one configured printer name, then hands those decoded
-bytes directly to its USB or RAW TCP transport. It does not invoke the renderer
-or require a printer profile.
+`escpost print` chooses one configured printer name, resolves and validates its
+owned target facts, and only then loads the source through the same immutable
+source loader as `render`. This preflight rejects a missing or invalid named
+target before reading a file or blocking on stdin. The operation then hands the
+decoded bytes directly to its USB or RAW TCP transport; it does not invoke the
+renderer or require a printer profile.
 
 ```text
-Known ESC/POS source → decode once → configured printer name
-                                         ├── nusb bulk OUT
-                                         └── RAW TCP socket
+configured printer name → target preflight → load and decode source
+                                                   ├── nusb bulk OUT
+                                                   └── RAW TCP socket
 ```
 
 Transport details live only in `printers.toml`. This keeps `print` independent
@@ -180,6 +198,13 @@ per-device warnings, and reports both configured and unconfigured devices.
 persist a concrete interface and endpoint selection; it does not route that
 selection through the metadata-only list inventory. Neither workflow claims a
 printer interface, detaches a kernel driver, or sends a USB transfer.
+
+The discovery CLI first converts its arguments into a valid `DiscoveryScope`
+and `NetworkScan`; incompatible options and an invalid port fail before any
+configuration I/O. `prepare` then loads configuration and derives scan targets,
+and `execute` emits factual observer events and returns typed discovery facts.
+`printers add --discover` reuses that lifecycle and retains only prompting and
+selection in its CLI adapter.
 
 All inventory commands read `printers.toml` through the same path precedence:
 an explicit `--config` file, then `ESCPOST_CONFIG_DIR`, then the platform user
