@@ -99,17 +99,21 @@ pub(super) fn run(
 /// immediately before asking `ConfirmPrompter::confirm_grant` — the exact
 /// path this command would write, the full rule content, and the udevadm
 /// commands it would run afterward, all built from `RULES_PATH`/
-/// `RULE_CONTENT` rather than a second, hand-typed copy of them. Unlike
-/// `manual_commands` below (the non-root path's bare-metal equivalent),
-/// this is prose describing what `run` itself is about to do, not a
-/// paste-and-run shell block, so it stays its own function rather than
-/// being unified with it.
+/// `RULE_CONTENT` rather than a second, hand-typed copy of them. Phrased in
+/// first person ("This will write...", "Then it will reload udev...")
+/// because `run` itself performs these steps right after confirmation, so
+/// an imperative "Write ... / Then run: udevadm ..." here would misdescribe
+/// who is about to act. Unlike `manual_commands` below (the non-root
+/// path's bare-metal equivalent, which stays imperative since a human runs
+/// those commands themselves), this is prose describing what `run` itself
+/// is about to do, not a paste-and-run shell block, so it stays its own
+/// function rather than being unified with it.
 fn describe_change() -> String {
     format!(
         "\
-Write {RULES_PATH}:
+This will write {RULES_PATH}:
 {RULE_CONTENT}
-Then run:
+Then it will reload udev:
   udevadm control --reload
   udevadm trigger --subsystem-match=usb
 "
@@ -373,6 +377,29 @@ mod tests {
             RULE_CONTENT,
             "# Grant locally logged-in users access to USB printer-class devices (escpost).\n\
              SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"\n"
+        );
+    }
+
+    #[test]
+    fn describe_change_matches_the_exact_first_person_format() {
+        // `run` performs these steps itself right after confirmation, so
+        // this must read as narration ("This will write...", "Then it
+        // will reload udev...") rather than instructions to the user —
+        // unlike `manual_commands`/`needs_root_guidance`, which stay
+        // imperative since a human runs those. A full literal comparison
+        // pins the exact wording, not just that the path/content/commands
+        // appear somewhere in it.
+        assert_eq!(
+            describe_change(),
+            "\
+This will write /etc/udev/rules.d/70-escpost-usb-printers.rules:
+# Grant locally logged-in users access to USB printer-class devices (escpost).
+SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
+
+Then it will reload udev:
+  udevadm control --reload
+  udevadm trigger --subsystem-match=usb
+"
         );
     }
 
