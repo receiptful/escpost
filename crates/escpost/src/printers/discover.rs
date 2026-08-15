@@ -138,19 +138,19 @@ fn execute_discover(
     let connected = if transport == Some(InventoryTransport::Network) {
         Vec::new()
     } else {
-        let enumeration = inventory.list_tolerant()?;
-        for warning in &enumeration.warnings {
+        let usb_enumeration = inventory.list_tolerant()?;
+        for warning in &usb_enumeration.warnings {
             writeln!(warnings_output, "Warning: {warning}").map_err(CliError::WriteHumanOutput)?;
         }
         #[cfg(target_os = "linux")]
-        if enumeration.permission_denied {
+        if usb_enumeration.permission_denied {
             writeln!(
                 warnings_output,
                 "Fix USB permissions with: sudo escpost printers grant-usb-permissions"
             )
             .map_err(CliError::WriteHumanOutput)?;
         }
-        discovered_usb_printers(enumeration.printers, configuration)
+        discovered_usb_printers(usb_enumeration.printers, configuration)
     };
     let hosts: &[DiscoveredHost] = if transport == Some(InventoryTransport::Usb) {
         &[]
