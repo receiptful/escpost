@@ -6,16 +6,17 @@
 //! warning and any command that opens the device directly — `print` and
 //! `printers add`'s USB selection — fails outright until a udev rule grants
 //! broader access (`printers list` never opens the device, so it is
-//! unaffected). Without root, this command only prints the plan (the rule
-//! it would write and the commands it would run) so a user can inspect it
-//! before running it with `sudo`. With root and an interactive terminal, it
-//! shows the same rule and commands, then asks for confirmation
-//! (`inquire::Confirm`, default yes) before touching anything; declining
-//! leaves the system unchanged. With root and no prompt available
-//! (`--non-interactive`, or stdin/stderr not a terminal — the scripted
-//! provisioning path), it applies immediately without asking, since the
-//! confirmation's own default answer is yes. Applying writes the rule and
-//! reloads udev so it takes effect without a reboot.
+//! unaffected). Without root, this command does not change anything itself;
+//! it prints two ways to grant the access — rerun this same command with
+//! `sudo`, or paste the equivalent bare-metal `tee`/`udevadm` commands for
+//! anyone who would rather not run this binary as root at all. With root and
+//! an interactive terminal, it shows the same rule and commands, then asks
+//! for confirmation (`inquire::Confirm`, default yes) before touching
+//! anything; declining leaves the system unchanged. With root and no prompt
+//! available (`--non-interactive`, or stdin/stderr not a terminal — the
+//! scripted provisioning path), it applies immediately without asking, since
+//! the confirmation's own default answer is yes. Applying writes the rule
+//! and reloads udev so it takes effect without a reboot.
 
 use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
@@ -55,7 +56,6 @@ pub(super) fn run(
 ) -> Result<(), CliError> {
     if !running_as_root() {
         print!("{}", plan());
-        eprintln!("Run it with: sudo escpost printers grant-usb-permissions");
         return Ok(());
     }
 
@@ -92,14 +92,15 @@ pub(super) fn run(
     Ok(())
 }
 
-/// The rule and commands `grant-usb-permissions` is about to apply: the
-/// exact path it would write, the full rule content, and the udevadm
-/// commands it would run afterward. Shared verbatim by both the non-root
-/// informational `plan` (which wraps this with why it's being shown and,
-/// separately, the sudo hint) and the root+interactive confirmation prompt
-/// (which shows this immediately before asking for confirmation), so the
-/// rule path/content/commands are described exactly once in the source
-/// rather than duplicated between the two call sites.
+/// The rule and commands the root+interactive confirmation shows
+/// immediately before asking `ConfirmPrompter::confirm_grant` — the exact
+/// path this command would write, the full rule content, and the udevadm
+/// commands it would run afterward, all built from `RULES_PATH`/
+/// `RULE_CONTENT` rather than a second, hand-typed copy of them. Unlike
+/// `manual_commands` below (the non-root path's bare-metal equivalent),
+/// this is prose describing what `run` itself is about to do, not a
+/// paste-and-run shell block, so it stays its own function rather than
+/// being unified with it.
 fn describe_change() -> String {
     format!(
         "\
@@ -112,14 +113,53 @@ Then run:
     )
 }
 
-/// What `grant-usb-permissions` prints when it is not running as root: the
-/// same rule and commands `describe_change` shows, wrapped with why they're
-/// being shown instead of applied. Factored out of `run` so its formatting
-/// is directly assertable in a unit test without capturing stdout.
+/// What `grant-usb-permissions` prints when it is not running as root: two
+/// independent ways to grant the access, since this path changes nothing
+/// itself. Factored out of `run` so its formatting is directly assertable
+/// in a unit test without capturing stdout.
 fn plan() -> String {
     format!(
-        "Without root, this only shows what `sudo escpost printers grant-usb-permissions` would do.\n\n{}",
-        describe_change()
+        "\
+Without root, this only shows how to grant USB printer access. Two ways:
+
+Let escpost apply it:
+  sudo escpost printers grant-usb-permissions
+
+Or run the commands yourself:
+{}",
+        manual_commands()
+    )
+}
+
+/// Bare-metal commands a developer can paste directly into a root shell to
+/// apply the exact same rule `grant-usb-permissions` itself would, without
+/// installing or trusting this binary to do it. Built from `RULES_PATH`/
+/// `RULE_CONTENT`, never a second hand-typed copy of them, so the pasted
+/// and the applied rule cannot drift apart — pinned by
+/// `manual_commands_heredoc_body_equals_the_rule_constant_exactly` below,
+/// and independently re-verified against a real shell (see the fix
+/// report). The heredoc body (the rule content) is written flush-left, not
+/// indented like the surrounding command lines: `bash` keeps any leading
+/// whitespace on heredoc body lines as part of the file it writes, so
+/// indenting it here to visually match the command lines around it would
+/// silently corrupt the pasted rule. `<<'EOF'` is quoted so nothing in the
+/// rule gets shell-expanded before `tee` ever sees it — nothing in
+/// `RULE_CONTENT` is expandable today, but quoting costs nothing and stays
+/// correct if that ever changes.
+fn manual_commands() -> String {
+    // Deliberately not opening with the `"\` line-continuation the other
+    // functions in this file use to keep their first content line
+    // flush-left in the *source* despite Rust's own indentation: that
+    // continuation strips leading whitespace from the line right after it,
+    // which would silently eat this block's leading two spaces on its
+    // first (`sudo tee`) line. Starting the literal's first line inline
+    // with the opening quote avoids that stripping entirely.
+    format!(
+        "  sudo tee {RULES_PATH} <<'EOF' >/dev/null
+{RULE_CONTENT}EOF
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb
+"
     )
 }
 
@@ -303,39 +343,68 @@ mod tests {
     }
 
     #[test]
-    fn plan_names_the_exact_rules_path_and_content_and_the_udevadm_commands() {
-        let plan = plan();
+    fn plan_matches_the_exact_two_ways_format() {
+        // A full literal comparison, not just substring checks: this is
+        // the exact text a user sees without root, so its shape (the two
+        // options, the blank lines between them, the indentation, the
+        // heredoc marker) matters as much as its content.
+        assert_eq!(
+            plan(),
+            "\
+Without root, this only shows how to grant USB printer access. Two ways:
 
-        assert!(
-            plan.contains(RULES_PATH),
-            "plan should name the rule path:\n{plan}"
-        );
-        assert!(
-            plan.contains(RULE_CONTENT),
-            "plan should include the full rule content:\n{plan}"
-        );
-        assert!(
-            plan.contains("udevadm control --reload"),
-            "plan should show the reload command:\n{plan}"
-        );
-        assert!(
-            plan.contains("udevadm trigger --subsystem-match=usb"),
-            "plan should show the trigger command:\n{plan}"
+Let escpost apply it:
+  sudo escpost printers grant-usb-permissions
+
+Or run the commands yourself:
+  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF' >/dev/null
+# Grant locally logged-in users access to USB printer-class devices (escpost).
+SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
+EOF
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb
+"
         );
     }
 
     #[test]
-    fn plan_wraps_describe_change_verbatim_instead_of_duplicating_it() {
-        // The root+prompt path shows `describe_change()` on its own; this
-        // pins that the non-root `plan()` is that exact same text with a
-        // prefix, not a second, independently written copy of the rule
-        // path/content/commands that could drift out of sync with it.
-        let plan = plan();
+    fn manual_commands_embeds_the_rule_constant_verbatim_instead_of_duplicating_it() {
+        let commands = manual_commands();
 
         assert!(
-            plan.ends_with(&describe_change()),
-            "plan should end with describe_change()'s exact text:\n{plan}"
+            commands.contains(RULE_CONTENT),
+            "the heredoc body should be RULE_CONTENT verbatim, not a second hand-typed copy:\n{commands}"
         );
+    }
+
+    /// Pulls the heredoc body out of `manual_commands()`'s tee block: the
+    /// bytes `bash` actually writes to disk when a developer pastes the
+    /// block verbatim. A small, independent parser rather than eyeballing
+    /// the format string, so the test below really checks what the shell
+    /// would see.
+    fn extract_heredoc_body(commands: &str) -> &str {
+        let after_marker = commands
+            .split_once("<<'EOF'")
+            .expect("the block should open a quoted-EOF heredoc")
+            .1;
+        let body_start = after_marker
+            .find('\n')
+            .expect("a newline should follow the heredoc marker")
+            + 1;
+        let body = &after_marker[body_start..];
+        let terminator = body
+            .find("\nEOF\n")
+            .expect("the heredoc should close with a flush-left EOF line");
+        &body[..=terminator]
+    }
+
+    #[test]
+    fn manual_commands_heredoc_body_equals_the_rule_constant_exactly() {
+        // The requirement this pins: pasting the printed block into a
+        // shell must reproduce RULE_CONTENT byte-for-byte, not merely
+        // "contain" it or resemble it. See the fix report for the same
+        // check re-run against a real shell, independent of this parser.
+        assert_eq!(extract_heredoc_body(&manual_commands()), RULE_CONTENT);
     }
 
     /// A `ConfirmPrompter` double that panics if ever called, for asserting

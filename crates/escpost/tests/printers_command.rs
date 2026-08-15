@@ -899,28 +899,34 @@ fn printers_grant_usb_permissions_without_root_prints_the_plan_and_exits_success
         output.status.success(),
         "command failed:\n{stdout}\n{stderr}"
     );
-    assert!(
-        stdout.contains("/etc/udev/rules.d/70-escpost-usb-printers.rules"),
-        "the plan should name the exact rule path:\n{stdout}"
-    );
-    assert!(
-        stdout.contains(
-            "SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\""
-        ),
-        "the plan should include the full rule content:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("udevadm control --reload"),
-        "the plan should show the reload command:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("udevadm trigger --subsystem-match=usb"),
-        "the plan should show the trigger command:\n{stdout}"
-    );
+    // Exact match, not just substring checks: without root this is the
+    // entire informational payload, and its shape (both options, the
+    // sudo-prefixed bare-metal commands, the flush-left heredoc body) is
+    // exactly what a user is expected to read or paste.
     assert_eq!(
-        stderr.trim_end(),
-        "Run it with: sudo escpost printers grant-usb-permissions",
-        "stderr should point at rerunning the same command with sudo:\n{stderr}"
+        stdout,
+        "\
+Without root, this only shows how to grant USB printer access. Two ways:
+
+Let escpost apply it:
+  sudo escpost printers grant-usb-permissions
+
+Or run the commands yourself:
+  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF' >/dev/null
+# Grant locally logged-in users access to USB printer-class devices (escpost).
+SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
+EOF
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb
+"
+    );
+    // The old "Run it with: sudo ..." stderr hint is now redundant with
+    // "Let escpost apply it:" in the stdout plan above and has been
+    // removed; without root, this command writes nothing anywhere,
+    // including stderr.
+    assert_eq!(
+        stderr, "",
+        "the without-root plan is entirely stdout; stderr should be empty:\n{stderr}"
     );
 }
 
