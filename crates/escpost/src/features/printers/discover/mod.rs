@@ -3,10 +3,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::application;
+use crate::application::{self, ApplicationError};
 use crate::configuration::{self, PrinterConfiguration};
 use crate::discovery::{self, DiscoveredHost, ScanTarget, Subnet};
-use crate::error::CliError;
 
 use super::Transport;
 use super::inventory::{
@@ -67,7 +66,7 @@ pub(crate) async fn execute_with_observer(
     let config_path = configuration::resolved_path(request.config.as_deref())?;
     preflight()?;
     if request.port == 0 {
-        return Err(CliError::InvalidPrinterPort);
+        return Err(ApplicationError::InvalidPrinterPort);
     }
     let targets = if request.transport == Some(Transport::Usb) {
         Vec::new()
@@ -187,7 +186,7 @@ pub(crate) fn discovery_targets(subnets: &[Subnet]) -> application::Result<Vec<S
     if subnets.is_empty() {
         let targets = discovery::local_scan_targets()?;
         if targets.is_empty() {
-            return Err(CliError::NoDiscoverableSubnets);
+            return Err(ApplicationError::NoDiscoverableSubnets);
         }
         return Ok(targets);
     }

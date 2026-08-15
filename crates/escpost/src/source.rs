@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum InputFormat {
@@ -28,7 +28,7 @@ struct CaseManifest {
     profile: String,
 }
 
-pub(crate) fn load(path: &Path, format: InputFormat) -> Result<LoadedSource, CliError> {
+pub(crate) fn load(path: &Path, format: InputFormat) -> application::Result<LoadedSource> {
     if path == Path::new("-") {
         return load_stdin(format);
     }
@@ -42,21 +42,11 @@ pub(crate) fn load(path: &Path, format: InputFormat) -> Result<LoadedSource, Cli
     })
 }
 
-pub(crate) fn watch_path(path: &Path) -> Result<PathBuf, CliError> {
-    if path == Path::new("-") {
-        return Err(CliError::WatchStdin);
-    }
-    if path.is_dir() {
-        return Ok(path.join("input.hex"));
-    }
-    Ok(path.to_path_buf())
-}
-
-fn load_stdin(format: InputFormat) -> Result<LoadedSource, CliError> {
+fn load_stdin(format: InputFormat) -> application::Result<LoadedSource> {
     let mut bytes = Vec::new();
     io::stdin()
         .read_to_end(&mut bytes)
-        .map_err(CliError::ReadStdin)?;
+        .map_err(ApplicationError::ReadStdin)?;
     Ok(LoadedSource {
         bytes: match format {
             InputFormat::Hex => decode_hex(&bytes)?,
@@ -66,19 +56,22 @@ fn load_stdin(format: InputFormat) -> Result<LoadedSource, CliError> {
     })
 }
 
-fn load_case(directory: &Path) -> Result<LoadedSource, CliError> {
+fn load_case(directory: &Path) -> application::Result<LoadedSource> {
     let manifest_path = directory.join("case.toml");
     if !manifest_path.is_file() {
-        return Err(CliError::UnrecognizedDirectory(directory.to_path_buf()));
+        return Err(ApplicationError::UnrecognizedDirectory(
+            directory.to_path_buf(),
+        ));
     }
     let manifest_bytes = read(&manifest_path)?;
-    let manifest_text =
-        std::str::from_utf8(&manifest_bytes).map_err(|error| CliError::InvalidCaseManifest {
+    let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|error| {
+        ApplicationError::InvalidCaseManifest {
             path: manifest_path.clone(),
             message: error.to_string(),
-        })?;
+        }
+    })?;
     let manifest: CaseManifest =
-        toml::from_str(manifest_text).map_err(|error| CliError::InvalidCaseManifest {
+        toml::from_str(manifest_text).map_err(|error| ApplicationError::InvalidCaseManifest {
             path: manifest_path,
             message: error.to_string(),
         })?;
@@ -90,20 +83,22 @@ fn load_case(directory: &Path) -> Result<LoadedSource, CliError> {
     })
 }
 
-fn validate_case_manifest(manifest: &CaseManifest) -> Result<(), CliError> {
+fn validate_case_manifest(manifest: &CaseManifest) -> application::Result<()> {
     if manifest.schema_version != 1 {
-        return Err(CliError::UnsupportedCaseSchema(manifest.schema_version));
+        return Err(ApplicationError::UnsupportedCaseSchema(
+            manifest.schema_version,
+        ));
     }
     if manifest.name.is_empty() {
-        return Err(CliError::EmptyCaseField("name"));
+        return Err(ApplicationError::EmptyCaseField("name"));
     }
     if manifest.profile.is_empty() {
-        return Err(CliError::EmptyCaseField("profile"));
+        return Err(ApplicationError::EmptyCaseField("profile"));
     }
     Ok(())
 }
 
-fn load_file(path: &Path, format: InputFormat) -> Result<Vec<u8>, CliError> {
+fn load_file(path: &Path, format: InputFormat) -> application::Result<Vec<u8>> {
     let bytes = read(path)?;
     let format = match format {
         InputFormat::Auto if has_hex_extension(path) => InputFormat::Hex,
@@ -117,8 +112,8 @@ fn load_file(path: &Path, format: InputFormat) -> Result<Vec<u8>, CliError> {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, CliError> {
-    fs::read(path).map_err(|source| CliError::ReadInput {
+fn read(path: &Path) -> application::Result<Vec<u8>> {
+    fs::read(path).map_err(|source| ApplicationError::ReadInput {
         path: PathBuf::from(path),
         source,
     })
@@ -130,7 +125,7 @@ fn has_hex_extension(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("hex"))
 }
 
-fn decode_hex(input: &[u8]) -> Result<Vec<u8>, CliError> {
+fn decode_hex(input: &[u8]) -> application::Result<Vec<u8>> {
     let input = std::str::from_utf8(input)?;
     input
         .split_whitespace()
@@ -139,15 +134,15 @@ fn decode_hex(input: &[u8]) -> Result<Vec<u8>, CliError> {
         .collect()
 }
 
-fn decode_hex_byte(token: &str, position: usize) -> Result<u8, CliError> {
+fn decode_hex_byte(token: &str, position: usize) -> application::Result<u8> {
     let valid = token.len() == 2 && token.bytes().all(|byte| byte.is_ascii_hexdigit());
     if !valid {
-        return Err(CliError::InvalidHexByte {
+        return Err(ApplicationError::InvalidHexByte {
             token: token.to_owned(),
             position,
         });
     }
-    u8::from_str_radix(token, 16).map_err(|_| CliError::InvalidHexByte {
+    u8::from_str_radix(token, 16).map_err(|_| ApplicationError::InvalidHexByte {
         token: token.to_owned(),
         position,
     })

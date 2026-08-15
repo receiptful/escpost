@@ -10,9 +10,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use crate::application;
+use crate::application::{self, ApplicationError};
 use crate::configuration::{self, ConfiguredPrinter};
-use crate::error::CliError;
 
 pub(crate) mod cli;
 
@@ -88,7 +87,7 @@ pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<Res
     let configuration = configuration::load(request.config.as_deref())?;
     let printer = configuration
         .printer(&request.printer_name)
-        .ok_or_else(|| CliError::UnknownConfiguredPrinter(request.printer_name.clone()))?;
+        .ok_or_else(|| ApplicationError::UnknownConfiguredPrinter(request.printer_name.clone()))?;
     let target = match printer {
         ConfiguredPrinter::Usb(printer) => {
             let target = UsbTarget {
@@ -99,7 +98,7 @@ pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<Res
                 out_endpoint: printer.out_endpoint,
             };
             if !(0x01..=0x0f).contains(&target.out_endpoint) {
-                return Err(CliError::InvalidUsbOutEndpoint(target.out_endpoint));
+                return Err(ApplicationError::InvalidUsbOutEndpoint(target.out_endpoint));
             }
             Target::Usb(target)
         }
@@ -148,8 +147,8 @@ async fn send_network(target: &NetworkTarget, data: &[u8]) -> application::Resul
         TcpStream::connect((target.host.as_str(), target.port)),
     )
     .await
-    .map_err(|_| CliError::ConnectNetworkPrinterTimeout(endpoint.clone()))?
-    .map_err(|source| CliError::ConnectNetworkPrinter {
+    .map_err(|_| ApplicationError::ConnectNetworkPrinterTimeout(endpoint.clone()))?
+    .map_err(|source| ApplicationError::ConnectNetworkPrinter {
         target: endpoint.clone(),
         source,
     })?;
@@ -159,8 +158,8 @@ async fn send_network(target: &NetworkTarget, data: &[u8]) -> application::Resul
         stream.shutdown().await
     })
     .await
-    .map_err(|_| CliError::WriteNetworkPrinterTimeout(endpoint.clone()))?
-    .map_err(|source| CliError::WriteNetworkPrinter {
+    .map_err(|_| ApplicationError::WriteNetworkPrinterTimeout(endpoint.clone()))?
+    .map_err(|source| ApplicationError::WriteNetworkPrinter {
         target: endpoint,
         source,
     })
@@ -172,7 +171,7 @@ impl UsbTransport for NusbTransport {
     fn send(&mut self, target: &UsbTarget, data: &[u8]) -> application::Result<()> {
         let matches: Vec<_> = nusb::list_devices()
             .wait()
-            .map_err(CliError::EnumerateUsb)?
+            .map_err(ApplicationError::EnumerateUsb)?
             .filter(|device| {
                 device.vendor_id() == target.vendor_id
                     && device.product_id() == target.product_id
@@ -183,29 +182,30 @@ impl UsbTransport for NusbTransport {
             })
             .collect();
         let device_info = require_unique_device(matches, target)?;
-        let device = device_info
-            .open()
-            .wait()
-            .map_err(|source| CliError::OpenUsbDevice {
-                vendor_id: target.vendor_id,
-                product_id: target.product_id,
-                source,
-            })?;
+        let device =
+            device_info
+                .open()
+                .wait()
+                .map_err(|source| ApplicationError::OpenUsbDevice {
+                    vendor_id: target.vendor_id,
+                    product_id: target.product_id,
+                    source: source.into(),
+                })?;
         // On Linux this temporarily detaches a kernel driver such as usblp.
         // nusb reattaches that driver when the claimed interface is dropped.
         let interface = device
             .detach_and_claim_interface(target.interface)
             .wait()
-            .map_err(|source| CliError::ClaimUsbInterface {
+            .map_err(|source| ApplicationError::ClaimUsbInterface {
                 interface: target.interface,
-                source,
+                source: source.into(),
             })?;
         let endpoint = interface
             .endpoint::<Bulk, Out>(target.out_endpoint)
-            .map_err(|source| CliError::OpenUsbOutEndpoint {
+            .map_err(|source| ApplicationError::OpenUsbOutEndpoint {
                 interface: target.interface,
                 endpoint: target.out_endpoint,
-                source,
+                source: source.into(),
             })?;
         let mut writer = endpoint
             .writer(USB_WRITE_BUFFER_BYTES)
@@ -213,11 +213,11 @@ impl UsbTransport for NusbTransport {
 
         writer
             .write_all(data)
-            .map_err(|source| CliError::WriteUsb {
+            .map_err(|source| ApplicationError::WriteUsb {
                 endpoint: target.out_endpoint,
                 source,
             })?;
-        writer.flush().map_err(|source| CliError::FlushUsb {
+        writer.flush().map_err(|source| ApplicationError::FlushUsb {
             endpoint: target.out_endpoint,
             source,
         })
@@ -226,12 +226,12 @@ impl UsbTransport for NusbTransport {
 
 fn require_unique_device<T>(mut matches: Vec<T>, target: &UsbTarget) -> application::Result<T> {
     match matches.len() {
-        0 => Err(CliError::UsbDeviceNotFound {
+        0 => Err(ApplicationError::UsbDeviceNotFound {
             vendor_id: target.vendor_id,
             product_id: target.product_id,
         }),
         1 => Ok(matches.remove(0)),
-        count => Err(CliError::AmbiguousUsbDevices {
+        count => Err(ApplicationError::AmbiguousUsbDevices {
             vendor_id: target.vendor_id,
             product_id: target.product_id,
             count,
@@ -251,7 +251,7 @@ mod tests {
         NetworkTarget, Request, ResolveRequest, Target, UsbTarget, UsbTransport, print,
         print_with_transport, require_unique_device, resolve_target,
     };
-    use crate::error::CliError;
+    use crate::application::ApplicationError;
 
     #[tokio::test]
     async fn exact_bytes_reach_the_named_usb_target_unchanged() {
@@ -382,7 +382,7 @@ port = {port}
             .expect_err("ambiguous devices must fail");
         assert!(matches!(
             error,
-            CliError::AmbiguousUsbDevices {
+            ApplicationError::AmbiguousUsbDevices {
                 vendor_id: 0x0416,
                 product_id: 0x5011,
                 count: 2,
@@ -396,7 +396,7 @@ port = {port}
             .expect_err("a missing device must fail");
         assert!(matches!(
             error,
-            CliError::UsbDeviceNotFound {
+            ApplicationError::UsbDeviceNotFound {
                 vendor_id: 0x0416,
                 product_id: 0x5011,
             }
@@ -419,7 +419,7 @@ port = {port}
     }
 
     impl UsbTransport for RecordingTransport {
-        fn send(&mut self, target: &UsbTarget, data: &[u8]) -> Result<(), CliError> {
+        fn send(&mut self, target: &UsbTarget, data: &[u8]) -> crate::application::Result<()> {
             self.request = Some((target.clone(), data.to_vec()));
             Ok(())
         }

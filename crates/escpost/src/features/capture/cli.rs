@@ -9,7 +9,6 @@ use escpost_profiles::PrinterProfile;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::application;
 use crate::error::CliError;
 use crate::{net, profiles, web};
 
@@ -73,7 +72,7 @@ fn should_open_browser(
     !no_open && !non_interactive && stderr_is_terminal && !ci && browser_env != Some("none")
 }
 
-pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> application::Result<()> {
+pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(), CliError> {
     // Validate the configured profile before opening either listener. Captured
     // jobs pass that same validated profile to the synchronous rendering operation.
     let profile = profiles::load(&arguments.profile)?;

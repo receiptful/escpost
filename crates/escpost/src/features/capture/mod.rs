@@ -3,8 +3,7 @@
 use escpost_profiles::PrinterProfile;
 use escpost_render::{RenderOptions, TracedRenderResult, render_with_trace_and_options};
 
-use crate::application;
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 pub(crate) mod cli;
 
@@ -31,7 +30,7 @@ pub(crate) fn render_job(request: RenderRequest) -> application::Result<RenderRe
     };
     let raw_input = request.bytes;
     let rendered = render_with_trace_and_options(&raw_input, request.profile, &options)
-        .map_err(|error| CliError::Render(error.to_string()))?;
+        .map_err(|error| ApplicationError::Render(error.to_string()))?;
 
     Ok(RenderResponse {
         raw_input,

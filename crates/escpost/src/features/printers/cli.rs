@@ -7,9 +7,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
-use crate::application;
 use crate::configuration;
 use crate::discovery::Subnet;
+use crate::error::CliError;
 
 use super::discover::cli::run_discover;
 use super::{Transport, list};
@@ -128,7 +128,7 @@ pub(crate) enum PrinterTransport {
     Network,
 }
 
-pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> application::Result<()> {
+pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Result<(), CliError> {
     match arguments.command {
         PrintersCommand::List(list) => {
             let response = list::execute_with_observer(
@@ -170,8 +170,6 @@ fn transport_filter(transport: InventoryTransport) -> Transport {
         InventoryTransport::Network => Transport::Network,
     }
 }
-pub(crate) fn add_interactively(
-    config_path: Option<&std::path::Path>,
-) -> application::Result<String> {
+pub(crate) fn add_interactively(config_path: Option<&std::path::Path>) -> Result<String, CliError> {
     super::add::cli::add_interactively(config_path)
 }

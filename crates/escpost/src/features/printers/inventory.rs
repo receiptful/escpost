@@ -1,8 +1,8 @@
 //! USB device access and USB-identity-to-configuration matching, shared by
 //! `printers list`, `printers add`, and `printers discover`.
 
+use crate::application::{self, ApplicationError};
 use crate::configuration::{ConfiguredUsbPrinter, PrinterConfiguration};
-use crate::error::CliError;
 use nusb::MaybeFuture;
 use nusb::descriptors::{ConfigurationDescriptor, TransferType};
 use nusb::transfer::Direction;
@@ -84,7 +84,7 @@ pub(super) struct ConnectedUsbEntry {
     pub(super) configuration_index: usize,
 }
 pub(super) trait UsbInventory {
-    fn list(&mut self) -> Result<Vec<UsbPrinter>, CliError>;
+    fn list(&mut self) -> application::Result<Vec<UsbPrinter>>;
 
     /// Metadata-only USB presence check for `printers list`: the OS-reported
     /// identity (vendor, product, serial, live bus/address, and
@@ -93,7 +93,7 @@ pub(super) trait UsbInventory {
     /// about an individual device is opened or inspected — so, unlike
     /// `list_tolerant`, total enumeration failure is the only error this can
     /// return.
-    fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError>;
+    fn identities(&mut self) -> application::Result<Vec<UsbDeviceIdentity>>;
 
     /// Best-effort enumeration for `printers discover`: a device that fails
     /// to open or whose active configuration cannot be inspected is skipped
@@ -104,7 +104,7 @@ pub(super) trait UsbInventory {
     /// with no warnings, since only the real USB backend can fail on
     /// individual devices; a test double that needs to exercise a partial
     /// failure overrides this directly.
-    fn list_tolerant(&mut self) -> Result<UsbEnumeration, CliError> {
+    fn list_tolerant(&mut self) -> application::Result<UsbEnumeration> {
         Ok(UsbEnumeration {
             printers: self.list()?,
             failures: Vec::new(),
@@ -296,10 +296,10 @@ pub(super) fn merge_usb_identities(
 pub(super) struct NusbInventory;
 
 impl UsbInventory for NusbInventory {
-    fn list(&mut self) -> Result<Vec<UsbPrinter>, CliError> {
+    fn list(&mut self) -> application::Result<Vec<UsbPrinter>> {
         let devices = nusb::list_devices()
             .wait()
-            .map_err(CliError::EnumerateUsb)?;
+            .map_err(ApplicationError::EnumerateUsb)?;
         let mut printers = Vec::new();
 
         // Filter with operating-system metadata first. Listing should never
@@ -311,10 +311,10 @@ impl UsbInventory for NusbInventory {
         Ok(printers)
     }
 
-    fn list_tolerant(&mut self) -> Result<UsbEnumeration, CliError> {
+    fn list_tolerant(&mut self) -> application::Result<UsbEnumeration> {
         let devices = nusb::list_devices()
             .wait()
-            .map_err(CliError::EnumerateUsb)?;
+            .map_err(ApplicationError::EnumerateUsb)?;
         let mut printers = Vec::new();
         let mut failures = Vec::new();
 
@@ -330,10 +330,10 @@ impl UsbInventory for NusbInventory {
         Ok(UsbEnumeration { printers, failures })
     }
 
-    fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {
+    fn identities(&mut self) -> application::Result<Vec<UsbDeviceIdentity>> {
         let devices = nusb::list_devices()
             .wait()
-            .map_err(CliError::EnumerateUsb)?;
+            .map_err(ApplicationError::EnumerateUsb)?;
 
         // Operating-system device metadata only: no `.open()` anywhere in
         // this path, so `printers list` cannot fail with a permission error
@@ -357,23 +357,22 @@ impl UsbInventory for NusbInventory {
 /// `printers add`, where a device failure aborts the whole command) and
 /// `list_tolerant()`'s best-effort enumeration (used by `printers discover`,
 /// where a device failure becomes a warning and enumeration continues).
-fn usb_printers_for_device(device_info: &nusb::DeviceInfo) -> Result<Vec<UsbPrinter>, CliError> {
+fn usb_printers_for_device(device_info: &nusb::DeviceInfo) -> application::Result<Vec<UsbPrinter>> {
     let device = device_info
         .open()
         .wait()
-        .map_err(|source| CliError::OpenUsbDevice {
+        .map_err(|source| ApplicationError::OpenUsbDevice {
+            vendor_id: device_info.vendor_id(),
+            product_id: device_info.product_id(),
+            source: source.into(),
+        })?;
+    let configuration = device.active_configuration().map_err(|source| {
+        ApplicationError::InspectUsbConfiguration {
             vendor_id: device_info.vendor_id(),
             product_id: device_info.product_id(),
             source,
-        })?;
-    let configuration =
-        device
-            .active_configuration()
-            .map_err(|source| CliError::InspectUsbConfiguration {
-                vendor_id: device_info.vendor_id(),
-                product_id: device_info.product_id(),
-                source,
-            })?;
+        }
+    })?;
 
     Ok(printer_interfaces(configuration)
         .into_iter()
@@ -391,9 +390,9 @@ fn usb_printers_for_device(device_info: &nusb::DeviceInfo) -> Result<Vec<UsbPrin
         })
         .collect())
 }
-fn usb_enumeration_failure(error: &CliError) -> UsbEnumerationFailure {
+fn usb_enumeration_failure(error: &ApplicationError) -> UsbEnumerationFailure {
     match error {
-        CliError::OpenUsbDevice {
+        ApplicationError::OpenUsbDevice {
             vendor_id,
             product_id,
             source,
@@ -404,7 +403,7 @@ fn usb_enumeration_failure(error: &CliError) -> UsbEnumerationFailure {
             reason: source.to_string(),
             permission_denied: error.is_permission_denied_usb_open(),
         },
-        CliError::InspectUsbConfiguration {
+        ApplicationError::InspectUsbConfiguration {
             vendor_id,
             product_id,
             source,

@@ -5,6 +5,7 @@ use std::fmt;
 use std::io::{self, IsTerminal};
 use std::time::Duration;
 
+use crate::application::ApplicationError;
 use crate::configuration::{self, PrinterConfiguration};
 use crate::discovery::DiscoveredHost;
 use crate::error::CliError;
@@ -230,7 +231,7 @@ fn resolve_add(
                 None => return Err(CliError::MissingPrinterHost),
             };
             if host.trim().is_empty() {
-                return Err(CliError::BlankPrinterHost);
+                return Err(ApplicationError::BlankPrinterHost.into());
             }
             let port = match port {
                 Some(port) => port,
@@ -238,7 +239,7 @@ fn resolve_add(
                 None => 9100,
             };
             if port == 0 {
-                return Err(CliError::InvalidPrinterPort);
+                return Err(ApplicationError::InvalidPrinterPort.into());
             }
             ResolvedAddConnection::Network { host, port }
         }
@@ -256,7 +257,7 @@ fn resolve_add(
         .as_deref()
         .is_some_and(|profile| profile.trim().is_empty())
     {
-        return Err(CliError::BlankPrinterProfile);
+        return Err(ApplicationError::BlankPrinterProfile.into());
     }
 
     Ok(ResolvedAddPrinter {
@@ -349,10 +350,10 @@ fn resolve_name(
 }
 fn validate_name(name: &str, configuration: &PrinterConfiguration) -> Result<(), CliError> {
     if name.trim().is_empty() {
-        return Err(CliError::BlankPrinterName);
+        return Err(ApplicationError::BlankPrinterName.into());
     }
     if configuration.printer(name).is_some() {
-        return Err(CliError::PrinterAlreadyConfigured(name.to_owned()));
+        return Err(ApplicationError::PrinterAlreadyConfigured(name.to_owned()).into());
     }
     Ok(())
 }
@@ -488,7 +489,7 @@ async fn discover_host_for_add(
 ) -> Result<DiscoveredHost, CliError> {
     let port = arguments.port.unwrap_or(9100);
     if port == 0 {
-        return Err(CliError::InvalidPrinterPort);
+        return Err(ApplicationError::InvalidPrinterPort.into());
     }
     let configuration = configuration::load_for_update(config_path)?;
     let targets = discovery_targets(&arguments.subnet)?;

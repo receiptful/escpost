@@ -2,9 +2,8 @@
 
 use std::path::PathBuf;
 
-use crate::application;
+use crate::application::{self, ApplicationError};
 use crate::configuration::{self, UsbPrinterRegistration};
-use crate::error::CliError;
 
 use super::Connection;
 
@@ -66,21 +65,21 @@ pub(crate) fn execute(request: Request) -> application::Result<Response> {
 
 fn validate(request: &Request) -> application::Result<()> {
     if request.name.trim().is_empty() {
-        return Err(CliError::BlankPrinterName);
+        return Err(ApplicationError::BlankPrinterName);
     }
     if request
         .profile
         .as_deref()
         .is_some_and(|profile| profile.trim().is_empty())
     {
-        return Err(CliError::BlankPrinterProfile);
+        return Err(ApplicationError::BlankPrinterProfile);
     }
     if let Connection::Network { host, port } = &request.connection {
         if host.trim().is_empty() {
-            return Err(CliError::BlankPrinterHost);
+            return Err(ApplicationError::BlankPrinterHost);
         }
         if *port == 0 {
-            return Err(CliError::InvalidPrinterPort);
+            return Err(ApplicationError::InvalidPrinterPort);
         }
     }
     Ok(())

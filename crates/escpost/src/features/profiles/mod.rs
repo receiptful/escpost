@@ -6,8 +6,7 @@ use escpost_profiles::resolver::{self, ResolveError};
 use escpost_profiles::{BarcodeSystem, Font, PrinterProfile, ProfileSource};
 use serde::Serialize;
 
-use crate::application;
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 pub mod cli;
 
@@ -96,10 +95,10 @@ fn source_filter_label(filter: ProfileSourceFilter) -> &'static str {
     }
 }
 
-fn map_resolve_error(error: ResolveError) -> CliError {
+fn map_resolve_error(error: ResolveError) -> ApplicationError {
     match error {
-        ResolveError::UnknownProfile(id) => CliError::UnknownProfile(id),
-        ResolveError::LoadPack(message) => CliError::LoadProfiles(message),
+        ResolveError::UnknownProfile(id) => ApplicationError::UnknownProfile(id),
+        ResolveError::LoadPack(message) => ApplicationError::LoadProfiles(message),
     }
 }
 

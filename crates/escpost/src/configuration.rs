@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 const CONFIG_DIRECTORY_ENV: &str = "ESCPOST_CONFIG_DIR";
 const CONFIG_DISPLAY_DIRECTORY_ENV: &str = "ESCPOST_CONFIG_DISPLAY_DIR";
@@ -148,7 +148,7 @@ impl ConfiguredPrinter<'_> {
 /// Missing implicit configuration is normal, but a file named explicitly by
 /// the developer must be readable and valid. Keeping that distinction here
 /// prevents read-only commands from creating configuration as a side effect.
-pub(crate) fn load(explicit_path: Option<&Path>) -> Result<PrinterConfiguration, CliError> {
+pub(crate) fn load(explicit_path: Option<&Path>) -> application::Result<PrinterConfiguration> {
     let (path, required) = resolve_path(explicit_path)?;
 
     let content = match fs::read_to_string(&path) {
@@ -157,27 +157,27 @@ pub(crate) fn load(explicit_path: Option<&Path>) -> Result<PrinterConfiguration,
             return Ok(PrinterConfiguration::default());
         }
         Err(source) => {
-            return Err(CliError::ReadPrinterConfiguration { path, source });
+            return Err(ApplicationError::ReadPrinterConfiguration { path, source });
         }
     };
     PrinterConfiguration::parse(&content)
-        .map_err(|message| CliError::InvalidPrinterConfiguration { path, message })
+        .map_err(|message| ApplicationError::InvalidPrinterConfiguration { path, message })
 }
 
 /// Load configuration before a command which may create the selected file.
 pub(crate) fn load_for_update(
     explicit_path: Option<&Path>,
-) -> Result<PrinterConfiguration, CliError> {
+) -> application::Result<PrinterConfiguration> {
     let (path, _) = resolve_path(explicit_path)?;
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             return Ok(PrinterConfiguration::default());
         }
-        Err(source) => return Err(CliError::ReadPrinterConfiguration { path, source }),
+        Err(source) => return Err(ApplicationError::ReadPrinterConfiguration { path, source }),
     };
     PrinterConfiguration::parse(&content)
-        .map_err(|message| CliError::InvalidPrinterConfiguration { path, message })
+        .map_err(|message| ApplicationError::InvalidPrinterConfiguration { path, message })
 }
 
 pub(crate) fn add_network_printer(
@@ -186,7 +186,7 @@ pub(crate) fn add_network_printer(
     host: &str,
     port: u16,
     profile: Option<&str>,
-) -> Result<PathBuf, CliError> {
+) -> application::Result<PathBuf> {
     let mut printer = toml::Table::new();
     printer.insert(
         "transport".to_owned(),
@@ -207,7 +207,7 @@ pub(crate) fn add_usb_printer(
     explicit_path: Option<&Path>,
     name: &str,
     registration: &UsbPrinterRegistration<'_>,
-) -> Result<PathBuf, CliError> {
+) -> application::Result<PathBuf> {
     let mut printer = toml::Table::new();
     printer.insert(
         "transport".to_owned(),
@@ -254,16 +254,16 @@ fn add_printer_table(
     explicit_path: Option<&Path>,
     name: &str,
     printer: toml::Table,
-) -> Result<PathBuf, CliError> {
+) -> application::Result<PathBuf> {
     let (path, _) = resolve_path(explicit_path)?;
     let existing = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(CliError::ReadPrinterConfiguration { path, source }),
+        Err(source) => return Err(ApplicationError::ReadPrinterConfiguration { path, source }),
     };
     if !existing.is_empty() {
         PrinterConfiguration::parse(&existing).map_err(|message| {
-            CliError::InvalidPrinterConfiguration {
+            ApplicationError::InvalidPrinterConfiguration {
                 path: path.clone(),
                 message,
             }
@@ -273,14 +273,14 @@ fn add_printer_table(
         toml::Table::new()
     } else {
         toml::from_str::<toml::Table>(&existing).map_err(|error| {
-            CliError::InvalidPrinterConfiguration {
+            ApplicationError::InvalidPrinterConfiguration {
                 path: path.clone(),
                 message: error.to_string(),
             }
         })?
     };
     if document.contains_key(name) {
-        return Err(CliError::PrinterAlreadyConfigured(name.to_owned()));
+        return Err(ApplicationError::PrinterAlreadyConfigured(name.to_owned()));
     }
 
     // Serialize only the new table, then append it to the original text. This
@@ -290,14 +290,14 @@ fn add_printer_table(
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| {
-            CliError::CreatePrinterConfigurationDirectory {
+            ApplicationError::CreatePrinterConfigurationDirectory {
                 path: parent.to_owned(),
                 source,
             }
         })?;
     }
     let addition = toml::to_string_pretty(&addition)
-        .map_err(|error| CliError::SerializePrinterConfiguration(error.to_string()))?;
+        .map_err(|error| ApplicationError::SerializePrinterConfiguration(error.to_string()))?;
     let mut content = existing;
     if !content.is_empty() {
         if !content.ends_with('\n') {
@@ -307,7 +307,7 @@ fn add_printer_table(
     }
     content.push_str(&addition);
     write_atomically(&path, content.as_bytes()).map_err(|source| {
-        CliError::WritePrinterConfiguration {
+        ApplicationError::WritePrinterConfiguration {
             path: path.clone(),
             source,
         }
@@ -361,11 +361,11 @@ fn write_atomically(path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
 /// Report the configuration path a command reads or writes, without requiring
 /// the file to exist. Read-only commands use this to tell a developer where
 /// printers are configured.
-pub(crate) fn resolved_path(explicit_path: Option<&Path>) -> Result<PathBuf, CliError> {
+pub(crate) fn resolved_path(explicit_path: Option<&Path>) -> application::Result<PathBuf> {
     resolve_path(explicit_path).map(|(path, _)| path)
 }
 
-fn resolve_path(explicit_path: Option<&Path>) -> Result<(PathBuf, bool), CliError> {
+fn resolve_path(explicit_path: Option<&Path>) -> application::Result<(PathBuf, bool)> {
     match explicit_path {
         Some(path) => Ok((path.to_owned(), true)),
         None => match config_directory_override() {
@@ -415,10 +415,10 @@ fn display_path_with(
     path.display().to_string()
 }
 
-fn platform_config_directory() -> Result<PathBuf, CliError> {
+fn platform_config_directory() -> application::Result<PathBuf> {
     directories::ProjectDirs::from("io", "receiptful", "escpost")
         .map(|directories| directories.config_dir().to_owned())
-        .ok_or(CliError::NoUserConfigDirectory)
+        .ok_or(ApplicationError::NoUserConfigDirectory)
 }
 
 fn parse_network_printer(

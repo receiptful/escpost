@@ -5,8 +5,7 @@ use escpost_render::{
     RenderOptions, RenderResult, Trace, render_with_options, render_with_trace_and_options,
 };
 
-use crate::application;
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 pub(crate) mod cli;
 
@@ -33,12 +32,12 @@ pub(crate) fn render(request: Request) -> application::Result<Response> {
     };
     let (render, trace) = if request.trace {
         let traced = render_with_trace_and_options(&request.bytes, profile, &options)
-            .map_err(|error| CliError::Render(error.to_string()))?;
+            .map_err(|error| ApplicationError::Render(error.to_string()))?;
         (traced.render, Some(traced.trace))
     } else {
         (
             render_with_options(&request.bytes, profile, &options)
-                .map_err(|error| CliError::Render(error.to_string()))?,
+                .map_err(|error| ApplicationError::Render(error.to_string()))?,
             None,
         )
     };
@@ -50,10 +49,10 @@ pub(crate) fn render(request: Request) -> application::Result<Response> {
     })
 }
 
-fn map_resolve_error(error: ResolveError) -> CliError {
+fn map_resolve_error(error: ResolveError) -> ApplicationError {
     match error {
-        ResolveError::UnknownProfile(id) => CliError::UnknownProfile(id),
-        ResolveError::LoadPack(message) => CliError::LoadProfiles(message),
+        ResolveError::UnknownProfile(id) => ApplicationError::UnknownProfile(id),
+        ResolveError::LoadPack(message) => ApplicationError::LoadProfiles(message),
     }
 }
 

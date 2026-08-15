@@ -408,11 +408,11 @@ Then unplug and replug the printer to be certain access is fully revoked.
 
     #[test]
     fn divergent_rule_error_shows_both_the_existing_and_desired_content() {
-        let error = CliError::UsbRuleDiverges {
+        let error = CliError::from(crate::application::ApplicationError::UsbRuleDiverges {
             path: Path::new(RULES_PATH).to_owned(),
             existing: "MODE=\"0666\"\n".to_owned(),
             desired: RULE_CONTENT.to_owned(),
-        };
+        });
 
         let message = error.to_string();
         assert!(

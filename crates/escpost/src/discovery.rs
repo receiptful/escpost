@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 /// The longest network an automatic scan will sweep. A /24 means at most 254
 /// probes per interface; anything larger must be requested with --subnet.
@@ -127,8 +127,9 @@ pub(crate) fn auto_scan_targets(addresses: Vec<InterfaceAddress>) -> Vec<ScanTar
     targets
 }
 
-pub(crate) fn local_scan_targets() -> Result<Vec<ScanTarget>, CliError> {
-    let interfaces = if_addrs::get_if_addrs().map_err(CliError::EnumerateNetworkInterfaces)?;
+pub(crate) fn local_scan_targets() -> application::Result<Vec<ScanTarget>> {
+    let interfaces =
+        if_addrs::get_if_addrs().map_err(ApplicationError::EnumerateNetworkInterfaces)?;
     let addresses = interfaces
         .into_iter()
         .filter_map(|interface| match interface.addr {

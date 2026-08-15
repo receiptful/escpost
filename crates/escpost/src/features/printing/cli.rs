@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use clap::{Args, ValueEnum};
 use inquire::Select;
 
-use crate::application;
 use crate::configuration;
 use crate::error::CliError;
 use crate::features::printers::cli as printers;
@@ -62,14 +61,14 @@ enum PrinterChoice {
 }
 
 trait PrinterSelector {
-    fn select(&mut self, choices: Vec<PrinterChoice>) -> application::Result<PrinterChoice>;
+    fn select(&mut self, choices: Vec<PrinterChoice>) -> Result<PrinterChoice, CliError>;
 }
 
 trait PrinterAdder {
-    fn add(&mut self, config_path: Option<&Path>) -> application::Result<String>;
+    fn add(&mut self, config_path: Option<&Path>) -> Result<String, CliError>;
 }
 
-pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> application::Result<()> {
+pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(), CliError> {
     let PrintArgs {
         source,
         format,
@@ -134,7 +133,7 @@ async fn execute(
     selector: &mut impl PrinterSelector,
     adder: &mut impl PrinterAdder,
     transport: &mut impl super::UsbTransport,
-) -> application::Result<super::Response> {
+) -> Result<super::Response, CliError> {
     let PrintArgs {
         source,
         format,
@@ -156,6 +155,7 @@ async fn execute(
         transport,
     )
     .await
+    .map_err(Into::into)
 }
 
 fn resolve_printer_name(
@@ -164,7 +164,7 @@ fn resolve_printer_name(
     can_prompt: bool,
     selector: &mut impl PrinterSelector,
     adder: &mut impl PrinterAdder,
-) -> application::Result<String> {
+) -> Result<String, CliError> {
     if let Some(name) = explicit_name {
         return Ok(name);
     }
@@ -205,7 +205,7 @@ fn choice_name(choice: &PrinterChoice) -> &str {
 struct InquirePrinterSelector;
 
 impl PrinterSelector for InquirePrinterSelector {
-    fn select(&mut self, choices: Vec<PrinterChoice>) -> application::Result<PrinterChoice> {
+    fn select(&mut self, choices: Vec<PrinterChoice>) -> Result<PrinterChoice, CliError> {
         Select::new("Printer", choices)
             .prompt()
             .map_err(|error| CliError::PrinterPrompt(error.to_string()))
@@ -215,7 +215,7 @@ impl PrinterSelector for InquirePrinterSelector {
 struct InquirePrinterAdder;
 
 impl PrinterAdder for InquirePrinterAdder {
-    fn add(&mut self, config_path: Option<&Path>) -> application::Result<String> {
+    fn add(&mut self, config_path: Option<&Path>) -> Result<String, CliError> {
         printers::add_interactively(config_path)
     }
 }
@@ -426,7 +426,7 @@ port = {}
     }
 
     impl UsbTransport for RecordingTransport {
-        fn send(&mut self, target: &UsbTarget, data: &[u8]) -> Result<(), CliError> {
+        fn send(&mut self, target: &UsbTarget, data: &[u8]) -> crate::application::Result<()> {
             self.request = Some((target.clone(), data.to_vec()));
             Ok(())
         }

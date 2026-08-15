@@ -9,8 +9,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::application;
-use crate::error::CliError;
+use crate::application::{self, ApplicationError};
 
 const RULES_PATH: &str = "/etc/udev/rules.d/70-escpost-usb-printers.rules";
 
@@ -59,7 +58,7 @@ fn apply_at(
         }
         RuleDecision::AlreadyCurrent => RuleChange::AlreadyCurrent,
         RuleDecision::Diverges => {
-            return Err(CliError::UsbRuleDiverges {
+            return Err(ApplicationError::UsbRuleDiverges {
                 path: path.to_owned(),
                 existing: existing.unwrap_or_default(),
                 desired: RULE_CONTENT.to_owned(),
@@ -89,7 +88,7 @@ fn read_existing_rule(path: &Path) -> application::Result<Option<String>> {
     match std::fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(CliError::ReadUsbRulesFile {
+        Err(source) => Err(ApplicationError::ReadUsbRulesFile {
             path: path.to_owned(),
             source,
         }),
@@ -125,7 +124,7 @@ fn write_rule_atomically(path: &Path, content: &str) -> application::Result<()> 
     if result.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
-    result.map_err(|source| CliError::WriteUsbRulesFile {
+    result.map_err(|source| ApplicationError::WriteUsbRulesFile {
         path: path.to_owned(),
         source,
     })
@@ -141,12 +140,12 @@ fn run_udevadm(args: &[&'static str]) -> application::Result<()> {
     let output = Command::new("udevadm")
         .args(args)
         .output()
-        .map_err(|source| CliError::RunUdevadm {
+        .map_err(|source| ApplicationError::RunUdevadm {
             command: command.clone(),
             source,
         })?;
     if !output.status.success() {
-        return Err(CliError::UdevadmFailed {
+        return Err(ApplicationError::UdevadmFailed {
             command,
             status: output.status,
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),

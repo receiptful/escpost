@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::inventory::{UsbDeviceIdentity, UsbEnumeration, UsbInventory, UsbPrinter};
+use crate::application;
 use crate::discovery::DiscoveredHost;
-use crate::error::CliError;
 
 #[derive(Default)]
 pub(super) struct FixedInventory {
@@ -16,11 +16,11 @@ pub(super) struct FixedInventory {
 }
 
 impl UsbInventory for FixedInventory {
-    fn list(&mut self) -> Result<Vec<UsbPrinter>, CliError> {
+    fn list(&mut self) -> application::Result<Vec<UsbPrinter>> {
         Ok(self.printers.clone())
     }
 
-    fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {
+    fn identities(&mut self) -> application::Result<Vec<UsbDeviceIdentity>> {
         Ok(self.printers.iter().map(usb_printer_identity).collect())
     }
 }
@@ -30,15 +30,15 @@ pub(super) struct TolerantInventory {
 }
 
 impl UsbInventory for TolerantInventory {
-    fn list(&mut self) -> Result<Vec<UsbPrinter>, CliError> {
+    fn list(&mut self) -> application::Result<Vec<UsbPrinter>> {
         Ok(Vec::new())
     }
 
-    fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {
+    fn identities(&mut self) -> application::Result<Vec<UsbDeviceIdentity>> {
         Ok(Vec::new())
     }
 
-    fn list_tolerant(&mut self) -> Result<UsbEnumeration, CliError> {
+    fn list_tolerant(&mut self) -> application::Result<UsbEnumeration> {
         Ok(self
             .enumeration
             .take()

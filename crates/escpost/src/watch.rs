@@ -1,9 +1,10 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use escpost_render::TracedRenderResult;
 
+use crate::application::{self, ApplicationError};
 use crate::error::CliError;
 use crate::features::rendering::{self, Request};
 use crate::source::InputFormat;
@@ -30,10 +31,20 @@ struct SourceStamp {
 }
 
 pub(crate) fn start(config: WatchConfig, jobs: web::JobStore) -> Result<(), CliError> {
-    let watched_path = source::watch_path(&config.source)?;
+    let watched_path = source_path(&config.source)?;
     let initial_stamp = inspect(&watched_path)?;
     tokio::spawn(run(config, watched_path, initial_stamp, jobs));
     Ok(())
+}
+
+pub(crate) fn source_path(path: &Path) -> Result<PathBuf, CliError> {
+    if path == Path::new("-") {
+        return Err(CliError::WatchStdin);
+    }
+    if path.is_dir() {
+        return Ok(path.join("input.hex"));
+    }
+    Ok(path.to_owned())
 }
 
 async fn run(
@@ -90,8 +101,8 @@ fn rerender(config: &WatchConfig) -> Result<TracedRenderResult, CliError> {
     })
 }
 
-fn inspect(path: &PathBuf) -> Result<SourceStamp, CliError> {
-    let metadata = fs::metadata(path).map_err(|source| CliError::InspectWatchedSource {
+fn inspect(path: &PathBuf) -> application::Result<SourceStamp> {
+    let metadata = fs::metadata(path).map_err(|source| ApplicationError::InspectWatchedSource {
         path: path.clone(),
         source,
     })?;

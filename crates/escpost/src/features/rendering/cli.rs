@@ -8,7 +8,6 @@ use clap::{Args, ValueEnum};
 use escpost_render::TracedRenderResult;
 use inquire::Select;
 
-use crate::application;
 use crate::error::CliError;
 use crate::{output, profiles, source};
 
@@ -84,7 +83,7 @@ impl From<InputFormat> for source::InputFormat {
     }
 }
 
-pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> application::Result<()> {
+pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<(), CliError> {
     let web_enabled =
         arguments.web || arguments.browser || arguments.web_listen.is_some() || arguments.watch;
     let binary_stdout = arguments.output.as_deref() == Some(Path::new("-"));
@@ -97,7 +96,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> applica
     if arguments.watch {
         // Reject stdin before trying to consume it. A developer should get the
         // invalid-invocation error immediately, even if a producer never closes.
-        source::watch_path(&arguments.source)?;
+        crate::watch::source_path(&arguments.source)?;
     }
 
     let input = source::load(&arguments.source, arguments.format.into())?;
@@ -165,7 +164,7 @@ fn resolve_profile(
     explicit: Option<String>,
     source_profile: Option<String>,
     can_prompt: bool,
-) -> application::Result<String> {
+) -> Result<String, CliError> {
     if let Some(profile) = explicit.or(source_profile) {
         return Ok(profile);
     }

@@ -5,7 +5,6 @@ use std::io::IsTerminal;
 use clap::{Args, Subcommand, ValueEnum};
 use inquire::Select;
 
-use crate::application;
 use crate::error::CliError;
 
 use super::{
@@ -69,7 +68,7 @@ pub(crate) struct ShowProfileArgs {
     pub(crate) json: bool,
 }
 
-pub(crate) fn run(arguments: ProfilesArgs, non_interactive: bool) -> application::Result<()> {
+pub(crate) fn run(arguments: ProfilesArgs, non_interactive: bool) -> Result<(), CliError> {
     match arguments.command {
         ProfilesCommand::List(arguments) => run_list(arguments),
         ProfilesCommand::Show(arguments) => run_show(arguments),
@@ -77,7 +76,7 @@ pub(crate) fn run(arguments: ProfilesArgs, non_interactive: bool) -> application
     }
 }
 
-fn run_list(arguments: ListProfilesArgs) -> application::Result<()> {
+fn run_list(arguments: ListProfilesArgs) -> Result<(), CliError> {
     let response = list(ListRequest {
         vendor: arguments.vendor,
         source: arguments.source.map(profile_source_filter),
@@ -90,25 +89,33 @@ fn run_list(arguments: ListProfilesArgs) -> application::Result<()> {
     }
 
     if arguments.json {
-        println!("{}", serde_json::to_string_pretty(&response.profiles)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response.profiles)
+                .map_err(CliError::SerializeJsonOutput)?
+        );
     } else {
         println!("{}", render_table(&response.profiles));
     }
     Ok(())
 }
 
-fn run_show(arguments: ShowProfileArgs) -> application::Result<()> {
+fn run_show(arguments: ShowProfileArgs) -> Result<(), CliError> {
     let response = show(ShowRequest { id: arguments.id })?;
 
     if arguments.json {
-        println!("{}", serde_json::to_string_pretty(&response.profile)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response.profile)
+                .map_err(CliError::SerializeJsonOutput)?
+        );
     } else {
         println!("{}", render_detail(&response.profile));
     }
     Ok(())
 }
 
-fn run_find(_arguments: FindProfileArgs, non_interactive: bool) -> application::Result<()> {
+fn run_find(_arguments: FindProfileArgs, non_interactive: bool) -> Result<(), CliError> {
     let can_prompt =
         !non_interactive && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !can_prompt {

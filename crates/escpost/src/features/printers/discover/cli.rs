@@ -14,6 +14,7 @@ use super::super::cli::output::{
 use super::super::cli::{DiscoverPrintersArgs, InventoryTransport};
 use super::super::inventory::{UsbEnumerationFailure, UsbFailureStage};
 use super::{Request, Response, execute_with_observer};
+use crate::application::ApplicationError;
 use crate::configuration::{ConfiguredNetworkPrinter, PrinterConfiguration};
 use crate::discovery::{self, DiscoveredHost, ScanTarget, Subnet};
 use crate::error::CliError;
@@ -78,6 +79,9 @@ pub(crate) async fn run_discover(
         && (!arguments.subnet.is_empty()
             || arguments.port.is_some()
             || arguments.timeout.is_some());
+    if invalid_usb_options {
+        return Err(CliError::NetworkScanOptionForUsbDiscovery);
+    }
     let bar = ProgressBar::with_draw_target(Some(0), ProgressDrawTarget::stderr());
     bar.set_style(
         ProgressStyle::with_template("{msg} [{bar:40}] {pos}/{len}")
@@ -97,13 +101,7 @@ pub(crate) async fn run_discover(
             subnets: arguments.subnet,
             timeout: Duration::from_millis(arguments.timeout.unwrap_or(1000)),
         },
-        || {
-            if invalid_usb_options {
-                Err(CliError::NetworkScanOptionForUsbDiscovery)
-            } else {
-                Ok(())
-            }
-        },
+        || Ok(()),
         |path, targets, auto_detected| {
             eprintln!(
                 "Reading configuration from {}",
@@ -243,7 +241,7 @@ pub(crate) fn discovery_targets(subnets: &[Subnet]) -> Result<Vec<ScanTarget>, C
     if subnets.is_empty() {
         let targets = discovery::local_scan_targets()?;
         if targets.is_empty() {
-            return Err(CliError::NoDiscoverableSubnets);
+            return Err(ApplicationError::NoDiscoverableSubnets.into());
         }
         return Ok(targets);
     }
