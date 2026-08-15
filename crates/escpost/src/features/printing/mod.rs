@@ -41,6 +41,7 @@ pub(crate) struct Request {
 /// Facts about the target selected from printer configuration.
 pub(crate) struct Response {
     pub(crate) printer_name: String,
+    pub(crate) bytes_sent: usize,
     pub(crate) target: Target,
 }
 
@@ -125,6 +126,7 @@ async fn print_with_transport(
     request: Request,
     transport: &mut impl UsbTransport,
 ) -> application::Result<Response> {
+    let bytes_sent = request.bytes.len();
     let ResolvedPrinter {
         printer_name,
         target,
@@ -136,6 +138,7 @@ async fn print_with_transport(
 
     Ok(Response {
         printer_name,
+        bytes_sent,
         target,
     })
 }
@@ -289,6 +292,7 @@ out_endpoint = \"0x01\"
         .expect("printing should succeed");
 
         assert_eq!(response.printer_name, "counter");
+        assert_eq!(response.bytes_sent, 5);
         assert_eq!(
             response.target,
             Target::Usb(UsbTarget {
@@ -361,6 +365,7 @@ port = {port}
         .expect("printing should succeed");
 
         assert_eq!(response.printer_name, "kitchen");
+        assert_eq!(response.bytes_sent, 5);
         assert_eq!(
             response.target,
             Target::Network(NetworkTarget {

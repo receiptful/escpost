@@ -69,71 +69,25 @@ trait PrinterAdder {
 }
 
 pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(), CliError> {
-    let PrintArgs {
-        source,
-        format,
-        printer,
-        config,
-    } = arguments;
     let can_prompt = !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal();
-    let printer_name = resolve_printer_name(
-        printer,
-        config.as_deref(),
+    let request = prepare_request(
+        arguments,
         can_prompt,
         &mut InquirePrinterSelector,
         &mut InquirePrinterAdder,
     )?;
-    let printer = resolve_target(ResolveRequest {
-        printer_name,
-        config,
-    })?;
-    let input = source::load(&source, format.into())?;
-    let bytes_sent = input.bytes.len();
-    let response = print(Request {
-        bytes: input.bytes,
-        printer,
-    })
-    .await?;
+    let response = print(request).await?;
 
-    present(&response, bytes_sent);
+    present(&response);
     Ok(())
 }
 
-fn present(response: &super::Response, bytes_sent: usize) {
-    eprintln!("Printer: {}", response.printer_name);
-    match &response.target {
-        Target::Usb(target) => {
-            eprintln!("Transport: usb");
-            eprintln!("USB target: {}", format_usb_target(target));
-        }
-        Target::Network(target) => {
-            eprintln!("Transport: network");
-            eprintln!("Network target: {}", target.endpoint());
-        }
-    }
-    eprintln!("Bytes sent: {bytes_sent}");
-}
-
-fn format_usb_target(target: &UsbTarget) -> String {
-    let mut output = format!(
-        "{:04x}:{:04x}, interface {}, OUT {:#04x}",
-        target.vendor_id, target.product_id, target.interface, target.out_endpoint
-    );
-    if let Some(serial_number) = &target.serial_number {
-        output.push_str(", serial ");
-        output.push_str(serial_number);
-    }
-    output
-}
-
-#[cfg(test)]
-async fn execute(
+fn prepare_request(
     arguments: PrintArgs,
     can_prompt: bool,
     selector: &mut impl PrinterSelector,
     adder: &mut impl PrinterAdder,
-    transport: &mut impl super::UsbTransport,
-) -> Result<super::Response, CliError> {
+) -> Result<Request, CliError> {
     let PrintArgs {
         source,
         format,
@@ -147,15 +101,37 @@ async fn execute(
         config,
     })?;
     let input = source::load(&source, format.into())?;
-    super::print_with_transport(
-        Request {
-            bytes: input.bytes,
-            printer,
-        },
-        transport,
-    )
-    .await
-    .map_err(Into::into)
+    Ok(Request {
+        bytes: input.bytes,
+        printer,
+    })
+}
+
+fn present(response: &super::Response) {
+    eprintln!("Printer: {}", response.printer_name);
+    match &response.target {
+        Target::Usb(target) => {
+            eprintln!("Transport: usb");
+            eprintln!("USB target: {}", format_usb_target(target));
+        }
+        Target::Network(target) => {
+            eprintln!("Transport: network");
+            eprintln!("Network target: {}", target.endpoint());
+        }
+    }
+    eprintln!("Bytes sent: {}", response.bytes_sent);
+}
+
+fn format_usb_target(target: &UsbTarget) -> String {
+    let mut output = format!(
+        "{:04x}:{:04x}, interface {}, OUT {:#04x}",
+        target.vendor_id, target.product_id, target.interface, target.out_endpoint
+    );
+    if let Some(serial_number) = &target.serial_number {
+        output.push_str(", serial ");
+        output.push_str(serial_number);
+    }
+    output
 }
 
 fn resolve_printer_name(
@@ -240,21 +216,19 @@ impl fmt::Display for PrinterChoice {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::Read;
-    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
-    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, execute,
-        format_usb_target,
+        InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, format_usb_target,
+        prepare_request,
     };
+    use crate::application::ApplicationError;
     use crate::error::CliError;
-    use crate::features::printing::{UsbTarget, UsbTransport};
+    use crate::features::printing::{NetworkTarget, Target, UsbTarget};
 
-    #[tokio::test]
-    async fn interactive_selection_loads_the_source_and_prints_to_the_chosen_printer() {
+    #[test]
+    fn interactive_selection_prepares_the_chosen_target_and_source_bytes() {
         let directory = temporary_directory("interactive-existing");
         let source = directory.join("receipt.hex");
         let configuration = directory.join("printers.toml");
@@ -272,9 +246,7 @@ out_endpoint = \"0x01\"
 ",
         )
         .expect("the printer configuration should be writable");
-        let mut transport = RecordingTransport::default();
-
-        let response = execute(
+        let request = prepare_request(
             PrintArgs {
                 source,
                 format: InputFormat::Auto,
@@ -284,48 +256,37 @@ out_endpoint = \"0x01\"
             true,
             &mut FixedSelector,
             &mut UnexpectedAdder,
-            &mut transport,
         )
-        .await
-        .expect("the selected printer should receive the job");
+        .expect("the selected printer request should be prepared");
 
-        assert_eq!(response.printer_name, "counter");
+        assert_eq!(request.bytes, vec![0x1b, 0x40, 0x0a]);
+        assert_eq!(request.printer.printer_name, "counter");
         assert_eq!(
-            transport.request.expect("USB should receive the job").1,
-            vec![0x1b, 0x40, 0x0a]
+            request.printer.target,
+            Target::Usb(UsbTarget {
+                vendor_id: 0x0416,
+                product_id: 0x5011,
+                serial_number: None,
+                interface: 0,
+                out_endpoint: 0x01,
+            })
         );
         fs::remove_dir_all(directory).expect("the test directory should be removable");
     }
 
-    #[tokio::test]
-    async fn interactive_addition_loads_the_source_and_prints_to_the_new_printer() {
+    #[test]
+    fn interactive_addition_prepares_the_new_target_and_source_bytes() {
         let directory = temporary_directory("interactive-add");
         let source = directory.join("receipt.bin");
         let configuration = directory.join("printers.toml");
         let expected = b"\x1b@New printer\n";
         fs::write(&source, expected).expect("the source should be writable");
-        let listener =
-            TcpListener::bind(("127.0.0.1", 0)).expect("the loopback printer should bind");
-        let port = listener
-            .local_addr()
-            .expect("the listener should have an address")
-            .port();
-        let receiver = thread::spawn(move || {
-            let (mut connection, _) = listener
-                .accept()
-                .expect("the new printer should receive a connection");
-            let mut bytes = Vec::new();
-            connection
-                .read_to_end(&mut bytes)
-                .expect("the print connection should close cleanly");
-            bytes
-        });
         let mut adder = NetworkAdder {
             expected_path: configuration.clone(),
-            port,
+            port: 9123,
         };
 
-        let response = execute(
+        let request = prepare_request(
             PrintArgs {
                 source,
                 format: InputFormat::Auto,
@@ -335,16 +296,55 @@ out_endpoint = \"0x01\"
             true,
             &mut AddSelector,
             &mut adder,
-            &mut RecordingTransport::default(),
         )
-        .await
-        .expect("the newly added printer should receive the job");
+        .expect("the newly added printer request should be prepared");
 
-        assert_eq!(response.printer_name, "new-printer");
+        assert_eq!(request.bytes, expected);
+        assert_eq!(request.printer.printer_name, "new-printer");
         assert_eq!(
-            receiver.join().expect("the receiver should finish"),
-            expected
+            request.printer.target,
+            Target::Network(NetworkTarget {
+                host: "127.0.0.1".to_owned(),
+                port: 9123,
+            })
         );
+        fs::remove_dir_all(directory).expect("the test directory should be removable");
+    }
+
+    #[test]
+    fn named_target_resolution_precedes_source_loading() {
+        let directory = temporary_directory("target-before-source");
+        let configuration = directory.join("printers.toml");
+        fs::write(
+            &configuration,
+            "\
+[counter]
+transport = \"network\"
+host = \"127.0.0.1\"
+port = 9100
+",
+        )
+        .expect("the printer configuration should be writable");
+
+        let error = prepare_request(
+            PrintArgs {
+                source: directory.join("missing.hex"),
+                format: InputFormat::Auto,
+                printer: Some("missing".to_owned()),
+                config: Some(configuration),
+            },
+            true,
+            &mut UnexpectedSelector,
+            &mut UnexpectedAdder,
+        )
+        .err()
+        .expect("the unknown target should fail before the missing source is loaded");
+
+        assert!(matches!(
+            error,
+            CliError::Application(ApplicationError::UnknownConfiguredPrinter(name))
+                if name == "missing"
+        ));
         fs::remove_dir_all(directory).expect("the test directory should be removable");
     }
 
@@ -362,13 +362,9 @@ out_endpoint = \"0x01\"
         );
     }
 
-    #[derive(Default)]
-    struct RecordingTransport {
-        request: Option<(UsbTarget, Vec<u8>)>,
-    }
-
     struct FixedSelector;
     struct AddSelector;
+    struct UnexpectedSelector;
     struct UnexpectedAdder;
     struct NetworkAdder {
         expected_path: PathBuf,
@@ -405,6 +401,12 @@ out_endpoint = \"0x01\"
         }
     }
 
+    impl PrinterSelector for UnexpectedSelector {
+        fn select(&mut self, _choices: Vec<PrinterChoice>) -> Result<PrinterChoice, CliError> {
+            panic!("an explicit printer should not prompt for selection")
+        }
+    }
+
     impl PrinterAdder for NetworkAdder {
         fn add(&mut self, config_path: Option<&Path>) -> Result<String, CliError> {
             assert_eq!(config_path, Some(self.expected_path.as_path()));
@@ -422,13 +424,6 @@ port = {}
             )
             .expect("the add workflow should update the configuration");
             Ok("new-printer".to_owned())
-        }
-    }
-
-    impl UsbTransport for RecordingTransport {
-        fn send(&mut self, target: &UsbTarget, data: &[u8]) -> crate::application::Result<()> {
-            self.request = Some((target.clone(), data.to_vec()));
-            Ok(())
         }
     }
 
