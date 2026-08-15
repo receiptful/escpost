@@ -14,6 +14,8 @@ use crate::error::CliError;
 use super::discover::cli::run_discover;
 use super::{Transport, list};
 
+#[cfg(target_os = "linux")]
+mod grant_usb_permissions;
 pub(super) mod output;
 
 #[derive(Debug, Args)]
@@ -159,7 +161,7 @@ pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Resul
         PrintersCommand::Discover(discover) => run_discover(discover, arguments.config).await,
         #[cfg(target_os = "linux")]
         PrintersCommand::GrantUsbPermissions(args) => {
-            super::grant_usb_permissions::cli::run(args, non_interactive)
+            grant_usb_permissions::run(args, non_interactive)
         }
     }
 }

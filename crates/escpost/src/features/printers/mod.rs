@@ -3,8 +3,6 @@
 pub(crate) mod add;
 pub(crate) mod cli;
 pub(crate) mod discover;
-#[cfg(target_os = "linux")]
-pub(crate) mod grant_usb_permissions;
 mod inventory;
 pub(crate) mod list;
 #[cfg(test)]

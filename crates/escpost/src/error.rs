@@ -1,4 +1,6 @@
 use std::fmt;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -135,6 +137,45 @@ pub(crate) enum CliError {
     #[cfg(target_os = "linux")]
     #[error("could not read the confirmation: {0}")]
     ConfirmationPrompt(String),
+
+    #[cfg(target_os = "linux")]
+    #[error("could not read existing udev rule {path}: {source}")]
+    ReadUsbRulesFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[cfg(target_os = "linux")]
+    #[error("could not write udev rule {path}: {source}")]
+    WriteUsbRulesFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[cfg(target_os = "linux")]
+    #[error(
+        "udev rule {path} already exists with different content; refusing to overwrite a possibly hand-edited rule.\n--- existing {path} ---\n{existing}--- desired ---\n{desired}"
+    )]
+    UsbRuleDiverges {
+        path: PathBuf,
+        existing: String,
+        desired: String,
+    },
+
+    #[cfg(target_os = "linux")]
+    #[error("could not run `{command}`: {source}")]
+    RunUdevadm {
+        command: String,
+        source: std::io::Error,
+    },
+
+    #[cfg(target_os = "linux")]
+    #[error("`{command}` failed ({status}): {stderr}")]
+    UdevadmFailed {
+        command: String,
+        status: std::process::ExitStatus,
+        stderr: String,
+    },
 }
 
 impl From<ApplicationError> for CliError {
