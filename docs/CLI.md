@@ -511,7 +511,7 @@ Let escpost apply it:
   sudo escpost printers grant-usb-permissions
 
 Or run the commands yourself:
-  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF' >/dev/null
+  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF'
 # Grant locally logged-in users access to USB printer-class devices (escpost).
 SUBSYSTEM=="usb", ENV{ID_USB_INTERFACES}=="*:0701*:*", TAG+="uaccess"
 EOF

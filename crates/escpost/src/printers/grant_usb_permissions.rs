@@ -155,7 +155,7 @@ fn manual_commands() -> String {
     // first (`sudo tee`) line. Starting the literal's first line inline
     // with the opening quote avoids that stripping entirely.
     format!(
-        "  sudo tee {RULES_PATH} <<'EOF' >/dev/null
+        "  sudo tee {RULES_PATH} <<'EOF'
 {RULE_CONTENT}EOF
   sudo udevadm control --reload
   sudo udevadm trigger --subsystem-match=usb
@@ -357,7 +357,7 @@ Let escpost apply it:
   sudo escpost printers grant-usb-permissions
 
 Or run the commands yourself:
-  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF' >/dev/null
+  sudo tee /etc/udev/rules.d/70-escpost-usb-printers.rules <<'EOF'
 # Grant locally logged-in users access to USB printer-class devices (escpost).
 SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
 EOF
