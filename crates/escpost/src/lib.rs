@@ -8,7 +8,6 @@ mod error;
 pub mod features;
 mod net;
 mod output;
-mod print;
 mod profiles;
 pub use features::profiles as profiles_cmd;
 mod serve;
@@ -48,7 +47,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Render(arguments) => {
             features::rendering::cli::run(arguments, cli.non_interactive).await
         }
-        Command::Print(arguments) => print::run(arguments, cli.non_interactive).await,
+        Command::Print(arguments) => {
+            features::printing::cli::run(arguments, cli.non_interactive).await
+        }
         Command::Serve(arguments) => serve::run(arguments, cli.non_interactive).await,
         Command::Printers(arguments) => {
             features::printers::cli::run(arguments, cli.non_interactive).await
