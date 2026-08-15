@@ -121,6 +121,7 @@ fn response_from_configuration(
         &usb,
         configuration,
         network_statuses,
+        request.transport != Some(Transport::Network),
         request.transport != Some(Transport::Usb),
     );
     printers.sort_by(|left, right| {
@@ -140,51 +141,54 @@ fn structured_printers(
     usb: &MergedUsbIdentities,
     configuration: &PrinterConfiguration,
     network_statuses: &[bool],
+    include_usb: bool,
     include_network: bool,
 ) -> Vec<Printer> {
     let mut printers = Vec::new();
-    for connected in &usb.connected {
-        let configured = &configuration.usb_printers()[connected.configuration_index];
-        let live = &connected.printer;
-        printers.push(Printer {
-            name: configured.name.clone(),
-            transport: Transport::Usb,
-            availability: Availability::Connected,
-            profile: configured.profile.clone(),
-            connection: ConnectionFacts::Usb(UsbConnectionFacts {
-                vendor_id: live.vendor_id,
-                product_id: live.product_id,
-                bus: Some(live.bus.clone()),
-                address: Some(live.address),
-                manufacturer: live.manufacturer.clone(),
-                product: live.product.clone(),
-                serial_number: live.serial_number.clone(),
-                interface_number: live.interface_number,
-                out_endpoints: live.out_endpoints.clone(),
-                in_endpoints: live.in_endpoints.clone(),
-            }),
-        });
-    }
-    for index in &usb.unavailable_configuration_indexes {
-        let configured = &configuration.usb_printers()[*index];
-        printers.push(Printer {
-            name: configured.name.clone(),
-            transport: Transport::Usb,
-            availability: Availability::Unavailable,
-            profile: configured.profile.clone(),
-            connection: ConnectionFacts::Usb(UsbConnectionFacts {
-                vendor_id: configured.vendor_id,
-                product_id: configured.product_id,
-                bus: None,
-                address: None,
-                manufacturer: None,
-                product: None,
-                serial_number: configured.serial_number.clone(),
-                interface_number: configured.interface_number,
-                out_endpoints: vec![configured.out_endpoint],
-                in_endpoints: configured.in_endpoint.into_iter().collect(),
-            }),
-        });
+    if include_usb {
+        for connected in &usb.connected {
+            let configured = &configuration.usb_printers()[connected.configuration_index];
+            let live = &connected.printer;
+            printers.push(Printer {
+                name: configured.name.clone(),
+                transport: Transport::Usb,
+                availability: Availability::Connected,
+                profile: configured.profile.clone(),
+                connection: ConnectionFacts::Usb(UsbConnectionFacts {
+                    vendor_id: live.vendor_id,
+                    product_id: live.product_id,
+                    bus: Some(live.bus.clone()),
+                    address: Some(live.address),
+                    manufacturer: live.manufacturer.clone(),
+                    product: live.product.clone(),
+                    serial_number: live.serial_number.clone(),
+                    interface_number: live.interface_number,
+                    out_endpoints: live.out_endpoints.clone(),
+                    in_endpoints: live.in_endpoints.clone(),
+                }),
+            });
+        }
+        for index in &usb.unavailable_configuration_indexes {
+            let configured = &configuration.usb_printers()[*index];
+            printers.push(Printer {
+                name: configured.name.clone(),
+                transport: Transport::Usb,
+                availability: Availability::Unavailable,
+                profile: configured.profile.clone(),
+                connection: ConnectionFacts::Usb(UsbConnectionFacts {
+                    vendor_id: configured.vendor_id,
+                    product_id: configured.product_id,
+                    bus: None,
+                    address: None,
+                    manufacturer: None,
+                    product: None,
+                    serial_number: configured.serial_number.clone(),
+                    interface_number: configured.interface_number,
+                    out_endpoints: vec![configured.out_endpoint],
+                    in_endpoints: configured.in_endpoint.into_iter().collect(),
+                }),
+            });
+        }
     }
     if include_network {
         printers.extend(configuration.network_printers().iter().enumerate().map(
@@ -276,10 +280,15 @@ host = "10.42.0.72"
 port = 9100
 "#,
         );
-        let mut connected = netum_usb_printer(vec![0x01], vec![0x81]);
+        let mut connected = netum_usb_printer(vec![0x04], vec![0x84]);
+        connected.interface_number = 7;
         connected.serial_number = None;
+        let mut unconfigured = connected.clone();
+        unconfigured.vendor_id = 0x9999;
+        unconfigured.product_id = 0x0001;
+        unconfigured.address = 12;
         let mut inventory = FixedInventory {
-            printers: vec![connected],
+            printers: vec![unconfigured, connected],
         };
 
         let response = build_response(
@@ -308,5 +317,153 @@ port = 9100
                 ("Zulu", Availability::Unavailable, Transport::Network),
             ]
         );
+
+        let ConnectionFacts::Usb(usb) = &response.printers[0].connection else {
+            panic!("alpha should have USB connection facts");
+        };
+        assert_eq!(usb.bus.as_deref(), Some("003"));
+        assert_eq!(usb.address, Some(60));
+        assert_eq!(usb.manufacturer.as_deref(), Some("YICHIP3121"));
+        assert_eq!(usb.product.as_deref(), Some("USB Portable Printer"));
+        assert_eq!(usb.interface_number, 0);
+        assert_eq!(usb.out_endpoints, vec![0x01]);
+        assert!(usb.in_endpoints.is_empty());
+    }
+
+    #[test]
+    fn list_requires_an_exact_configured_serial_match() {
+        let configuration = temporary_configuration(
+            "list-serial-mismatch",
+            r#"
+[counter]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+serial_number = "EXPECTED"
+interface_number = 2
+out_endpoint = "0x03"
+in_endpoint = "0x83"
+"#,
+        );
+        let mut connected = netum_usb_printer(vec![0x03], vec![0x83]);
+        connected.serial_number = Some("DIFFERENT".to_owned());
+        let mut inventory = FixedInventory {
+            printers: vec![connected],
+        };
+
+        let response = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: None,
+            },
+            &mut inventory,
+            &[],
+        )
+        .expect("the configured printer should be reported as unavailable");
+
+        assert_eq!(response.printers.len(), 1);
+        assert_eq!(response.printers[0].name, "counter");
+        assert_eq!(response.printers[0].availability, Availability::Unavailable);
+        let ConnectionFacts::Usb(usb) = &response.printers[0].connection else {
+            panic!("counter should have USB connection facts");
+        };
+        assert_eq!(usb.bus, None);
+        assert_eq!(usb.address, None);
+        assert_eq!(usb.serial_number.as_deref(), Some("EXPECTED"));
+        assert_eq!(usb.interface_number, 2);
+        assert_eq!(usb.out_endpoints, vec![0x03]);
+        assert_eq!(usb.in_endpoints, vec![0x83]);
+    }
+
+    #[test]
+    fn list_uses_one_deterministic_alias_for_an_ambiguous_usb_identity() {
+        let configuration = temporary_configuration(
+            "list-ambiguous-aliases",
+            r#"
+[Zulu]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+interface_number = 0
+out_endpoint = "0x01"
+
+[alpha]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+interface_number = 0
+out_endpoint = "0x01"
+"#,
+        );
+        let mut connected = netum_usb_printer(vec![0x01], vec![0x81]);
+        connected.serial_number = None;
+        let mut inventory = FixedInventory {
+            printers: vec![connected],
+        };
+
+        let response = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: None,
+            },
+            &mut inventory,
+            &[],
+        )
+        .expect("ambiguous aliases should be merged deterministically");
+
+        assert_eq!(response.printers.len(), 1);
+        assert_eq!(response.printers[0].name, "alpha");
+        assert_eq!(response.printers[0].availability, Availability::Connected);
+    }
+
+    #[test]
+    fn list_transport_filters_return_only_the_requested_transport() {
+        let configuration = temporary_configuration(
+            "list-transport-filter",
+            r#"
+[counter]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+interface_number = 0
+out_endpoint = "0x01"
+
+[kitchen]
+transport = "network"
+host = "10.42.0.71"
+port = 9100
+"#,
+        );
+        let mut connected = netum_usb_printer(vec![0x01], vec![0x81]);
+        connected.serial_number = None;
+        let mut inventory = FixedInventory {
+            printers: vec![connected],
+        };
+
+        let network = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: Some(Transport::Network),
+            },
+            &mut inventory,
+            &[true],
+        )
+        .expect("network-only list should be built");
+        assert_eq!(network.printers.len(), 1);
+        assert_eq!(network.printers[0].name, "kitchen");
+        assert_eq!(network.printers[0].transport, Transport::Network);
+
+        let usb = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: Some(Transport::Usb),
+            },
+            &mut inventory,
+            &[],
+        )
+        .expect("USB-only list should be built");
+        assert_eq!(usb.printers.len(), 1);
+        assert_eq!(usb.printers[0].name, "counter");
+        assert_eq!(usb.printers[0].transport, Transport::Usb);
     }
 }

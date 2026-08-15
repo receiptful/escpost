@@ -2,18 +2,54 @@
 
 use std::fmt;
 use std::io::{self, IsTerminal};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use clap::{Args, ValueEnum};
 use inquire::Select;
 
 use crate::application;
-use crate::cli::PrintArgs;
 use crate::configuration;
 use crate::error::CliError;
 use crate::features::printers::cli as printers;
 use crate::source;
 
-use super::{Request, Target, print};
+use super::{Request, ResolveRequest, Target, UsbTarget, print, resolve_target};
+
+#[derive(Debug, Args)]
+pub(crate) struct PrintArgs {
+    /// Raw ESC/POS file, hexadecimal file, case directory, or - for stdin.
+    pub(crate) source: PathBuf,
+
+    /// Input representation.
+    #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
+    format: InputFormat,
+
+    /// Configured printer name.
+    #[arg(long)]
+    pub(crate) printer: Option<String>,
+
+    /// Read printer configuration from this exact file.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) config: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum InputFormat {
+    #[default]
+    Auto,
+    Binary,
+    Hex,
+}
+
+impl From<InputFormat> for source::InputFormat {
+    fn from(format: InputFormat) -> Self {
+        match format {
+            InputFormat::Auto => Self::Auto,
+            InputFormat::Binary => Self::Binary,
+            InputFormat::Hex => Self::Hex,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PrinterChoice {
@@ -34,20 +70,29 @@ trait PrinterAdder {
 }
 
 pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> application::Result<()> {
+    let PrintArgs {
+        source,
+        format,
+        printer,
+        config,
+    } = arguments;
     let can_prompt = !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal();
     let printer_name = resolve_printer_name(
-        arguments.printer,
-        arguments.config.as_deref(),
+        printer,
+        config.as_deref(),
         can_prompt,
         &mut InquirePrinterSelector,
         &mut InquirePrinterAdder,
     )?;
-    let input = source::load(&arguments.source, arguments.format)?;
+    let printer = resolve_target(ResolveRequest {
+        printer_name,
+        config,
+    })?;
+    let input = source::load(&source, format.into())?;
     let bytes_sent = input.bytes.len();
     let response = print(Request {
         bytes: input.bytes,
-        printer_name,
-        config: arguments.config,
+        printer,
     })
     .await?;
 
@@ -60,14 +105,26 @@ fn present(response: &super::Response, bytes_sent: usize) {
     match &response.target {
         Target::Usb(target) => {
             eprintln!("Transport: usb");
-            eprintln!("USB target: {target}");
+            eprintln!("USB target: {}", format_usb_target(target));
         }
         Target::Network(target) => {
             eprintln!("Transport: network");
-            eprintln!("Network target: {target}");
+            eprintln!("Network target: {}", target.endpoint());
         }
     }
     eprintln!("Bytes sent: {bytes_sent}");
+}
+
+fn format_usb_target(target: &UsbTarget) -> String {
+    let mut output = format!(
+        "{:04x}:{:04x}, interface {}, OUT {:#04x}",
+        target.vendor_id, target.product_id, target.interface, target.out_endpoint
+    );
+    if let Some(serial_number) = &target.serial_number {
+        output.push_str(", serial ");
+        output.push_str(serial_number);
+    }
+    output
 }
 
 #[cfg(test)]
@@ -78,19 +135,23 @@ async fn execute(
     adder: &mut impl PrinterAdder,
     transport: &mut impl super::UsbTransport,
 ) -> application::Result<super::Response> {
-    let printer_name = resolve_printer_name(
-        arguments.printer,
-        arguments.config.as_deref(),
-        can_prompt,
-        selector,
-        adder,
-    )?;
-    let input = source::load(&arguments.source, arguments.format)?;
+    let PrintArgs {
+        source,
+        format,
+        printer,
+        config,
+    } = arguments;
+    let printer_name =
+        resolve_printer_name(printer, config.as_deref(), can_prompt, selector, adder)?;
+    let printer = resolve_target(ResolveRequest {
+        printer_name,
+        config,
+    })?;
+    let input = source::load(&source, format.into())?;
     super::print_with_transport(
         Request {
             bytes: input.bytes,
-            printer_name,
-            config: arguments.config,
+            printer,
         },
         transport,
     )
@@ -185,8 +246,10 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{PrinterAdder, PrinterChoice, PrinterSelector, execute};
-    use crate::cli::{InputFormat, PrintArgs};
+    use super::{
+        InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, execute,
+        format_usb_target,
+    };
     use crate::error::CliError;
     use crate::features::printing::{UsbTarget, UsbTransport};
 
@@ -283,6 +346,20 @@ out_endpoint = \"0x01\"
             expected
         );
         fs::remove_dir_all(directory).expect("the test directory should be removable");
+    }
+
+    #[test]
+    fn usb_target_uses_the_conventional_identifier_and_endpoint_notation() {
+        assert_eq!(
+            format_usb_target(&UsbTarget {
+                vendor_id: 0x0416,
+                product_id: 0x5011,
+                serial_number: None,
+                interface: 0,
+                out_endpoint: 0x01,
+            }),
+            "0416:5011, interface 0, OUT 0x01"
+        );
     }
 
     #[derive(Default)]

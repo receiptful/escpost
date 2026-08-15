@@ -1,7 +1,7 @@
 //! Typed physical-printer operation for already-loaded ESC/POS bytes.
 
-use std::fmt;
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use nusb::MaybeFuture;
@@ -21,12 +21,22 @@ const USB_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
 const NETWORK_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const NETWORK_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// An explicit physical-print request. The bytes are already in ESC/POS wire
-/// format and are transmitted unchanged.
+/// Resolve one named configured printer before any source or transport I/O.
+pub(crate) struct ResolveRequest {
+    pub(crate) printer_name: String,
+    pub(crate) config: Option<PathBuf>,
+}
+
+/// A configured printer resolved to owned connection facts before source I/O.
+pub(crate) struct ResolvedPrinter {
+    printer_name: String,
+    target: Target,
+}
+
+/// Send already-loaded ESC/POS wire bytes to an already-resolved printer.
 pub(crate) struct Request {
     pub(crate) bytes: Vec<u8>,
-    pub(crate) printer_name: String,
-    pub(crate) config: Option<std::path::PathBuf>,
+    pub(crate) printer: ResolvedPrinter,
 }
 
 /// Facts about the target selected from printer configuration.
@@ -43,39 +53,25 @@ pub(crate) enum Target {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UsbTarget {
-    vendor_id: u16,
-    product_id: u16,
-    serial_number: Option<String>,
-    interface: u8,
-    out_endpoint: u8,
+    pub(crate) vendor_id: u16,
+    pub(crate) product_id: u16,
+    pub(crate) serial_number: Option<String>,
+    pub(crate) interface: u8,
+    pub(crate) out_endpoint: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NetworkTarget {
-    host: String,
-    port: u16,
+    pub(crate) host: String,
+    pub(crate) port: u16,
 }
 
-impl fmt::Display for UsbTarget {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{:04x}:{:04x}, interface {}, OUT {:#04x}",
-            self.vendor_id, self.product_id, self.interface, self.out_endpoint
-        )?;
-        if let Some(serial_number) = &self.serial_number {
-            write!(formatter, ", serial {serial_number}")?;
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Display for NetworkTarget {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl NetworkTarget {
+    pub(crate) fn endpoint(&self) -> String {
         if self.host.contains(':') && !(self.host.starts_with('[') && self.host.ends_with(']')) {
-            write!(formatter, "[{}]:{}", self.host, self.port)
+            format!("[{}]:{}", self.host, self.port)
         } else {
-            write!(formatter, "{}:{}", self.host, self.port)
+            format!("{}:{}", self.host, self.port)
         }
     }
 }
@@ -84,18 +80,11 @@ trait UsbTransport {
     fn send(&mut self, target: &UsbTarget, data: &[u8]) -> application::Result<()>;
 }
 
-/// Resolve a named configured target and transmit the caller's exact bytes.
+/// Resolve a named configured printer without touching its device or source.
 ///
-/// This operation is deliberately presentation-free: callers choose names,
-/// load sources, and render the resulting target facts for their own transport.
-pub(crate) async fn print(request: Request) -> application::Result<Response> {
-    print_with_transport(request, &mut NusbTransport).await
-}
-
-async fn print_with_transport(
-    request: Request,
-    transport: &mut impl UsbTransport,
-) -> application::Result<Response> {
+/// The returned value owns every connection fact, so callers can complete this
+/// preflight before reading stdin or a potentially blocking filesystem source.
+pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<ResolvedPrinter> {
     let configuration = configuration::load(request.config.as_deref())?;
     let printer = configuration
         .printer(&request.printer_name)
@@ -112,27 +101,48 @@ async fn print_with_transport(
             if !(0x01..=0x0f).contains(&target.out_endpoint) {
                 return Err(CliError::InvalidUsbOutEndpoint(target.out_endpoint));
             }
-            transport.send(&target, &request.bytes)?;
             Target::Usb(target)
         }
-        ConfiguredPrinter::Network(printer) => {
-            let target = NetworkTarget {
-                host: printer.host.clone(),
-                port: printer.port,
-            };
-            send_network(&target, &request.bytes).await?;
-            Target::Network(target)
-        }
+        ConfiguredPrinter::Network(printer) => Target::Network(NetworkTarget {
+            host: printer.host.clone(),
+            port: printer.port,
+        }),
     };
-
-    Ok(Response {
+    Ok(ResolvedPrinter {
         printer_name: request.printer_name,
         target,
     })
 }
 
+/// Transmit the caller's exact bytes to an already resolved target.
+///
+/// This operation is deliberately presentation-free: callers choose names,
+/// load sources, and render the resulting target facts for their own transport.
+pub(crate) async fn print(request: Request) -> application::Result<Response> {
+    print_with_transport(request, &mut NusbTransport).await
+}
+
+async fn print_with_transport(
+    request: Request,
+    transport: &mut impl UsbTransport,
+) -> application::Result<Response> {
+    let ResolvedPrinter {
+        printer_name,
+        target,
+    } = request.printer;
+    match &target {
+        Target::Usb(target) => transport.send(target, &request.bytes)?,
+        Target::Network(target) => send_network(target, &request.bytes).await?,
+    }
+
+    Ok(Response {
+        printer_name,
+        target,
+    })
+}
+
 async fn send_network(target: &NetworkTarget, data: &[u8]) -> application::Result<()> {
-    let endpoint = target.to_string();
+    let endpoint = target.endpoint();
     let mut stream = timeout(
         NETWORK_CONNECT_TIMEOUT,
         TcpStream::connect((target.host.as_str(), target.port)),
@@ -238,8 +248,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        NetworkTarget, Request, Target, UsbTarget, UsbTransport, print, print_with_transport,
-        require_unique_device,
+        NetworkTarget, Request, ResolveRequest, Target, UsbTarget, UsbTransport, print,
+        print_with_transport, require_unique_device, resolve_target,
     };
     use crate::error::CliError;
 
@@ -263,11 +273,15 @@ out_endpoint = \"0x01\"
         .expect("the printer configuration should be writable");
         let mut transport = RecordingTransport::default();
 
+        let printer = resolve_target(ResolveRequest {
+            printer_name: "counter".to_owned(),
+            config: Some(configuration),
+        })
+        .expect("the configured target should resolve");
         let response = print_with_transport(
             Request {
                 bytes: vec![0x1b, 0x40, 0x00, 0xff, 0x0a],
-                printer_name: "counter".to_owned(),
-                config: Some(configuration),
+                printer,
             },
             &mut transport,
         )
@@ -334,10 +348,14 @@ port = {port}
             bytes
         });
 
-        let response = print(Request {
-            bytes: vec![0x1b, b'@', 0x00, 0xff, b'\n'],
+        let printer = resolve_target(ResolveRequest {
             printer_name: "kitchen".to_owned(),
             config: Some(configuration),
+        })
+        .expect("the configured target should resolve");
+        let response = print(Request {
+            bytes: vec![0x1b, b'@', 0x00, 0xff, b'\n'],
+            printer,
         })
         .await
         .expect("printing should succeed");
@@ -383,11 +401,6 @@ port = {port}
                 product_id: 0x5011,
             }
         ));
-    }
-
-    #[test]
-    fn usb_target_uses_the_conventional_identifier_and_endpoint_notation() {
-        assert_eq!(usb_target().to_string(), "0416:5011, interface 0, OUT 0x01");
     }
 
     fn usb_target() -> UsbTarget {

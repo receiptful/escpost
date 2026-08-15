@@ -5,6 +5,35 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[test]
+fn serve_help_contract_is_unchanged() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["serve", "--help"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("serve help should be UTF-8"),
+        "\
+Capture RAW TCP print jobs and preview them in the web viewer
+
+Usage: escpost serve [OPTIONS]
+
+Options:
+      --non-interactive          Never prompt for missing values
+      --profile <PROFILE>        Printer profile used to render captured jobs [default: REFERENCE]
+      --listen <LISTEN>          Address for the RAW TCP printer. When omitted, the first free loopback port from 9100 through 9109 is used
+      --web-listen <WEB_LISTEN>  Address for the web viewer. When omitted, the first free loopback port from 9000 through 9099 is used
+      --idle-timeout <SECONDS>   Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]
+      --scale <N>                Preview pixel density: subpixels per dot. 1 is dot resolution; N renders at N× density [default: 3]
+      --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias=false for faithful 1-bit dots [default: true] [possible values: true, false]
+      --no-open                  Do not open the web viewer in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
+  -h, --help                     Print help
+"
+    );
+}
+
+#[test]
 fn serve_captures_a_raw_job_and_previews_its_sheets() {
     let mut child = start_serve_on_ephemeral_ports();
     let (raw_port, web_port) = read_listen_ports(&mut child);

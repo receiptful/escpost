@@ -217,7 +217,9 @@ mod tests {
     use crate::features::printers::inventory::{
         UsbEnumeration, UsbEnumerationFailure, UsbFailureStage,
     };
-    use crate::features::printers::test_support::{TolerantInventory, temporary_configuration};
+    use crate::features::printers::test_support::{
+        TolerantInventory, discovered, netum_usb_printer, temporary_configuration,
+    };
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
@@ -267,5 +269,138 @@ mod tests {
         assert_eq!(response.network_printers.len(), 1);
         assert_eq!(response.network_printers[0].host, "10.42.0.71");
         assert!(response.registration.network);
+    }
+
+    #[test]
+    fn discover_transforms_configured_and_new_usb_and_network_results() {
+        let configuration = temporary_configuration(
+            "discover-transformation",
+            r#"
+[counter]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+serial_number = "B120300001"
+interface_number = 0
+out_endpoint = "0x01"
+profile = "NT-5890K"
+
+[kitchen]
+transport = "network"
+host = "10.42.0.71"
+port = 9100
+profile = "TM-T88V"
+
+[kitchen-alias]
+transport = "network"
+host = "10.42.0.71"
+port = 9100
+"#,
+        );
+        let configured_usb = netum_usb_printer(vec![0x01], vec![0x81]);
+        let mut new_usb = netum_usb_printer(vec![0x02], vec![0x82]);
+        new_usb.vendor_id = 0x1234;
+        new_usb.product_id = 0xabcd;
+        new_usb.bus = "001".to_owned();
+        new_usb.address = 7;
+        new_usb.serial_number = None;
+        let mut inventory = TolerantInventory {
+            enumeration: Some(UsbEnumeration {
+                printers: vec![configured_usb, new_usb],
+                failures: Vec::new(),
+            }),
+        };
+        let hosts = vec![
+            discovered([10, 42, 0, 71], 9100),
+            discovered([10, 42, 0, 72], 9100),
+        ];
+
+        let response = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: None,
+                port: 9100,
+                subnets: Vec::new(),
+                timeout: Duration::from_millis(50),
+            },
+            &mut inventory,
+            Vec::new(),
+            hosts,
+        )
+        .expect("the typed discovery response should be built");
+
+        assert_eq!(response.usb_printers.len(), 2);
+        let configured_usb = response
+            .usb_printers
+            .iter()
+            .find(|printer| printer.configured_name.as_deref() == Some("counter"))
+            .expect("the configured USB printer should be classified");
+        assert_eq!(
+            configured_usb.configured_profile.as_deref(),
+            Some("NT-5890K")
+        );
+        assert!(
+            response
+                .usb_printers
+                .iter()
+                .any(|printer| printer.configured_name.is_none())
+        );
+        assert_eq!(response.network_printers.len(), 2);
+        assert_eq!(
+            response.network_printers[0].configured_names,
+            vec!["kitchen".to_owned(), "kitchen-alias".to_owned()]
+        );
+        assert_eq!(
+            response.network_printers[0].configured_profile.as_deref(),
+            Some("TM-T88V")
+        );
+        assert!(response.network_printers[1].configured_names.is_empty());
+        assert!(response.registration.usb);
+        assert!(response.registration.network);
+    }
+
+    #[test]
+    fn discover_transport_filters_skip_the_other_transport() {
+        let configuration = temporary_configuration("discover-transport-filter", "");
+        let hosts = vec![discovered([10, 42, 0, 71], 9100)];
+        let mut network_inventory = TolerantInventory { enumeration: None };
+
+        let network = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: Some(Transport::Network),
+                port: 9100,
+                subnets: Vec::new(),
+                timeout: Duration::from_millis(50),
+            },
+            &mut network_inventory,
+            Vec::new(),
+            hosts.clone(),
+        )
+        .expect("network-only discovery should not enumerate USB");
+        assert!(network.usb_printers.is_empty());
+        assert_eq!(network.network_printers.len(), 1);
+
+        let mut usb_inventory = TolerantInventory {
+            enumeration: Some(UsbEnumeration {
+                printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
+                failures: Vec::new(),
+            }),
+        };
+        let usb = build_response(
+            Request {
+                config: Some(configuration.path().to_owned()),
+                transport: Some(Transport::Usb),
+                port: 9100,
+                subnets: Vec::new(),
+                timeout: Duration::from_millis(50),
+            },
+            &mut usb_inventory,
+            Vec::new(),
+            hosts,
+        )
+        .expect("USB-only discovery should ignore network hosts");
+        assert_eq!(usb.usb_printers.len(), 1);
+        assert!(usb.network_printers.is_empty());
     }
 }

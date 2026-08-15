@@ -1,14 +1,15 @@
 //! Terminal adapter for RAW job capture and the embedded web viewer.
 
 use std::io::IsTerminal;
+use std::net::SocketAddr;
 use std::time::Duration;
 
+use clap::Args;
 use escpost_profiles::PrinterProfile;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::application;
-use crate::cli::ServeArgs;
 use crate::error::CliError;
 use crate::{net, profiles, web};
 
@@ -19,6 +20,44 @@ use super::{RenderRequest, render_job};
 /// loopback so captured receipt data is not exposed by default.
 const FIRST_RAW_PORT: u16 = 9100;
 const LAST_RAW_PORT: u16 = 9109;
+
+#[derive(Debug, Args)]
+pub(crate) struct ServeArgs {
+    /// Printer profile used to render captured jobs.
+    #[arg(long, default_value = "REFERENCE")]
+    pub(crate) profile: String,
+
+    /// Address for the RAW TCP printer. When omitted, the first free loopback
+    /// port from 9100 through 9109 is used.
+    #[arg(long)]
+    pub(crate) listen: Option<SocketAddr>,
+
+    /// Address for the web viewer. When omitted, the first free loopback port
+    /// from 9000 through 9099 is used.
+    #[arg(long)]
+    pub(crate) web_listen: Option<SocketAddr>,
+
+    /// Complete a held-open connection's job after this many seconds of silence.
+    /// Use 0 to disable and end a job only when the connection closes.
+    #[arg(long, value_name = "SECONDS", default_value_t = 20.0)]
+    pub(crate) idle_timeout: f64,
+
+    /// Preview pixel density: subpixels per dot. 1 is dot resolution; N renders
+    /// at N× density.
+    #[arg(long, value_name = "N", default_value_t = 3)]
+    pub(crate) scale: u32,
+
+    /// Anti-alias glyph edges into a grayscale preview (cosmetic; never what a
+    /// printer emits). Pass --antialias=false for faithful 1-bit dots.
+    #[arg(long, num_args = 0..=1, default_value_t = true, default_missing_value = "true")]
+    pub(crate) antialias: bool,
+
+    /// Do not open the web viewer in the default browser on startup. Auto-open
+    /// is also skipped with --non-interactive, without a terminal, or when the
+    /// BROWSER=none or CI environment variables are set.
+    #[arg(long, alias = "no-browser")]
+    pub(crate) no_open: bool,
+}
 
 /// Decide whether to auto-open the web viewer in a browser. Open by default,
 /// but stay out of the way when the user opted out (`--no-open`), when there is

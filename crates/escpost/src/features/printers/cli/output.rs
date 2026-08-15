@@ -3,8 +3,6 @@
 
 use std::io::Write;
 
-#[cfg(test)]
-use crate::configuration::{ConfiguredNetworkPrinter, ConfiguredUsbPrinter};
 use crate::error::CliError;
 
 use super::super::inventory::UsbPrinter;
@@ -81,65 +79,6 @@ pub(crate) fn write_usb_listing(
     }
     Ok(())
 }
-/// Write one `list` connected-USB block. Every caller already has a matched
-/// configuration (`merge_usb_identities` drops anything unmatched), so
-/// `configured` is not optional here, unlike the discover-side listing. The
-/// `model:` line is omitted rather than falling back to a generic label when
-/// the device identity itself carries no product string, matching
-/// `write_usb_listing`'s own `model: None` handling. The `manufacturer:` line
-/// needs no equivalent handling here: `write_usb_listing` already sources it
-/// straight from `printer.manufacturer`.
-#[cfg(test)]
-pub(crate) fn write_printer(
-    output: &mut impl Write,
-    number: usize,
-    printer: &UsbPrinter,
-    configured: &ConfiguredUsbPrinter,
-) -> Result<(), CliError> {
-    write_usb_listing(
-        output,
-        number,
-        &UsbListing {
-            heading: &configured.name,
-            status: "connected",
-            model: printer.product.as_deref(),
-            profile: Some(configured.profile.as_deref()),
-            printer,
-        },
-    )
-}
-#[cfg(test)]
-pub(crate) fn write_unavailable_printer(
-    output: &mut impl Write,
-    number: usize,
-    printer: &ConfiguredUsbPrinter,
-) -> Result<(), CliError> {
-    writeln!(output, "[{number}] {}", printer.name).map_err(CliError::WriteHumanOutput)?;
-    writeln!(output, "    status: unavailable").map_err(CliError::WriteHumanOutput)?;
-    writeln!(
-        output,
-        "    profile: {}",
-        printer.profile.as_deref().unwrap_or(UNASSIGNED_PROFILE)
-    )
-    .map_err(CliError::WriteHumanOutput)?;
-    writeln!(output, "    transport: usb").map_err(CliError::WriteHumanOutput)?;
-    writeln!(
-        output,
-        "    usb: {:04x}:{:04x}; interface {}",
-        printer.vendor_id, printer.product_id, printer.interface_number
-    )
-    .map_err(CliError::WriteHumanOutput)?;
-    write!(output, "    endpoints: out {:#04x}", printer.out_endpoint)
-        .map_err(CliError::WriteHumanOutput)?;
-    if let Some(in_endpoint) = printer.in_endpoint {
-        write!(output, "; in {in_endpoint:#04x}").map_err(CliError::WriteHumanOutput)?;
-    }
-    writeln!(output).map_err(CliError::WriteHumanOutput)?;
-    if let Some(serial_number) = &printer.serial_number {
-        writeln!(output, "    serial: {serial_number}").map_err(CliError::WriteHumanOutput)?;
-    }
-    Ok(())
-}
 /// A network printer entry as shown by both `printers list` and `printers
 /// discover`, so the two commands cannot drift apart. `profile` distinguishes
 /// "no profile line at all" (a freshly discovered, unconfigured host) from
@@ -182,31 +121,6 @@ pub(crate) fn write_network_listing(
         writeln!(output, "    also configured as: {name}").map_err(CliError::WriteHumanOutput)?;
     }
     Ok(())
-}
-#[cfg(test)]
-pub(crate) fn write_network_printer(
-    output: &mut impl Write,
-    number: usize,
-    printer: &ConfiguredNetworkPrinter,
-    connected: bool,
-) -> Result<(), CliError> {
-    write_network_listing(
-        output,
-        number,
-        &NetworkListing {
-            heading: &printer.name,
-            status: if connected {
-                "connected"
-            } else {
-                "unavailable"
-            },
-            profile: Some(printer.profile.as_deref()),
-            host: &printer.host,
-            port: printer.port,
-            interface: None,
-            also_configured: &[],
-        },
-    )
 }
 pub(crate) fn format_network_endpoint(host: &str, port: u16) -> String {
     if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {

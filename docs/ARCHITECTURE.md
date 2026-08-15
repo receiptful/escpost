@@ -161,32 +161,34 @@ listeners for network output. Source loading, name resolution, target
 validation, and byte preservation remain real; ordinary tests cannot open or
 write to configured physical hardware.
 
-`printers list` uses the same `nusb` dependency but remains a separate passive
-inventory path. It first selects USB printer-class devices, opens them only to
-read their cached active configuration descriptors, and reports every
-alternate-setting-zero printer interface with at least one bulk OUT endpoint.
-It never claims an interface, detaches a kernel driver, or sends a USB
-transfer. It reads `printers.toml` only to identify matching configured names.
-An explicit `--config` file takes precedence over `ESCPOST_CONFIG_DIR`, which
-takes precedence over the platform user-configuration directory resolved by
-Rust's `directories` crate. A missing implicit file is an empty configuration,
-and this read-only path never creates a directory.
+`printers list` is a metadata-only inventory of configured printers. For saved
+USB entries it compares `nusb`'s operating-system device identities without
+opening a device or reading active configuration descriptors; for saved
+network entries it performs the bounded reachability probe. A matching saved
+entry is reported as connected and an unmatched saved entry as unavailable.
+When several saved aliases ambiguously match the same USB identity, the
+deterministic first alias is connected and its sibling aliases are omitted
+rather than double-counted. Connected USB devices with no saved identity are
+also omitted entirely and belong to `printers discover`, not `list`. Connected
+entries sort first, then unavailable entries, and each group sorts
+case-insensitively by configured name with stable transport tie-breakers.
 
-Inventory merges discovered interfaces with saved configuration by USB
-identity. A matched printer is one connected named entry; unmatched discovered
-interfaces remain connected unnamed entries; unmatched configuration becomes
-unavailable entries. Connected entries sort first, then unavailable entries,
-and each group sorts case-insensitively by display name with stable USB
-tie-breakers. Descriptor parsing, configuration matching, merging, ordering,
-and human output are tested behind the USB inventory boundary.
+`printers discover` owns full USB discovery. It opens candidate printer-class
+devices to inspect their active interfaces and bulk endpoints, returns tolerant
+per-device warnings, and reports both configured and unconfigured devices.
+`printers add` separately owns the full USB enumeration used to present and
+persist a concrete interface and endpoint selection; it does not route that
+selection through the metadata-only list inventory. Neither workflow claims a
+printer interface, detaches a kernel driver, or sends a USB transfer.
 
-The interactive add workflow reuses that passive inventory. It removes
-already configured identities, presents each bulk OUT endpoint explicitly,
-and stores stable descriptor coordinates. Bus and address are diagnostic
-selection labels only because operating systems may change them after a
-reconnection. A serial number is stored when available; without one,
-simultaneously connected devices with equal VID/PID cannot be distinguished
-reliably and are reported as ambiguous.
+All inventory commands read `printers.toml` through the same path precedence:
+an explicit `--config` file, then `ESCPOST_CONFIG_DIR`, then the platform user
+configuration directory resolved by Rust's `directories` crate. A missing
+implicit file is an empty configuration, and read-only inventory never creates
+a directory. Bus and address are diagnostic selection labels only because an
+operating system may change them after reconnection. A serial number is stored
+when available; without one, simultaneously connected devices with equal
+VID/PID cannot be distinguished reliably and are reported as ambiguous.
 
 The Docker wrapper creates and mounts `.config` at the container user's normal
 ESCPost configuration path. This isolates configuration used by a checkout from

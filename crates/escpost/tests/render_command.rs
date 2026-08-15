@@ -5,6 +5,42 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn render_help_contract_is_unchanged() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["render", "--help"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("render help should be UTF-8"),
+        "\
+Render a known ESC/POS byte stream
+
+Usage: escpost render [OPTIONS] <SOURCE>
+
+Arguments:
+  <SOURCE>  Raw ESC/POS file, hexadecimal file, case directory, or - for stdin
+
+Options:
+      --format <FORMAT>          Input representation [default: auto] [possible values: auto, binary, hex]
+      --non-interactive          Never prompt for missing values
+      --profile <PROFILE>        Printer profile used to interpret the input
+  -o, --output <OUTPUT>          Write one PNG to this path, or use - for stdout
+      --output-dir <OUTPUT_DIR>  Write every rendered sheet and a manifest to this directory
+      --sheet <SHEET>            Select one one-based sheet for single-PNG output
+      --web                      Start the local web viewer and keep running
+      --browser                  Start the web viewer and open it in the default browser
+      --web-listen <WEB_LISTEN>  Exact address for the web viewer
+      --watch                    Rerender a filesystem source whenever it changes
+      --scale <N>                Output pixel density: subpixels per dot. 1 is dot resolution; N renders at N× density [default: 1]
+      --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
+  -h, --help                     Print help
+"
+    );
+}
+
+#[test]
 fn raw_file_renders_one_png_with_an_explicit_profile() {
     let temporary_directory = temporary_directory("raw-file");
     let input_path = temporary_directory.join("receipt.bin");

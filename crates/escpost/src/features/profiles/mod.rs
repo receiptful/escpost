@@ -10,7 +10,6 @@ use crate::application;
 use crate::error::CliError;
 
 pub mod cli;
-pub use cli::{render_detail, render_table};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProfileSourceFilter {

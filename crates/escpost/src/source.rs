@@ -4,8 +4,15 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::cli::InputFormat;
 use crate::error::CliError;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum InputFormat {
+    #[default]
+    Auto,
+    Binary,
+    Hex,
+}
 
 #[derive(Debug)]
 pub(crate) struct LoadedSource {

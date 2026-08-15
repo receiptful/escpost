@@ -160,7 +160,7 @@ const TABLE_HEADERS: [&str; 11] = [
 const TABLE_LEGEND: &str =
     "CAL: ✓ calibrated · ~ synthesized · ○ virtual   PAPER/PRINT mm, DOTS printable";
 
-pub fn render_table(views: &[ProfileView]) -> String {
+fn render_table(views: &[ProfileView]) -> String {
     let mut rows: Vec<[String; 11]> = vec![TABLE_HEADERS.map(str::to_owned)];
     rows.extend(views.iter().map(table_row));
 
@@ -236,7 +236,7 @@ fn barcode_marker(barcodes: &BarcodesView) -> &'static str {
     }
 }
 
-pub fn render_detail(view: &ProfileView) -> String {
+fn render_detail(view: &ProfileView) -> String {
     let marker = calibration_marker(&view.source);
     let lines = [
         format!("{} — {} {}", view.id, view.vendor, view.model),

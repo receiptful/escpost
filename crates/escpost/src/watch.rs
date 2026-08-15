@@ -4,9 +4,9 @@ use std::time::{Duration, SystemTime};
 
 use escpost_render::TracedRenderResult;
 
-use crate::cli::InputFormat;
 use crate::error::CliError;
 use crate::features::rendering::{self, Request};
+use crate::source::InputFormat;
 use crate::{output, source, web};
 
 const WATCH_INTERVAL: Duration = Duration::from_millis(200);
