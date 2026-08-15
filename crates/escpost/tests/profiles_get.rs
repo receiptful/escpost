@@ -1,9 +1,9 @@
 use std::process::Command;
 
 #[test]
-fn profiles_show_prints_vendor_and_calibration_source() {
+fn profiles_get_prints_vendor_and_calibration_source() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args(["profiles", "show", "TM-T88III"])
+        .args(["profiles", "get", "TM-T88III"])
         .output()
         .expect("the escpost command should finish");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -34,9 +34,9 @@ fn profiles_show_prints_vendor_and_calibration_source() {
 }
 
 #[test]
-fn profiles_show_json_parses_as_a_single_profile_object() {
+fn profiles_get_json_parses_as_a_single_profile_object() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args(["profiles", "show", "TM-T88III", "--json"])
+        .args(["profiles", "get", "TM-T88III", "--json"])
         .output()
         .expect("the escpost command should finish");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -160,9 +160,9 @@ fn profiles_show_json_parses_as_a_single_profile_object() {
 }
 
 #[test]
-fn profiles_show_unknown_id_exits_non_zero() {
+fn profiles_get_unknown_id_exits_non_zero() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args(["profiles", "show", "definitely-not-a-profile"])
+        .args(["profiles", "get", "definitely-not-a-profile"])
         .output()
         .expect("the escpost command should finish");
 
@@ -170,5 +170,22 @@ fn profiles_show_unknown_id_exits_non_zero() {
         !output.status.success(),
         "unknown profile id should fail:\n{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn profiles_show_is_not_a_compatibility_alias() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["profiles", "show", "REFERENCE"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(
+        !output.status.success(),
+        "show should no longer be accepted"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: unrecognized subcommand 'show'\n\nUsage: escpost profiles [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n"
     );
 }

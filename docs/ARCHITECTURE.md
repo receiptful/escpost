@@ -283,7 +283,7 @@ escpost printers list       GET  /printers/list
 escpost printers discover   POST /printers/discover
 escpost printers add        POST /printers/add
 escpost profiles list       GET  /profiles/list
-escpost profiles show ID    GET  /profiles/show/{id}
+escpost profiles get ID     GET  /profiles/get/{id}
 escpost render              POST /render
 escpost print               POST /print
 ```

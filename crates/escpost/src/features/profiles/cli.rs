@@ -10,8 +10,8 @@ use serde::Serialize;
 use crate::error::CliError;
 
 use super::{
-    BarcodeFacts, FeaturesFacts, ListRequest, ProfileFacts, ProfileSourceFilter, ShowRequest, list,
-    show,
+    BarcodeFacts, FeaturesFacts, GetRequest, ListRequest, ProfileFacts, ProfileSourceFilter, get,
+    list,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -31,8 +31,8 @@ pub(crate) struct ProfilesArgs {
 pub(crate) enum ProfilesCommand {
     /// List available printer profiles.
     List(ListProfilesArgs),
-    /// Show the full details of a single printer profile.
-    Show(ShowProfileArgs),
+    /// Get the full details of a single printer profile.
+    Get(GetProfileArgs),
     /// Interactively pick a profile and print its id.
     Find(FindProfileArgs),
 }
@@ -61,7 +61,7 @@ pub(crate) struct ListProfilesArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ShowProfileArgs {
+pub(crate) struct GetProfileArgs {
     /// Profile id (as passed to --profile).
     pub(crate) id: String,
 
@@ -73,7 +73,7 @@ pub(crate) struct ShowProfileArgs {
 pub(crate) fn run(arguments: ProfilesArgs, non_interactive: bool) -> Result<(), CliError> {
     match arguments.command {
         ProfilesCommand::List(arguments) => run_list(arguments),
-        ProfilesCommand::Show(arguments) => run_show(arguments),
+        ProfilesCommand::Get(arguments) => run_get(arguments),
         ProfilesCommand::Find(arguments) => run_find(arguments, non_interactive),
     }
 }
@@ -108,8 +108,8 @@ fn run_list(arguments: ListProfilesArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-fn run_show(arguments: ShowProfileArgs) -> Result<(), CliError> {
-    let response = show(ShowRequest { id: arguments.id })?;
+fn run_get(arguments: GetProfileArgs) -> Result<(), CliError> {
+    let response = get(GetRequest { id: arguments.id })?;
 
     if arguments.json {
         println!(
@@ -448,7 +448,7 @@ mod tests {
         let table = render_table(std::slice::from_ref(&view));
 
         assert!(table.contains("TM-T88III"));
-        assert!(table.contains('~'), "synthesized profiles show ~: {table}");
+        assert!(table.contains('~'), "synthesized profiles use ~: {table}");
         assert!(table.contains("CAL: "));
     }
 

@@ -26,11 +26,11 @@ pub(crate) struct ListResponse {
     pub(crate) profiles: Vec<ProfileFacts>,
 }
 
-pub(crate) struct ShowRequest {
+pub(crate) struct GetRequest {
     pub(crate) id: String,
 }
 
-pub(crate) struct ShowResponse {
+pub(crate) struct GetResponse {
     pub(crate) profile: ProfileFacts,
 }
 
@@ -42,11 +42,11 @@ pub(crate) fn list(request: ListRequest) -> application::Result<ListResponse> {
     Ok(ListResponse { profiles })
 }
 
-pub(crate) fn show(request: ShowRequest) -> application::Result<ShowResponse> {
+pub(crate) fn get(request: GetRequest) -> application::Result<GetResponse> {
     let profile = resolver::resolve(&request.id)
         .map(ProfileFacts::from_profile)
         .map_err(map_resolve_error)?;
-    Ok(ShowResponse { profile })
+    Ok(GetResponse { profile })
 }
 
 fn all_profiles() -> application::Result<Vec<ProfileFacts>> {
@@ -234,8 +234,8 @@ mod tests {
     }
 
     #[test]
-    fn show_returns_the_structured_reference_profile() {
-        let response = show(ShowRequest {
+    fn get_returns_the_structured_reference_profile() {
+        let response = get(GetRequest {
             id: "REFERENCE".to_owned(),
         })
         .expect("the reference profile should resolve");
@@ -245,8 +245,8 @@ mod tests {
     }
 
     #[test]
-    fn show_keeps_profile_provenance_and_barcode_support_as_typed_facts() {
-        let response = show(ShowRequest {
+    fn get_keeps_profile_provenance_and_barcode_support_as_typed_facts() {
+        let response = get(GetRequest {
             id: "TM-T88III".to_owned(),
         })
         .expect("the synthesized fixture profile should resolve");

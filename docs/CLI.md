@@ -632,13 +632,13 @@ Filters compose with AND:
 Without `--json`, the command prints a compact table. `--json` prints the full
 filtered catalog as a JSON array.
 
-### `profiles show`
+### `profiles get`
 
-Show the complete details of one profile:
+Get the complete details of one profile:
 
 ```bash
-escpost profiles show NT-5890K
-escpost profiles show REFERENCE --json
+escpost profiles get NT-5890K
+escpost profiles get REFERENCE --json
 ```
 
 An unknown profile id is an error. `--json` prints one JSON object instead of
