@@ -1138,10 +1138,46 @@ fn printers_discover_rejects_network_scan_options_with_usb_transport() {
         .output()
         .expect("the escpost command should finish");
 
-    assert_failed_without_configuration(
-        &output,
-        &config,
-        "--subnet, --port, and --timeout are only valid when discovering network printers",
+    assert!(!output.status.success(), "invalid discovery must fail");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: --subnet, --port, and --timeout are only valid when discovering network printers\n",
+        "invalid discovery stderr must contain only the error"
+    );
+    assert!(
+        !config.exists(),
+        "invalid discovery must not create configuration"
+    );
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[cfg(unix)]
+#[test]
+fn printers_discover_validates_zero_port_before_reading_configuration() {
+    let directory = temporary_directory("discover-zero-before-config");
+    let config = directory.join("printers.toml");
+    fs::write(&config, "this is not valid TOML").expect("the invalid fixture should be writable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["--non-interactive", "printers", "--config"])
+        .arg(&config)
+        .args([
+            "discover",
+            "--transport",
+            "network",
+            "--subnet",
+            "127.0.0.1/32",
+            "--port",
+            "0",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success(), "zero port discovery must fail");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: printer port must be between 1 and 65535\n",
+        "argument validation must win without a configuration notice or configuration error"
     );
     fs::remove_dir_all(directory).expect("the test directory should be removable");
 }

@@ -18,6 +18,21 @@ use super::{Transport, list};
 mod grant_usb_permissions;
 pub(super) mod output;
 
+/// Format the factual targets prepared by discovery for terminal display.
+pub(super) fn scan_announcement(targets: &[crate::discovery::ScanTarget], port: u16) -> String {
+    let count = targets.len();
+    let noun = if count == 1 { "network" } else { "networks" };
+    let mut announcement = format!("Scanning {count} {noun} on port {port}:");
+    for target in targets {
+        announcement.push_str("\n  - ");
+        announcement.push_str(&target.subnet.to_string());
+        if let Some(interface) = &target.interface {
+            announcement.push_str(&format!(" ({interface})"));
+        }
+    }
+    announcement
+}
+
 #[derive(Debug, Args)]
 pub(crate) struct PrintersArgs {
     /// Read printer configuration from this exact file.
