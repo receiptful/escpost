@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::discovery::Subnet;
-use crate::features::profiles::cli::SourceFilter;
+use crate::features::profiles::cli::ProfilesArgs;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -280,55 +280,6 @@ fn parse_usb_id(value: &str) -> Result<u16, String> {
 pub(crate) enum PrinterTransport {
     Usb,
     Network,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct ProfilesArgs {
-    #[command(subcommand)]
-    pub(crate) command: ProfilesCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ProfilesCommand {
-    /// List available printer profiles.
-    List(ListProfilesArgs),
-    /// Show the full details of a single printer profile.
-    Show(ShowProfileArgs),
-    /// Interactively pick a profile and print its id.
-    Find(FindProfileArgs),
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct FindProfileArgs {}
-
-#[derive(Debug, Args)]
-pub(crate) struct ListProfilesArgs {
-    /// Show only profiles from this vendor (case-insensitive substring).
-    #[arg(long)]
-    pub(crate) vendor: Option<String>,
-
-    /// Show only profiles with this calibration provenance.
-    #[arg(long, value_enum)]
-    pub(crate) source: Option<SourceFilter>,
-
-    /// Show only profiles whose id, vendor, or model contains this text
-    /// (case-insensitive).
-    #[arg(long)]
-    pub(crate) search: Option<String>,
-
-    /// Print the full profile catalog as JSON instead of a table.
-    #[arg(long)]
-    pub(crate) json: bool,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct ShowProfileArgs {
-    /// Profile id (as passed to --profile).
-    pub(crate) id: String,
-
-    /// Print the profile as JSON instead of the detail view.
-    #[arg(long)]
-    pub(crate) json: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
