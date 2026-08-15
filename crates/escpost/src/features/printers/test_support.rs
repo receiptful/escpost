@@ -1,12 +1,16 @@
 //! Test fixtures shared by several `printers` submodules' own test modules:
 //! a scriptable `UsbInventory` double and USB/network device builders.
 
+use std::fs;
 use std::net::Ipv4Addr;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::inventory::{UsbDeviceIdentity, UsbInventory, UsbPrinter};
+use super::inventory::{UsbDeviceIdentity, UsbEnumeration, UsbInventory, UsbPrinter};
 use crate::discovery::DiscoveredHost;
 use crate::error::CliError;
 
+#[derive(Default)]
 pub(super) struct FixedInventory {
     pub(super) printers: Vec<UsbPrinter>,
 }
@@ -18,6 +22,27 @@ impl UsbInventory for FixedInventory {
 
     fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {
         Ok(self.printers.iter().map(usb_printer_identity).collect())
+    }
+}
+
+pub(super) struct TolerantInventory {
+    pub(super) enumeration: Option<UsbEnumeration>,
+}
+
+impl UsbInventory for TolerantInventory {
+    fn list(&mut self) -> Result<Vec<UsbPrinter>, CliError> {
+        Ok(Vec::new())
+    }
+
+    fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {
+        Ok(Vec::new())
+    }
+
+    fn list_tolerant(&mut self) -> Result<UsbEnumeration, CliError> {
+        Ok(self
+            .enumeration
+            .take()
+            .expect("the tolerant fixture should be enumerated once"))
     }
 }
 
@@ -60,4 +85,38 @@ pub(super) fn discovered(address: [u8; 4], port: u16) -> DiscoveredHost {
         port,
         interface: Some("enx0".to_owned()),
     }
+}
+
+pub(super) struct TemporaryConfiguration {
+    directory: PathBuf,
+    path: PathBuf,
+}
+
+impl TemporaryConfiguration {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TemporaryConfiguration {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+pub(super) fn temporary_configuration(case: &str, content: &str) -> TemporaryConfiguration {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock should be after the Unix epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "escpost-printers-{case}-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("the test directory should be creatable");
+    let path = directory.join("printers.toml");
+    if !content.is_empty() {
+        fs::write(&path, content).expect("the fixture configuration should be writable");
+    }
+    TemporaryConfiguration { directory, path }
 }

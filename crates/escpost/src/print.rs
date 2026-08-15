@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::cli::PrintArgs;
 use crate::configuration::{self, ConfiguredPrinter};
 use crate::error::CliError;
-use crate::printers;
+use crate::features::printers::cli as printers;
 use crate::source;
 use inquire::Select;
 use nusb::MaybeFuture;

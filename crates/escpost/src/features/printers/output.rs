@@ -3,6 +3,7 @@
 
 use std::io::Write;
 
+#[cfg(test)]
 use crate::configuration::{ConfiguredNetworkPrinter, ConfiguredUsbPrinter};
 use crate::error::CliError;
 
@@ -88,6 +89,7 @@ pub(super) fn write_usb_listing(
 /// `write_usb_listing`'s own `model: None` handling. The `manufacturer:` line
 /// needs no equivalent handling here: `write_usb_listing` already sources it
 /// straight from `printer.manufacturer`.
+#[cfg(test)]
 pub(super) fn write_printer(
     output: &mut impl Write,
     number: usize,
@@ -106,6 +108,7 @@ pub(super) fn write_printer(
         },
     )
 }
+#[cfg(test)]
 pub(super) fn write_unavailable_printer(
     output: &mut impl Write,
     number: usize,
@@ -180,6 +183,7 @@ pub(super) fn write_network_listing(
     }
     Ok(())
 }
+#[cfg(test)]
 pub(super) fn write_network_printer(
     output: &mut impl Write,
     number: usize,

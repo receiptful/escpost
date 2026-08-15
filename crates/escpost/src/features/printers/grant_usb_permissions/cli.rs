@@ -21,17 +21,12 @@
 //! the confirmation's own default answer is yes. Applying writes the rule
 //! and reloads udev so it takes effect without a reboot.
 
-use std::fs::OpenOptions;
-use std::io::{self, IsTerminal, Write};
-use std::path::Path;
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use std::os::unix::fs::OpenOptionsExt;
+use std::io::{self, IsTerminal};
 
 use inquire::Confirm;
 
-use crate::cli::GrantUsbPermissionsArgs;
+use super::super::cli::GrantUsbPermissionsArgs;
+use super::{ApprovedAction, Request, RuleChange, execute};
 use crate::error::CliError;
 
 /// Where the rule is installed. Numbered in the 70-series so it loads after
@@ -51,9 +46,7 @@ const RULE_CONTENT: &str = "\
 SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
 ";
 
-static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
-pub(super) fn run(
+pub(crate) fn run(
     _arguments: GrantUsbPermissionsArgs,
     non_interactive: bool,
 ) -> Result<(), CliError> {
@@ -72,26 +65,17 @@ pub(super) fn run(
         return Ok(());
     }
 
-    let path = Path::new(RULES_PATH);
-    let existing = read_existing_rule(path)?;
-    match decide_rule_write(existing.as_deref(), RULE_CONTENT) {
-        RuleDecision::Write => {
-            write_rule_atomically(path, RULE_CONTENT)?;
+    let response = execute(Request {
+        action: ApprovedAction::GrantUsbPrinterAccess,
+    })?;
+    match response.change {
+        RuleChange::Created => {
             println!("Wrote {RULES_PATH}");
         }
-        RuleDecision::AlreadyCurrent => {
+        RuleChange::AlreadyCurrent => {
             println!("{RULES_PATH} already grants this access; leaving it unchanged.");
         }
-        RuleDecision::Diverges => {
-            return Err(CliError::UsbRuleDiverges {
-                path: path.to_owned(),
-                existing: existing.unwrap_or_default(),
-                desired: RULE_CONTENT.to_owned(),
-            });
-        }
     }
-
-    reload_udev()?;
     println!("Replug the USB printer, then run: escpost printers discover");
     print!("{}", undo_commands());
     Ok(())
@@ -238,6 +222,7 @@ impl ConfirmPrompter for InquireConfirmPrompter {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 enum RuleDecision {
     /// No rule exists yet: write it.
@@ -254,6 +239,7 @@ enum RuleDecision {
 /// Pure idempotency decision for the on-disk rule, factored out so it is
 /// testable without touching `/etc`. `existing` is `None` when the rules
 /// file does not exist yet.
+#[cfg(test)]
 fn decide_rule_write(existing: Option<&str>, desired: &str) -> RuleDecision {
     match existing {
         None => RuleDecision::Write,
@@ -271,99 +257,10 @@ fn running_as_root() -> bool {
     rustix::process::geteuid().as_raw() == 0
 }
 
-/// Read the rules file's current content, if any. `Ok(None)` means the file
-/// does not exist yet, which is the common case and not an error; any other
-/// read failure (for example, an unreadable file) is.
-fn read_existing_rule(path: &Path) -> Result<Option<String>, CliError> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => Ok(Some(content)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(CliError::ReadUsbRulesFile {
-            path: path.to_owned(),
-            source,
-        }),
-    }
-}
-
-/// Replace the rules file only after its complete new contents are written,
-/// mirroring `configuration::write_atomically`'s temp-file-then-rename
-/// idiom (kept beside the destination so the rename stays on one
-/// filesystem) rather than reusing that private helper directly. Unlike a
-/// user configuration file, this one must be world-readable (0644): it is
-/// read by the udev daemon and, conventionally, by anyone auditing
-/// `/etc/udev/rules.d`, not only by the user running this command (who is
-/// root at this point regardless).
-fn write_rule_atomically(path: &Path, content: &str) -> Result<(), CliError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .expect("the rules path has a file name")
-        .to_string_lossy();
-    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(
-        ".{file_name}.{}.{}.tmp",
-        std::process::id(),
-        sequence
-    ));
-
-    let result = (|| -> std::io::Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(&temporary)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result.map_err(|source| CliError::WriteUsbRulesFile {
-        path: path.to_owned(),
-        source,
-    })
-}
-
-/// Reload udev's rule database and re-trigger it for already-connected USB
-/// devices, so a printer plugged in before the rule existed does not need a
-/// reboot or a manual replug to pick it up. `run()`'s caller still prints a
-/// "replug" hint afterward because a trigger only re-runs rules against the
-/// kernel's existing device state; it does not force USB re-enumeration the
-/// way a physical replug does, and `uaccess` in particular is only fully
-/// applied once logind re-evaluates the device.
-fn reload_udev() -> Result<(), CliError> {
-    run_udevadm(&["control", "--reload"])?;
-    run_udevadm(&["trigger", "--subsystem-match=usb"])?;
-    Ok(())
-}
-
-fn run_udevadm(args: &[&'static str]) -> Result<(), CliError> {
-    let command = format!("udevadm {}", args.join(" "));
-    let output = Command::new("udevadm")
-        .args(args)
-        .output()
-        .map_err(|source| CliError::RunUdevadm {
-            command: command.clone(),
-            source,
-        })?;
-    if !output.status.success() {
-        return Err(CliError::UdevadmFailed {
-            command,
-            status: output.status,
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn rule_content_matches_the_agreed_udev_rule_exactly() {

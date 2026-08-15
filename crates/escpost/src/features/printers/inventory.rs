@@ -9,17 +9,17 @@ use nusb::transfer::Direction;
 
 const USB_CLASS_PRINTER: u8 = 0x07;
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct UsbPrinter {
-    pub(super) vendor_id: u16,
-    pub(super) product_id: u16,
-    pub(super) bus: String,
-    pub(super) address: u8,
-    pub(super) manufacturer: Option<String>,
-    pub(super) product: Option<String>,
-    pub(super) serial_number: Option<String>,
-    pub(super) interface_number: u8,
-    pub(super) out_endpoints: Vec<u8>,
-    pub(super) in_endpoints: Vec<u8>,
+pub(crate) struct UsbPrinter {
+    pub(crate) vendor_id: u16,
+    pub(crate) product_id: u16,
+    pub(crate) bus: String,
+    pub(crate) address: u8,
+    pub(crate) manufacturer: Option<String>,
+    pub(crate) product: Option<String>,
+    pub(crate) serial_number: Option<String>,
+    pub(crate) interface_number: u8,
+    pub(crate) out_endpoints: Vec<u8>,
+    pub(crate) in_endpoints: Vec<u8>,
 }
 /// OS-reported identity of a printer-class USB device, gathered without ever
 /// opening it (see `UsbInventory::identities`). `printers list` uses this

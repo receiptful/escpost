@@ -5,16 +5,18 @@ use std::fmt;
 use std::io::{self, IsTerminal};
 use std::time::Duration;
 
-use crate::cli::{AddPrinterArgs, PrinterTransport};
-use crate::configuration::{self, PrinterConfiguration, UsbPrinterRegistration};
+use crate::configuration::{self, PrinterConfiguration};
 use crate::discovery::DiscoveredHost;
 use crate::error::CliError;
 use inquire::validator::Validation;
 use inquire::{CustomType, Select, Text};
 
-use super::discover::{configured_names, discovery_targets, scan_with_progress};
-use super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
-use super::output::{format_network_endpoint, usb_printer_label_parts};
+use super::super::Connection;
+use super::super::cli::{AddPrinterArgs, PrinterTransport};
+use super::super::discover::cli::{configured_names, discovery_targets, scan_with_progress};
+use super::super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
+use super::super::output::{format_network_endpoint, usb_printer_label_parts};
+use super::{Request, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UsbAddTarget {
@@ -67,7 +69,53 @@ pub(super) trait AddPrompter {
     fn port(&mut self) -> Result<u16, CliError>;
     fn profile(&mut self) -> Result<Option<String>, CliError>;
 }
-pub(super) fn execute_add(
+pub(crate) async fn run(
+    config_path: Option<&std::path::Path>,
+    mut arguments: AddPrinterArgs,
+    non_interactive: bool,
+) -> Result<String, CliError> {
+    if arguments.discover {
+        if arguments.transport == Some(PrinterTransport::Usb) {
+            return Err(CliError::DiscoverForUsbPrinter);
+        }
+        arguments.transport = Some(PrinterTransport::Network);
+        let host = discover_host_for_add(config_path, &arguments, non_interactive).await?;
+        arguments.host = Some(host.address.to_string());
+        arguments.port = Some(host.port);
+    }
+    let can_prompt = !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal();
+    execute_add(
+        config_path,
+        arguments,
+        can_prompt,
+        &mut InquireAddPrompter,
+        &mut super::super::inventory::NusbInventory,
+    )
+}
+
+pub(crate) fn add_interactively(config_path: Option<&std::path::Path>) -> Result<String, CliError> {
+    execute_add(
+        config_path,
+        AddPrinterArgs {
+            name: None,
+            transport: None,
+            host: None,
+            port: None,
+            vendor_id: None,
+            product_id: None,
+            serial: None,
+            profile: None,
+            discover: false,
+            subnet: Vec::new(),
+            timeout: None,
+        },
+        true,
+        &mut InquireAddPrompter,
+        &mut super::super::inventory::NusbInventory,
+    )
+}
+
+fn execute_add(
     config_path: Option<&std::path::Path>,
     arguments: AddPrinterArgs,
     can_prompt: bool,
@@ -83,33 +131,31 @@ fn save_and_report_printer(
     config_path: Option<&std::path::Path>,
     printer: &ResolvedAddPrinter,
 ) -> Result<(), CliError> {
-    let path = match &printer.connection {
-        ResolvedAddConnection::Network { host, port } => configuration::add_network_printer(
-            config_path,
-            &printer.name,
-            host,
-            *port,
-            printer.profile.as_deref(),
-        ),
-        ResolvedAddConnection::Usb(target) => configuration::add_usb_printer(
-            config_path,
-            &printer.name,
-            &UsbPrinterRegistration {
-                vendor_id: target.vendor_id,
-                product_id: target.product_id,
-                serial_number: target.serial_number.as_deref(),
-                interface_number: target.interface_number,
-                out_endpoint: target.out_endpoint,
-                in_endpoint: target.in_endpoint,
-                profile: printer.profile.as_deref(),
-            },
-        ),
-    }?;
+    let connection = match &printer.connection {
+        ResolvedAddConnection::Network { host, port } => Connection::Network {
+            host: host.clone(),
+            port: *port,
+        },
+        ResolvedAddConnection::Usb(target) => Connection::Usb {
+            vendor_id: target.vendor_id,
+            product_id: target.product_id,
+            serial_number: target.serial_number.clone(),
+            interface_number: target.interface_number,
+            out_endpoint: target.out_endpoint,
+            in_endpoint: target.in_endpoint,
+        },
+    };
+    let response = execute(Request {
+        config: config_path.map(std::path::Path::to_owned),
+        name: printer.name.clone(),
+        profile: printer.profile.clone(),
+        connection,
+    })?;
     eprintln!("Printer: {}", printer.name);
     eprintln!("Transport: {}", printer.transport());
     eprintln!(
         "Updated configuration at {}",
-        configuration::display_path(&path)
+        configuration::display_path(&response.config_path)
     );
     if let ResolvedAddConnection::Usb(target) = &printer.connection
         && target.ambiguous_without_serial
@@ -310,7 +356,7 @@ fn validate_name(name: &str, configuration: &PrinterConfiguration) -> Result<(),
     }
     Ok(())
 }
-pub(super) struct InquireAddPrompter;
+struct InquireAddPrompter;
 
 impl AddPrompter for InquireAddPrompter {
     fn name(&mut self) -> Result<String, CliError> {
@@ -435,7 +481,7 @@ impl DiscoverPicker for InquireDiscoverPicker {
             .map_err(|error| CliError::PrinterPrompt(error.to_string()))
     }
 }
-pub(super) async fn discover_host_for_add(
+async fn discover_host_for_add(
     config_path: Option<&std::path::Path>,
     arguments: &AddPrinterArgs,
     non_interactive: bool,
@@ -555,7 +601,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::super::test_support::{FixedInventory, discovered, netum_usb_printer};
+    use super::super::super::test_support::{FixedInventory, discovered, netum_usb_printer};
     use super::*;
     use crate::configuration::PrinterConfiguration;
 

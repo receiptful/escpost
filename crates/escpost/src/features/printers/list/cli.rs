@@ -1,26 +1,114 @@
 //! The `printers list` command core: merge the saved registry against what
 //! is actually reachable right now and print the sorted result.
 
-use std::io::Write;
-use std::time::Duration;
-
-use crate::cli::InventoryTransport;
-use crate::configuration::{ConfiguredNetworkPrinter, ConfiguredUsbPrinter, PrinterConfiguration};
-use crate::error::CliError;
-use tokio::net::TcpStream;
-use tokio::task::JoinSet;
-use tokio::time::timeout;
-
-use super::inventory::{
+use super::super::Availability;
+#[cfg(test)]
+use super::super::cli::InventoryTransport;
+#[cfg(test)]
+use super::super::inventory::{
     ConnectedUsbEntry, MergedUsbIdentities, UsbInventory, merge_usb_identities,
 };
-use super::output::{write_network_printer, write_printer, write_unavailable_printer};
+#[cfg(test)]
+use super::super::output::{write_network_printer, write_printer, write_unavailable_printer};
+use super::{ConnectionFacts, Response};
+#[cfg(test)]
+use crate::configuration::{ConfiguredNetworkPrinter, ConfiguredUsbPrinter, PrinterConfiguration};
+use crate::error::CliError;
+use std::io::Write;
 
-const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+pub(crate) fn write_response(response: &Response, output: &mut impl Write) -> Result<(), CliError> {
+    if response.printers.is_empty() {
+        writeln!(output, "No printers configured.").map_err(CliError::WriteHumanOutput)?;
+        return Ok(());
+    }
+    for (offset, printer) in response.printers.iter().enumerate() {
+        writeln!(output, "[{}] {}", offset + 1, printer.name)
+            .map_err(CliError::WriteHumanOutput)?;
+        let status = match printer.availability {
+            Availability::Connected => "connected",
+            Availability::Unavailable => "unavailable",
+        };
+        writeln!(output, "    status: {status}").map_err(CliError::WriteHumanOutput)?;
+        match &printer.connection {
+            ConnectionFacts::Usb(usb) => {
+                if let Some(product) = &usb.product {
+                    writeln!(output, "    model: {product}").map_err(CliError::WriteHumanOutput)?;
+                }
+                if let Some(manufacturer) = &usb.manufacturer {
+                    writeln!(output, "    manufacturer: {manufacturer}")
+                        .map_err(CliError::WriteHumanOutput)?;
+                }
+                writeln!(
+                    output,
+                    "    profile: {}",
+                    printer.profile.as_deref().unwrap_or("unassigned")
+                )
+                .map_err(CliError::WriteHumanOutput)?;
+                writeln!(output, "    transport: usb").map_err(CliError::WriteHumanOutput)?;
+                if let (Some(bus), Some(address)) = (&usb.bus, usb.address) {
+                    writeln!(
+                        output,
+                        "    usb: {:04x}:{:04x}; bus {bus} address {address}; interface {}",
+                        usb.vendor_id, usb.product_id, usb.interface_number
+                    )
+                    .map_err(CliError::WriteHumanOutput)?;
+                } else {
+                    writeln!(
+                        output,
+                        "    usb: {:04x}:{:04x}; interface {}",
+                        usb.vendor_id, usb.product_id, usb.interface_number
+                    )
+                    .map_err(CliError::WriteHumanOutput)?;
+                }
+                write!(
+                    output,
+                    "    endpoints: out {}",
+                    format_endpoints(&usb.out_endpoints)
+                )
+                .map_err(CliError::WriteHumanOutput)?;
+                if !usb.in_endpoints.is_empty() {
+                    write!(output, "; in {}", format_endpoints(&usb.in_endpoints))
+                        .map_err(CliError::WriteHumanOutput)?;
+                }
+                writeln!(output).map_err(CliError::WriteHumanOutput)?;
+                if let Some(serial) = &usb.serial_number {
+                    writeln!(output, "    serial: {serial}").map_err(CliError::WriteHumanOutput)?;
+                }
+            }
+            ConnectionFacts::Network(network) => {
+                writeln!(
+                    output,
+                    "    profile: {}",
+                    printer.profile.as_deref().unwrap_or("unassigned")
+                )
+                .map_err(CliError::WriteHumanOutput)?;
+                writeln!(output, "    transport: network").map_err(CliError::WriteHumanOutput)?;
+                writeln!(
+                    output,
+                    "    network: {}",
+                    super::super::output::format_network_endpoint(&network.host, network.port)
+                )
+                .map_err(CliError::WriteHumanOutput)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_endpoints(endpoints: &[u8]) -> String {
+    endpoints
+        .iter()
+        .map(|endpoint| format!("{endpoint:#04x}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
 struct ListedPrinter<'a> {
     display_name: String,
     kind: ListedPrinterKind<'a>,
 }
+#[cfg(test)]
 enum ListedPrinterKind<'a> {
     ConnectedUsb(&'a ConnectedUsbEntry),
     UnavailableUsb(&'a ConfiguredUsbPrinter),
@@ -39,7 +127,8 @@ enum ListedPrinterKind<'a> {
 /// a device: when no USB printers are configured at all, `inventory.
 /// identities()` is not even called, so `list` is structurally incapable of
 /// hitting a device-open permission error the way `discover` or `add` can.
-pub(super) fn execute(
+#[cfg(test)]
+fn execute(
     inventory: &mut impl UsbInventory,
     configuration: &PrinterConfiguration,
     network_statuses: &[bool],
@@ -92,33 +181,7 @@ pub(super) fn execute(
     }
     Ok(())
 }
-pub(super) async fn probe_network_printers(printers: &[ConfiguredNetworkPrinter]) -> Vec<bool> {
-    let mut probes = JoinSet::new();
-    for (index, printer) in printers.iter().enumerate() {
-        let host = printer.host.clone();
-        let port = printer.port;
-        probes.spawn(async move {
-            // Opening and immediately dropping a TCP stream proves that the
-            // configured RAW endpoint accepts connections without sending a
-            // single byte that the printer could interpret as ESC/POS data.
-            let connected = timeout(
-                NETWORK_PROBE_TIMEOUT,
-                TcpStream::connect((host.as_str(), port)),
-            )
-            .await
-            .is_ok_and(|result| result.is_ok());
-            (index, connected)
-        });
-    }
-
-    let mut statuses = vec![false; printers.len()];
-    while let Some(result) = probes.join_next().await {
-        if let Ok((index, connected)) = result {
-            statuses[index] = connected;
-        }
-    }
-    statuses
-}
+#[cfg(test)]
 fn listed_printers<'a>(
     usb: &'a MergedUsbIdentities,
     configuration: &'a PrinterConfiguration,
@@ -157,6 +220,7 @@ fn listed_printers<'a>(
     }
     printers
 }
+#[cfg(test)]
 impl ListedPrinter<'_> {
     fn status_rank(&self) -> u8 {
         match self.kind {
@@ -181,8 +245,8 @@ impl ListedPrinter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::inventory::{UsbDeviceIdentity, UsbPrinter};
-    use super::super::test_support::{FixedInventory, netum_usb_printer};
+    use super::super::super::inventory::{UsbDeviceIdentity, UsbPrinter};
+    use super::super::super::test_support::{FixedInventory, netum_usb_printer};
     use super::*;
     use crate::configuration::PrinterConfiguration;
 

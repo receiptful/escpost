@@ -2,22 +2,25 @@
 //! printers, print what was found, and hint at how to register anything new.
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::cli::{DiscoverPrintersArgs, InventoryTransport};
+use super::super::cli::{DiscoverPrintersArgs, InventoryTransport};
 use crate::configuration::{ConfiguredNetworkPrinter, PrinterConfiguration};
 use crate::discovery::{self, DiscoveredHost, ScanTarget, Subnet};
 use crate::error::CliError;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use super::inventory::{
-    ConnectedUsbPrinter, NusbInventory, UsbInventory, UsbPrinter, classify_usb_printers,
-    sort_by_usb_location,
+use super::super::Transport;
+#[cfg(test)]
+use super::super::inventory::{
+    ConnectedUsbPrinter, UsbInventory, UsbPrinter, classify_usb_printers, sort_by_usb_location,
 };
-use super::output::{
+use super::super::output::{
     NetworkListing, UsbListing, format_network_endpoint, usb_printer_label_parts,
     write_network_listing, write_usb_listing,
 };
+use super::{Request, Response, execute_with_observer};
 
 /// What `scan_with_progress` prints before the sweep starts: a
 /// `Scanning <N> network(s) on port <port>:` header (singular only for
@@ -46,7 +49,7 @@ fn scan_announcement(targets: &[ScanTarget], port: u16) -> String {
 /// swept network on stderr; `auto_detected` additionally prints a tip toward
 /// `--subnet` when the targets came from automatic detection rather than an
 /// explicit flag, since only then is there something to override.
-pub(super) async fn scan_with_progress(
+pub(crate) async fn scan_with_progress(
     targets: &[ScanTarget],
     port: u16,
     probe_timeout: Duration,
@@ -77,44 +80,150 @@ pub(super) async fn scan_with_progress(
     bar.finish_and_clear();
     hosts
 }
-pub(super) async fn run_discover(
+pub(crate) async fn run_discover(
     arguments: DiscoverPrintersArgs,
-    configuration: &PrinterConfiguration,
+    config: Option<PathBuf>,
 ) -> Result<(), CliError> {
-    if arguments.transport == Some(InventoryTransport::Usb)
-        && (!arguments.subnet.is_empty() || arguments.port.is_some() || arguments.timeout.is_some())
-    {
-        return Err(CliError::NetworkScanOptionForUsbDiscovery);
-    }
     let port = arguments.port.unwrap_or(9100);
-    if port == 0 {
-        return Err(CliError::InvalidPrinterPort);
-    }
-    let hosts = if arguments.transport == Some(InventoryTransport::Usb) {
-        Vec::new()
-    } else {
-        let targets = discovery_targets(&arguments.subnet)?;
-        scan_with_progress(
-            &targets,
+    let invalid_usb_options = arguments.transport == Some(InventoryTransport::Usb)
+        && (!arguments.subnet.is_empty()
+            || arguments.port.is_some()
+            || arguments.timeout.is_some());
+    let bar = ProgressBar::with_draw_target(Some(0), ProgressDrawTarget::stderr());
+    bar.set_style(
+        ProgressStyle::with_template("{msg} [{bar:40}] {pos}/{len}")
+            .expect("the progress bar template is a compile-time constant")
+            .progress_chars("=> "),
+    );
+    bar.set_message("Scanning for network printers");
+    let mut length_set = false;
+    let response = execute_with_observer(
+        Request {
+            config,
+            transport: arguments.transport.map(|transport| match transport {
+                InventoryTransport::Usb => Transport::Usb,
+                InventoryTransport::Network => Transport::Network,
+            }),
             port,
-            Duration::from_millis(arguments.timeout.unwrap_or(1000)),
-            arguments.subnet.is_empty(),
-        )
-        .await
-    };
-    let mut inventory = NusbInventory;
-    let connected = execute_discover(
-        &mut inventory,
-        configuration,
-        &hosts,
-        arguments.transport,
+            subnets: arguments.subnet,
+            timeout: Duration::from_millis(arguments.timeout.unwrap_or(1000)),
+        },
+        || {
+            if invalid_usb_options {
+                Err(CliError::NetworkScanOptionForUsbDiscovery)
+            } else {
+                Ok(())
+            }
+        },
+        |path, targets, auto_detected| {
+            eprintln!(
+                "Reading configuration from {}",
+                crate::configuration::display_path(path)
+            );
+            if !targets.is_empty() {
+                eprintln!("{}", scan_announcement(targets, port));
+                if auto_detected {
+                    eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+                }
+            }
+        },
+        |done, total| {
+            if !length_set {
+                bar.set_length(total);
+                length_set = true;
+            }
+            bar.set_position(done);
+        },
+    )
+    .await;
+    bar.finish_and_clear();
+    let response = response?;
+    write_response(
+        &response,
         &mut io::stdout().lock(),
         &mut io::stderr().lock(),
     )?;
-    let new_usb = any_new_usb_printer(&connected);
-    let new_network = any_new_network_host(&hosts, configuration);
-    if let Some(hint) = combined_registration_hint(new_usb, new_network, port) {
+    if let Some(hint) = combined_registration_hint(
+        response.registration.usb,
+        response.registration.network,
+        port,
+    ) {
         eprintln!("{hint}");
+    }
+    Ok(())
+}
+
+fn write_response(
+    response: &Response,
+    output: &mut impl Write,
+    warnings_output: &mut impl Write,
+) -> Result<(), CliError> {
+    for warning in &response.usb_warnings {
+        writeln!(warnings_output, "Warning: {warning}").map_err(CliError::WriteHumanOutput)?;
+    }
+    #[cfg(target_os = "linux")]
+    if response.usb_permission_denied {
+        writeln!(
+            warnings_output,
+            "Fix USB permissions with: sudo escpost printers grant-usb-permissions"
+        )
+        .map_err(CliError::WriteHumanOutput)?;
+    }
+    if response.usb_printers.is_empty() && response.network_printers.is_empty() {
+        writeln!(output, "No printers discovered.").map_err(CliError::WriteHumanOutput)?;
+        return Ok(());
+    }
+    for (offset, discovered) in response.usb_printers.iter().enumerate() {
+        let product = usb_printer_label_parts(discovered.printer.product.as_deref(), None);
+        let listing = match &discovered.configured_name {
+            Some(name) => UsbListing {
+                heading: name,
+                status: "configured",
+                model: Some(product.as_str()),
+                profile: Some(discovered.configured_profile.as_deref()),
+                printer: &discovered.printer,
+            },
+            None => UsbListing {
+                heading: &product,
+                status: "new",
+                model: None,
+                profile: None,
+                printer: &discovered.printer,
+            },
+        };
+        write_usb_listing(output, offset + 1, &listing)?;
+    }
+    let start = response.usb_printers.len() + 1;
+    for (offset, discovered) in response.network_printers.iter().enumerate() {
+        let endpoint = format_network_endpoint(&discovered.host, discovered.port);
+        let also_configured = discovered
+            .configured_names
+            .iter()
+            .skip(1)
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let listing = if let Some(first) = discovered.configured_names.first() {
+            NetworkListing {
+                heading: first,
+                status: "configured",
+                profile: Some(discovered.configured_profile.as_deref()),
+                host: &discovered.host,
+                port: discovered.port,
+                interface: discovered.interface.as_deref(),
+                also_configured: &also_configured,
+            }
+        } else {
+            NetworkListing {
+                heading: &endpoint,
+                status: "new",
+                profile: None,
+                host: &discovered.host,
+                port: discovered.port,
+                interface: discovered.interface.as_deref(),
+                also_configured: &[],
+            }
+        };
+        write_network_listing(output, start + offset, &listing)?;
     }
     Ok(())
 }
@@ -127,6 +236,7 @@ pub(super) async fn run_discover(
 /// `output`, and the rest of the sweep still runs. Returns the connected USB
 /// printers so the caller can also build the USB registration hint without
 /// enumerating USB devices twice.
+#[cfg(test)]
 fn execute_discover(
     inventory: &mut impl UsbInventory,
     configuration: &PrinterConfiguration,
@@ -169,7 +279,7 @@ fn execute_discover(
 }
 /// Explicit --subnet values are scanned exactly as given; without them the
 /// sweep covers every small directly connected network.
-pub(super) fn discovery_targets(subnets: &[Subnet]) -> Result<Vec<ScanTarget>, CliError> {
+pub(crate) fn discovery_targets(subnets: &[Subnet]) -> Result<Vec<ScanTarget>, CliError> {
     if subnets.is_empty() {
         let targets = discovery::local_scan_targets()?;
         if targets.is_empty() {
@@ -194,6 +304,7 @@ pub(super) fn discovery_targets(subnets: &[Subnet]) -> Result<Vec<ScanTarget>, C
 /// configured`, and both lines, falling back to `unassigned` like `printers
 /// list`. Either way, `write_usb_listing` adds a `manufacturer:` line
 /// whenever the device reports one, regardless of `status`.
+#[cfg(test)]
 fn write_discovered_usb_printers(
     output: &mut impl Write,
     connected: &[ConnectedUsbPrinter],
@@ -229,6 +340,7 @@ fn write_discovered_usb_printers(
 }
 /// Write each discovered network host's block, numbered starting at `start`
 /// so USB blocks (numbered 1..) can precede it in the combined listing.
+#[cfg(test)]
 fn write_discovered_network_printers(
     output: &mut impl Write,
     hosts: &[DiscoveredHost],
@@ -283,7 +395,7 @@ fn configured_network_printers<'a>(
         .collect()
 }
 /// Names of saved network printers matching a discovered endpoint.
-pub(super) fn configured_names<'a>(
+pub(crate) fn configured_names<'a>(
     configuration: &'a PrinterConfiguration,
     host: &DiscoveredHost,
 ) -> Vec<&'a str> {
@@ -296,6 +408,7 @@ pub(super) fn configured_names<'a>(
 /// printer's host and port. Count-independent by design: `combined_
 /// registration_hint` only cares whether the network transport found
 /// anything new, not how much.
+#[cfg(test)]
 fn any_new_network_host(hosts: &[DiscoveredHost], configuration: &PrinterConfiguration) -> bool {
     hosts
         .iter()
@@ -303,6 +416,7 @@ fn any_new_network_host(hosts: &[DiscoveredHost], configuration: &PrinterConfigu
 }
 /// Whether at least one connected USB printer does not yet match a saved
 /// identity. Count-independent for the same reason as `any_new_network_host`.
+#[cfg(test)]
 fn any_new_usb_printer(connected: &[ConnectedUsbPrinter]) -> bool {
     connected
         .iter()
@@ -347,6 +461,7 @@ fn combined_registration_hint(new_usb: bool, new_network: bool, port: u16) -> Op
 /// found, the same way its network sweep already reports hosts in scan
 /// order. Printers not claimed by any configuration are left `None`, ready
 /// to be reported as newly discovered.
+#[cfg(test)]
 fn discovered_usb_printers(
     mut printers: Vec<UsbPrinter>,
     configuration: &PrinterConfiguration,
@@ -359,8 +474,8 @@ fn discovered_usb_printers(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use super::super::inventory::{UsbDeviceIdentity, UsbEnumeration, UsbPrinter};
-    use super::super::test_support::{
+    use super::super::super::inventory::{UsbDeviceIdentity, UsbEnumeration, UsbPrinter};
+    use super::super::super::test_support::{
         FixedInventory, discovered, netum_usb_printer, usb_printer_identity,
     };
     use super::*;

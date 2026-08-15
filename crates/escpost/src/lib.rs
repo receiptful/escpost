@@ -9,7 +9,6 @@ pub mod features;
 mod net;
 mod output;
 mod print;
-mod printers;
 mod profiles;
 pub use features::profiles as profiles_cmd;
 mod render;
@@ -50,7 +49,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Render(arguments) => render::run(arguments, cli.non_interactive).await,
         Command::Print(arguments) => print::run(arguments, cli.non_interactive).await,
         Command::Serve(arguments) => serve::run(arguments, cli.non_interactive).await,
-        Command::Printers(arguments) => printers::run(arguments, cli.non_interactive).await,
+        Command::Printers(arguments) => {
+            features::printers::cli::run(arguments, cli.non_interactive).await
+        }
         Command::Profiles(arguments) => {
             features::profiles::cli::run(arguments, cli.non_interactive)
         }
