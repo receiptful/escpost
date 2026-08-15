@@ -506,7 +506,18 @@ full rule content, and the `udevadm` commands it would run, followed by a
 stderr line pointing at rerunning the same command with `sudo`. Nothing is
 written and nothing is broken; it always exits successfully.
 
-With root, it writes `/etc/udev/rules.d/70-escpost-usb-printers.rules`:
+With root and an interactive terminal (no `--non-interactive`, and both
+stdin and stderr attached to a terminal — the same `can_prompt` check
+`printers add` uses), it first shows the same rule path, content, and
+`udevadm` commands the plan above names, then asks `Write the rule and
+reload udev?` with a default answer of yes. Declining prints
+`Nothing changed.` and exits successfully without touching the system; only
+confirming proceeds to apply the change below. With `--non-interactive`, or
+without a terminal, it applies immediately without asking — the scripted
+provisioning path, safe to skip the prompt for since its own default answer
+is yes.
+
+Applying writes `/etc/udev/rules.d/70-escpost-usb-printers.rules`:
 
 ```text
 # Grant locally logged-in users access to USB printer-class devices (escpost).
@@ -734,7 +745,7 @@ the completed implementation must satisfy.
 | CLI-M16 | Reserve `printers discover` for a read-only sweep that enumerates USB printer interfaces and probes network hosts with a bare connect-and-drop TCP handshake that never sends a byte; neither ever writes to `printers.toml`. |
 | CLI-M17 | Without `--subnet`, scan only directly connected IPv4 networks at most a `/24` automatically, skipping larger ones; an explicit `--subnet` scans exactly the given networks instead and removes the `/24` cap. |
 | CLI-M18 | Resolve `printers add --discover` from the sweep: zero discovered hosts is always an error naming the probed port, exactly one is selected automatically, and several open an interactive selection menu or, under `--non-interactive`, are an error listing every candidate. |
-| CLI-M19 | On Linux, offer `printers grant-usb-permissions` to install a class-wide, `uaccess`-scoped udev rule granting USB printer access without root each time; without root it only prints the exact plan, and it never silently overwrites a rule whose on-disk content differs from what it would write. Point `discover`'s permission-denied USB warnings at it with one added hint line. |
+| CLI-M19 | On Linux, offer `printers grant-usb-permissions` to install a class-wide, `uaccess`-scoped udev rule granting USB printer access without root each time; without root it only prints the exact plan, and it never silently overwrites a rule whose on-disk content differs from what it would write. Running it as root asks for confirmation before changing anything whenever a prompt is possible (honoring `--non-interactive` and applying without asking otherwise), with no separate force flag to bypass it. Point `discover`'s permission-denied USB warnings at it with one added hint line. |
 
 ### Web requirements
 

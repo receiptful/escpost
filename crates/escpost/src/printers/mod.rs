@@ -83,7 +83,9 @@ pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Resul
             run_discover(discover, &configuration).await
         }
         #[cfg(target_os = "linux")]
-        PrintersCommand::GrantUsbPermissions(args) => grant_usb_permissions::run(args),
+        PrintersCommand::GrantUsbPermissions(args) => {
+            grant_usb_permissions::run(args, non_interactive)
+        }
     }
 }
 fn add_printer(

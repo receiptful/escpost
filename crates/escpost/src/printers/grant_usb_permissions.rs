@@ -8,16 +8,24 @@
 //! broader access (`printers list` never opens the device, so it is
 //! unaffected). Without root, this command only prints the plan (the rule
 //! it would write and the commands it would run) so a user can inspect it
-//! before running it with `sudo`; with root, it writes the rule and reloads
-//! udev so it takes effect without a reboot.
+//! before running it with `sudo`. With root and an interactive terminal, it
+//! shows the same rule and commands, then asks for confirmation
+//! (`inquire::Confirm`, default yes) before touching anything; declining
+//! leaves the system unchanged. With root and no prompt available
+//! (`--non-interactive`, or stdin/stderr not a terminal — the scripted
+//! provisioning path), it applies immediately without asking, since the
+//! confirmation's own default answer is yes. Applying writes the rule and
+//! reloads udev so it takes effect without a reboot.
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::os::unix::fs::OpenOptionsExt;
+
+use inquire::Confirm;
 
 use crate::cli::GrantUsbPermissionsArgs;
 use crate::error::CliError;
@@ -41,10 +49,22 @@ SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub(super) fn run(_arguments: GrantUsbPermissionsArgs) -> Result<(), CliError> {
+pub(super) fn run(
+    _arguments: GrantUsbPermissionsArgs,
+    non_interactive: bool,
+) -> Result<(), CliError> {
     if !running_as_root() {
         print!("{}", plan());
         eprintln!("Run it with: sudo escpost printers grant-usb-permissions");
+        return Ok(());
+    }
+
+    let can_prompt = !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal();
+    if can_prompt {
+        print!("{}", describe_change());
+    }
+    if !should_apply(can_prompt, &mut InquireConfirmPrompter)? {
+        println!("Nothing changed.");
         return Ok(());
     }
 
@@ -72,15 +92,17 @@ pub(super) fn run(_arguments: GrantUsbPermissionsArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-/// What `grant-usb-permissions` prints when it is not running as root: the
-/// exact rule it would write, and the commands it would run to load it.
-/// Factored out of `run` so its formatting is directly assertable in a unit
-/// test without capturing stdout.
-fn plan() -> String {
+/// The rule and commands `grant-usb-permissions` is about to apply: the
+/// exact path it would write, the full rule content, and the udevadm
+/// commands it would run afterward. Shared verbatim by both the non-root
+/// informational `plan` (which wraps this with why it's being shown and,
+/// separately, the sudo hint) and the root+interactive confirmation prompt
+/// (which shows this immediately before asking for confirmation), so the
+/// rule path/content/commands are described exactly once in the source
+/// rather than duplicated between the two call sites.
+fn describe_change() -> String {
     format!(
         "\
-Without root, this only shows what `sudo escpost printers grant-usb-permissions` would do.
-
 Write {RULES_PATH}:
 {RULE_CONTENT}
 Then run:
@@ -88,6 +110,58 @@ Then run:
   udevadm trigger --subsystem-match=usb
 "
     )
+}
+
+/// What `grant-usb-permissions` prints when it is not running as root: the
+/// same rule and commands `describe_change` shows, wrapped with why they're
+/// being shown instead of applied. Factored out of `run` so its formatting
+/// is directly assertable in a unit test without capturing stdout.
+fn plan() -> String {
+    format!(
+        "Without root, this only shows what `sudo escpost printers grant-usb-permissions` would do.\n\n{}",
+        describe_change()
+    )
+}
+
+/// Whether to go ahead and write the rule, given whether a confirmation
+/// prompt is even possible and, if so, the user's answer. The pure decision
+/// seam behind the root+interactive confirmation: `can_prompt: false` (the
+/// `--non-interactive` or no-tty scripted-provisioning path) always
+/// proceeds without ever touching `prompter`, matching the confirmation's
+/// own default-yes answer; `can_prompt: true` defers entirely to
+/// `prompter.confirm_grant()`. Testable without root or a real terminal by
+/// swapping in a `ConfirmPrompter` double — the actual rule write and udev
+/// reload that follow a `true` result stay root-only and untested here.
+fn should_apply(can_prompt: bool, prompter: &mut impl ConfirmPrompter) -> Result<bool, CliError> {
+    if !can_prompt {
+        return Ok(true);
+    }
+    prompter.confirm_grant()
+}
+
+/// A yes/no confirmation before `grant-usb-permissions` changes the system.
+/// Deliberately its own minimal trait rather than reusing `add`'s
+/// `AddPrompter`: this command needs exactly one answer, not a family of
+/// prompts, and the two commands share no prompting state.
+trait ConfirmPrompter {
+    fn confirm_grant(&mut self) -> Result<bool, CliError>;
+}
+
+struct InquireConfirmPrompter;
+
+impl ConfirmPrompter for InquireConfirmPrompter {
+    fn confirm_grant(&mut self) -> Result<bool, CliError> {
+        // Any prompt failure (Esc, Ctrl-C, a non-interactive stream inquire
+        // itself rejects) maps to `PrinterPrompt`, the same catch-all
+        // `InquireAddPrompter` uses for every one of its own prompts in
+        // `add.rs` — there is no "treat cancellation as declined" special
+        // case there, so this stays consistent rather than inventing one
+        // here for the one place `grant-usb-permissions` prompts at all.
+        Confirm::new("Write the rule and reload udev?")
+            .with_default(true)
+            .prompt()
+            .map_err(|error| CliError::PrinterPrompt(error.to_string()))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -246,6 +320,78 @@ mod tests {
             plan.contains("udevadm trigger --subsystem-match=usb"),
             "plan should show the trigger command:\n{plan}"
         );
+    }
+
+    #[test]
+    fn plan_wraps_describe_change_verbatim_instead_of_duplicating_it() {
+        // The root+prompt path shows `describe_change()` on its own; this
+        // pins that the non-root `plan()` is that exact same text with a
+        // prefix, not a second, independently written copy of the rule
+        // path/content/commands that could drift out of sync with it.
+        let plan = plan();
+
+        assert!(
+            plan.ends_with(&describe_change()),
+            "plan should end with describe_change()'s exact text:\n{plan}"
+        );
+    }
+
+    /// A `ConfirmPrompter` double that panics if ever called, for asserting
+    /// the `can_prompt: false` path never prompts at all.
+    struct PanicsIfAskedPrompter;
+
+    impl ConfirmPrompter for PanicsIfAskedPrompter {
+        fn confirm_grant(&mut self) -> Result<bool, CliError> {
+            panic!("should_apply must not prompt when a prompt is not possible");
+        }
+    }
+
+    /// A `ConfirmPrompter` double returning a fixed answer.
+    struct FixedConfirmPrompter(bool);
+
+    impl ConfirmPrompter for FixedConfirmPrompter {
+        fn confirm_grant(&mut self) -> Result<bool, CliError> {
+            Ok(self.0)
+        }
+    }
+
+    #[test]
+    fn should_apply_proceeds_without_prompting_when_a_prompt_is_not_possible() {
+        assert!(
+            should_apply(false, &mut PanicsIfAskedPrompter)
+                .expect("no-prompt path should not error")
+        );
+    }
+
+    #[test]
+    fn should_apply_proceeds_when_the_prompt_is_confirmed() {
+        assert!(
+            should_apply(true, &mut FixedConfirmPrompter(true))
+                .expect("a confirmed prompt should not error")
+        );
+    }
+
+    #[test]
+    fn should_apply_does_not_proceed_when_the_prompt_is_declined() {
+        assert!(
+            !should_apply(true, &mut FixedConfirmPrompter(false))
+                .expect("a declined prompt should not error")
+        );
+    }
+
+    #[test]
+    fn should_apply_propagates_a_prompt_error() {
+        struct FailingPrompter;
+        impl ConfirmPrompter for FailingPrompter {
+            fn confirm_grant(&mut self) -> Result<bool, CliError> {
+                Err(CliError::PrinterPrompt("interrupted".to_owned()))
+            }
+        }
+
+        let error = should_apply(true, &mut FailingPrompter)
+            .expect_err("a prompt failure must propagate, not be swallowed as declined");
+
+        assert!(matches!(error, CliError::PrinterPrompt(_)));
     }
 
     #[test]
