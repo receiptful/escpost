@@ -561,6 +561,25 @@ left in place (and udev is still reloaded); a rule that exists with
 different content is left untouched and reported as an error showing both
 versions, since it may have been hand-edited.
 
+Either outcome that leaves the rule in place — a fresh write or an
+already-current rerun — also prints how to undo it later:
+
+```text
+Undo this grant later with:
+  sudo rm /etc/udev/rules.d/70-escpost-usb-printers.rules
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb
+Then unplug and replug the printer to be certain access is fully revoked.
+```
+
+The trailing replug reminder is not filler: `uaccess` grants access through
+a logind ACL applied when the device is plugged in, and removing the rule
+does not retroactively strip that ACL from a device that is already
+plugged in — only a fresh plug, which logind re-evaluates against the
+now-gone rule, actually revokes it. This block is not printed when the
+prompt is declined or when the rule diverges and is refused, since neither
+of those actually grants anything.
+
 ### `printers scan`
 
 `scan` is reserved for an active search for new or unconfigured devices. It may

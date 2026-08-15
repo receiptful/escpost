@@ -91,6 +91,7 @@ pub(super) fn run(
 
     reload_udev()?;
     println!("Replug the USB printer, then run: escpost printers discover");
+    print!("{}", undo_commands());
     Ok(())
 }
 
@@ -167,6 +168,31 @@ fn manual_commands() -> String {
 {RULE_CONTENT}EOF
   sudo udevadm control --reload
   sudo udevadm trigger --subsystem-match=usb
+"
+    )
+}
+
+/// Printed after a root-mode apply that leaves the rule in place — a fresh
+/// write or an idempotent rerun that found it already current, both of
+/// which mean the grant is now active — so a user who applied this later
+/// has a documented way back out, instead of having to reverse-engineer
+/// `manual_commands` by hand. Never printed on decline or on the
+/// `UsbRuleDiverges` refusal, since neither of those actually grants
+/// anything to undo. The `rm` target comes from `RULES_PATH`, never a
+/// hand-typed path, so it cannot name the wrong file. The trailing
+/// replug caveat is not filler: udev's `uaccess` tag grants access via a
+/// logind ACL applied when the device is plugged in, and removing the
+/// rule does not retroactively strip that ACL from an already-plugged
+/// device — only a fresh plug (which logind re-evaluates against the
+/// now-gone rule) actually revokes it.
+fn undo_commands() -> String {
+    format!(
+        "\
+Undo this grant later with:
+  sudo rm {RULES_PATH}
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb
+Then unplug and replug the printer to be certain access is fully revoked.
 "
     )
 }
@@ -412,6 +438,28 @@ EOF
         // "contain" it or resemble it. See the fix report for the same
         // check re-run against a real shell, independent of this parser.
         assert_eq!(extract_heredoc_body(&manual_commands()), RULE_CONTENT);
+    }
+
+    #[test]
+    fn undo_commands_matches_the_exact_format() {
+        assert_eq!(
+            undo_commands(),
+            "\
+Undo this grant later with:
+  sudo rm /etc/udev/rules.d/70-escpost-usb-printers.rules
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=usb
+Then unplug and replug the printer to be certain access is fully revoked.
+"
+        );
+    }
+
+    #[test]
+    fn undo_commands_removes_the_exact_rules_path() {
+        assert!(
+            undo_commands().contains(&format!("sudo rm {RULES_PATH}")),
+            "the undo block should remove RULES_PATH exactly, not a hand-typed path"
+        );
     }
 
     /// A `ConfirmPrompter` double that panics if ever called, for asserting
