@@ -19,19 +19,3 @@ pub(crate) enum Availability {
     Connected,
     Unavailable,
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Connection {
-    Usb {
-        vendor_id: u16,
-        product_id: u16,
-        serial_number: Option<String>,
-        interface_number: u8,
-        out_endpoint: u8,
-        in_endpoint: Option<u8>,
-    },
-    Network {
-        host: String,
-        port: u16,
-    },
-}

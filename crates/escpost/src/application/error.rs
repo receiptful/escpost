@@ -92,6 +92,9 @@ pub(crate) enum ApplicationError {
     #[error("USB OUT endpoint must be between 0x01 and 0x0f, got {0:#04x}")]
     InvalidUsbOutEndpoint(u8),
 
+    #[error("USB IN endpoint must be between 0x81 and 0x8f, got {0:#04x}")]
+    InvalidUsbInEndpoint(u8),
+
     #[error("could not open USB device {vendor_id:#06x}:{product_id:#06x}: {source}")]
     OpenUsbDevice {
         vendor_id: u16,
@@ -176,6 +179,9 @@ pub(crate) enum ApplicationError {
 
     #[error("printer profile must not be blank")]
     BlankPrinterProfile,
+
+    #[error("USB serial number must not be blank")]
+    BlankUsbSerialNumber,
 
     #[error("printer {0:?} is already configured")]
     PrinterAlreadyConfigured(String),

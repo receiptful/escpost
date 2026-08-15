@@ -12,7 +12,6 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use inquire::validator::Validation;
 use inquire::{CustomType, Select, Text};
 
-use super::super::Connection;
 use super::super::cli::output::{format_network_endpoint, usb_printer_label_parts};
 use super::super::cli::scan_announcement;
 use super::super::cli::{AddPrinterArgs, PrinterTransport};
@@ -21,7 +20,7 @@ use super::super::discover::{
     prepare as prepare_discovery,
 };
 use super::super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
-use super::{Request, execute};
+use super::{Connection, Request, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UsbAddTarget {
@@ -137,25 +136,22 @@ fn save_and_report_printer(
     printer: &ResolvedAddPrinter,
 ) -> Result<(), CliError> {
     let connection = match &printer.connection {
-        ResolvedAddConnection::Network { host, port } => Connection::Network {
-            host: host.clone(),
-            port: *port,
-        },
-        ResolvedAddConnection::Usb(target) => Connection::Usb {
-            vendor_id: target.vendor_id,
-            product_id: target.product_id,
-            serial_number: target.serial_number.clone(),
-            interface_number: target.interface_number,
-            out_endpoint: target.out_endpoint,
-            in_endpoint: target.in_endpoint,
-        },
+        ResolvedAddConnection::Network { host, port } => Connection::network(host.clone(), *port)?,
+        ResolvedAddConnection::Usb(target) => Connection::usb(
+            target.vendor_id,
+            target.product_id,
+            target.serial_number.clone(),
+            target.interface_number,
+            target.out_endpoint,
+            target.in_endpoint,
+        )?,
     };
-    let response = execute(Request {
-        config: config_path.map(std::path::Path::to_owned),
-        name: printer.name.clone(),
-        profile: printer.profile.clone(),
+    let response = execute(Request::new(
+        config_path.map(std::path::Path::to_owned),
+        printer.name.clone(),
+        printer.profile.clone(),
         connection,
-    })?;
+    )?)?;
     eprintln!("Printer: {}", printer.name);
     eprintln!("Transport: {}", printer.transport());
     eprintln!(
