@@ -20,6 +20,19 @@ fn profiles_list_shows_known_ids_and_the_calibration_legend() {
         stdout.contains("57.5"),
         "expected tenth-precision paper width (57.5) in the table:\n{stdout}"
     );
+    assert_eq!(
+        stdout
+            .lines()
+            .next()
+            .expect("table should include a header")
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        [
+            "PROFILE", "VENDOR", "MODEL", "CAL", "PAPER", "PRINT", "DOTS", "DPI", "CUT", "BC",
+            "QR",
+        ],
+        "table schema changed:\n{stdout}"
+    );
 }
 
 #[test]
@@ -71,6 +84,29 @@ fn profiles_list_json_parses_as_an_array_of_profile_objects() {
         array[0].get("id").is_some(),
         "each element should have an id field: {}",
         array[0]
+    );
+    assert_eq!(
+        array[0]
+            .as_object()
+            .expect("each profile should be an object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "canonical_profile_sha256",
+            "code_page_count",
+            "dpi_x",
+            "dpi_y",
+            "features",
+            "fonts",
+            "id",
+            "model",
+            "paper_width_mm",
+            "printable_width_dots",
+            "printable_width_mm",
+            "source",
+            "vendor",
+        ]
     );
 }
 

@@ -3,12 +3,14 @@
 use std::io::IsTerminal;
 
 use clap::{Args, Subcommand, ValueEnum};
+use escpost_profiles::{BarcodeSystem, ProfileSource};
 use inquire::Select;
+use serde::Serialize;
 
 use crate::error::CliError;
 
 use super::{
-    BarcodesView, FeaturesView, ListRequest, ProfileSourceFilter, ProfileView, ShowRequest, list,
+    BarcodeFacts, FeaturesFacts, ListRequest, ProfileFacts, ProfileSourceFilter, ShowRequest, list,
     show,
 };
 
@@ -91,8 +93,14 @@ fn run_list(arguments: ListProfilesArgs) -> Result<(), CliError> {
     if arguments.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&response.profiles)
-                .map_err(CliError::SerializeJsonOutput)?
+            serde_json::to_string_pretty(
+                &response
+                    .profiles
+                    .iter()
+                    .map(ProfileJson::from)
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(CliError::SerializeJsonOutput)?
         );
     } else {
         println!("{}", render_table(&response.profiles));
@@ -106,7 +114,7 @@ fn run_show(arguments: ShowProfileArgs) -> Result<(), CliError> {
     if arguments.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&response.profile)
+            serde_json::to_string_pretty(&ProfileJson::from(&response.profile))
                 .map_err(CliError::SerializeJsonOutput)?
         );
     } else {
@@ -167,7 +175,7 @@ const TABLE_HEADERS: [&str; 11] = [
 const TABLE_LEGEND: &str =
     "CAL: ✓ calibrated · ~ synthesized · ○ virtual   PAPER/PRINT mm, DOTS printable";
 
-fn render_table(views: &[ProfileView]) -> String {
+fn render_table(views: &[ProfileFacts]) -> String {
     let mut rows: Vec<[String; 11]> = vec![TABLE_HEADERS.map(str::to_owned)];
     rows.extend(views.iter().map(table_row));
 
@@ -198,7 +206,7 @@ fn format_table_row(cells: &[String; 11], widths: &[usize; 11]) -> String {
         .to_owned()
 }
 
-fn table_row(view: &ProfileView) -> [String; 11] {
+fn table_row(view: &ProfileFacts) -> [String; 11] {
     [
         view.id.clone(),
         view.vendor.clone(),
@@ -214,16 +222,23 @@ fn table_row(view: &ProfileView) -> [String; 11] {
     ]
 }
 
-fn calibration_marker(source_label: &str) -> &'static str {
-    match source_label {
-        "calibrated" => "✓",
-        "synthesized" => "~",
-        "virtual" => "○",
-        _ => "?",
+fn source_label(source: &ProfileSource) -> &'static str {
+    match source {
+        ProfileSource::Upstream => "calibrated",
+        ProfileSource::UpstreamDefault => "synthesized",
+        ProfileSource::Reference => "virtual",
     }
 }
 
-fn cut_marker(features: &FeaturesView) -> &'static str {
+fn calibration_marker(source: &ProfileSource) -> &'static str {
+    match source {
+        ProfileSource::Upstream => "✓",
+        ProfileSource::UpstreamDefault => "~",
+        ProfileSource::Reference => "○",
+    }
+}
+
+fn cut_marker(features: &FeaturesFacts) -> &'static str {
     check_marker(features.paper_full_cut || features.paper_part_cut)
 }
 
@@ -231,7 +246,7 @@ fn check_marker(supported: bool) -> &'static str {
     if supported { "✓" } else { "–" }
 }
 
-fn barcode_marker(barcodes: &BarcodesView) -> &'static str {
+fn barcode_marker(barcodes: &BarcodeFacts) -> &'static str {
     match (
         !barcodes.function_a.is_empty(),
         !barcodes.function_b.is_empty(),
@@ -243,11 +258,11 @@ fn barcode_marker(barcodes: &BarcodesView) -> &'static str {
     }
 }
 
-fn render_detail(view: &ProfileView) -> String {
+fn render_detail(view: &ProfileFacts) -> String {
     let marker = calibration_marker(&view.source);
     let lines = [
         format!("{} — {} {}", view.id, view.vendor, view.model),
-        format!("source:           {} {marker}", view.source),
+        format!("source:           {} {marker}", source_label(&view.source)),
         format!("sha256:           {}", view.canonical_profile_sha256),
         String::new(),
         format!("paper width:      {:.1} mm", view.paper_width_mm),
@@ -292,11 +307,122 @@ fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
-fn barcode_list(systems: &[String]) -> String {
+fn barcode_list(systems: &std::collections::BTreeSet<BarcodeSystem>) -> String {
     if systems.is_empty() {
         "none".to_owned()
     } else {
-        systems.join(", ")
+        systems
+            .iter()
+            .map(barcode_system_label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn barcode_system_label(system: &BarcodeSystem) -> &'static str {
+    match system {
+        BarcodeSystem::UpcA => "upc_a",
+        BarcodeSystem::UpcE => "upc_e",
+        BarcodeSystem::Ean13 => "ean_13",
+        BarcodeSystem::Ean8 => "ean_8",
+        BarcodeSystem::Code39 => "code_39",
+        BarcodeSystem::Itf => "itf",
+        BarcodeSystem::Codabar => "codabar",
+        BarcodeSystem::Code93 => "code_93",
+        BarcodeSystem::Code128 => "code_128",
+        BarcodeSystem::Gs1_128 => "gs1_128",
+        BarcodeSystem::Gs1DataBarOmnidirectional => "gs1_databar_omnidirectional",
+        BarcodeSystem::Gs1DataBarTruncated => "gs1_databar_truncated",
+        BarcodeSystem::Gs1DataBarLimited => "gs1_databar_limited",
+        BarcodeSystem::Gs1DataBarExpanded => "gs1_databar_expanded",
+        BarcodeSystem::Code128Auto => "code_128_auto",
+    }
+}
+
+#[derive(Serialize)]
+struct ProfileJson {
+    id: String,
+    vendor: String,
+    model: String,
+    source: &'static str,
+    paper_width_mm: f64,
+    printable_width_mm: f64,
+    printable_width_dots: u32,
+    dpi_x: u32,
+    dpi_y: u32,
+    fonts: FontsJson,
+    features: FeaturesJson,
+    code_page_count: usize,
+    canonical_profile_sha256: String,
+}
+
+#[derive(Serialize)]
+struct FontsJson {
+    a: FontJson,
+    b: FontJson,
+}
+
+#[derive(Serialize)]
+struct FontJson {
+    cell_width_dots: u32,
+    cell_height_dots: u32,
+    baseline_dots: u32,
+}
+
+#[derive(Serialize)]
+struct FeaturesJson {
+    barcodes: BarcodesJson,
+    graphics: bool,
+    paper_full_cut: bool,
+    paper_part_cut: bool,
+    qr_code: bool,
+    pulse_standard: bool,
+}
+
+#[derive(Serialize)]
+struct BarcodesJson {
+    function_a: Vec<BarcodeSystem>,
+    function_b: Vec<BarcodeSystem>,
+}
+
+impl From<&ProfileFacts> for ProfileJson {
+    fn from(facts: &ProfileFacts) -> Self {
+        Self {
+            id: facts.id.clone(),
+            vendor: facts.vendor.clone(),
+            model: facts.model.clone(),
+            source: source_label(&facts.source),
+            paper_width_mm: facts.paper_width_mm,
+            printable_width_mm: facts.printable_width_mm,
+            printable_width_dots: facts.printable_width_dots,
+            dpi_x: facts.dpi_x,
+            dpi_y: facts.dpi_y,
+            fonts: FontsJson {
+                a: FontJson {
+                    cell_width_dots: facts.fonts.a.cell_width_dots,
+                    cell_height_dots: facts.fonts.a.cell_height_dots,
+                    baseline_dots: facts.fonts.a.baseline_dots,
+                },
+                b: FontJson {
+                    cell_width_dots: facts.fonts.b.cell_width_dots,
+                    cell_height_dots: facts.fonts.b.cell_height_dots,
+                    baseline_dots: facts.fonts.b.baseline_dots,
+                },
+            },
+            features: FeaturesJson {
+                barcodes: BarcodesJson {
+                    function_a: facts.features.barcodes.function_a.iter().copied().collect(),
+                    function_b: facts.features.barcodes.function_b.iter().copied().collect(),
+                },
+                graphics: facts.features.graphics,
+                paper_full_cut: facts.features.paper_full_cut,
+                paper_part_cut: facts.features.paper_part_cut,
+                qr_code: facts.features.qr_code,
+                pulse_standard: facts.features.pulse_standard,
+            },
+            code_page_count: facts.code_page_count,
+            canonical_profile_sha256: facts.canonical_profile_sha256.clone(),
+        }
     }
 }
 
@@ -309,7 +435,7 @@ mod tests {
     #[test]
     fn table_includes_the_calibration_marker_and_legend() {
         let profile = resolver::resolve("TM-T88III").expect("the fixture profile should resolve");
-        let view = ProfileView::from_profile(profile);
+        let view = ProfileFacts::from_profile(profile);
 
         let table = render_table(std::slice::from_ref(&view));
 
@@ -321,7 +447,7 @@ mod tests {
     #[test]
     fn detail_shows_decimal_millimeters_and_barcode_lists() {
         let profile = resolver::resolve("TM-T88III").expect("the fixture profile should resolve");
-        let view = ProfileView::from_profile(profile);
+        let view = ProfileFacts::from_profile(profile);
 
         let detail = render_detail(&view);
 
