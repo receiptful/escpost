@@ -5,11 +5,11 @@ use super::super::Availability;
 #[cfg(test)]
 use super::super::cli::InventoryTransport;
 #[cfg(test)]
+use super::super::cli::output::{write_network_printer, write_printer, write_unavailable_printer};
+#[cfg(test)]
 use super::super::inventory::{
     ConnectedUsbEntry, MergedUsbIdentities, UsbInventory, merge_usb_identities,
 };
-#[cfg(test)]
-use super::super::output::{write_network_printer, write_printer, write_unavailable_printer};
 use super::{ConnectionFacts, Response};
 #[cfg(test)]
 use crate::configuration::{ConfiguredNetworkPrinter, ConfiguredUsbPrinter, PrinterConfiguration};
@@ -86,7 +86,7 @@ pub(crate) fn write_response(response: &Response, output: &mut impl Write) -> Re
                 writeln!(
                     output,
                     "    network: {}",
-                    super::super::output::format_network_endpoint(&network.host, network.port)
+                    super::super::cli::output::format_network_endpoint(&network.host, network.port)
                 )
                 .map_err(CliError::WriteHumanOutput)?;
             }

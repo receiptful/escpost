@@ -7,7 +7,7 @@ use std::io::Write;
 use crate::configuration::{ConfiguredNetworkPrinter, ConfiguredUsbPrinter};
 use crate::error::CliError;
 
-use super::inventory::UsbPrinter;
+use super::super::inventory::UsbPrinter;
 
 const UNASSIGNED_PROFILE: &str = "unassigned";
 /// A USB printer entry as shown by both `printers list` and `printers
@@ -22,14 +22,14 @@ const UNASSIGNED_PROFILE: &str = "unassigned";
 /// freshly discovered, unconfigured printer on `discover`) from "print the
 /// line, falling back to `unassigned`" (a configured printer on either
 /// command, or an unconfigured but connected printer on `list`).
-pub(super) struct UsbListing<'a> {
-    pub(super) heading: &'a str,
-    pub(super) status: &'a str,
-    pub(super) model: Option<&'a str>,
-    pub(super) profile: Option<Option<&'a str>>,
-    pub(super) printer: &'a UsbPrinter,
+pub(crate) struct UsbListing<'a> {
+    pub(crate) heading: &'a str,
+    pub(crate) status: &'a str,
+    pub(crate) model: Option<&'a str>,
+    pub(crate) profile: Option<Option<&'a str>>,
+    pub(crate) printer: &'a UsbPrinter,
 }
-pub(super) fn write_usb_listing(
+pub(crate) fn write_usb_listing(
     output: &mut impl Write,
     number: usize,
     listing: &UsbListing<'_>,
@@ -90,7 +90,7 @@ pub(super) fn write_usb_listing(
 /// needs no equivalent handling here: `write_usb_listing` already sources it
 /// straight from `printer.manufacturer`.
 #[cfg(test)]
-pub(super) fn write_printer(
+pub(crate) fn write_printer(
     output: &mut impl Write,
     number: usize,
     printer: &UsbPrinter,
@@ -109,7 +109,7 @@ pub(super) fn write_printer(
     )
 }
 #[cfg(test)]
-pub(super) fn write_unavailable_printer(
+pub(crate) fn write_unavailable_printer(
     output: &mut impl Write,
     number: usize,
     printer: &ConfiguredUsbPrinter,
@@ -144,16 +144,16 @@ pub(super) fn write_unavailable_printer(
 /// discover`, so the two commands cannot drift apart. `profile` distinguishes
 /// "no profile line at all" (a freshly discovered, unconfigured host) from
 /// "print the line, falling back to `unassigned`" (a configured printer).
-pub(super) struct NetworkListing<'a> {
-    pub(super) heading: &'a str,
-    pub(super) status: &'a str,
-    pub(super) profile: Option<Option<&'a str>>,
-    pub(super) host: &'a str,
-    pub(super) port: u16,
-    pub(super) interface: Option<&'a str>,
-    pub(super) also_configured: &'a [&'a str],
+pub(crate) struct NetworkListing<'a> {
+    pub(crate) heading: &'a str,
+    pub(crate) status: &'a str,
+    pub(crate) profile: Option<Option<&'a str>>,
+    pub(crate) host: &'a str,
+    pub(crate) port: u16,
+    pub(crate) interface: Option<&'a str>,
+    pub(crate) also_configured: &'a [&'a str],
 }
-pub(super) fn write_network_listing(
+pub(crate) fn write_network_listing(
     output: &mut impl Write,
     number: usize,
     listing: &NetworkListing<'_>,
@@ -184,7 +184,7 @@ pub(super) fn write_network_listing(
     Ok(())
 }
 #[cfg(test)]
-pub(super) fn write_network_printer(
+pub(crate) fn write_network_printer(
     output: &mut impl Write,
     number: usize,
     printer: &ConfiguredNetworkPrinter,
@@ -208,7 +208,7 @@ pub(super) fn write_network_printer(
         },
     )
 }
-pub(super) fn format_network_endpoint(host: &str, port: u16) -> String {
+pub(crate) fn format_network_endpoint(host: &str, port: u16) -> String {
     if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
         format!("[{host}]:{port}")
     } else {
@@ -220,7 +220,7 @@ pub(super) fn format_network_endpoint(host: &str, port: u16) -> String {
 /// screen density matters more than the `list`/`discover` blocks' split
 /// `model:`/`manufacturer:` lines. Falls back to a generic product label when
 /// the device reports none.
-pub(super) fn usb_printer_label_parts(product: Option<&str>, manufacturer: Option<&str>) -> String {
+pub(crate) fn usb_printer_label_parts(product: Option<&str>, manufacturer: Option<&str>) -> String {
     let product = product.unwrap_or("USB printer");
     manufacturer.map_or_else(
         || product.to_owned(),

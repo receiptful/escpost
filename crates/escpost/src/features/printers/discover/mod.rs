@@ -10,7 +10,8 @@ use crate::error::CliError;
 
 use super::Transport;
 use super::inventory::{
-    NusbInventory, UsbInventory, UsbPrinter, classify_usb_printers, sort_by_usb_location,
+    NusbInventory, UsbEnumerationFailure, UsbInventory, UsbPrinter, classify_usb_printers,
+    sort_by_usb_location,
 };
 
 pub(crate) mod cli;
@@ -30,8 +31,7 @@ pub(crate) struct Response {
     pub(crate) scan_targets: Vec<ScanTarget>,
     pub(crate) usb_printers: Vec<UsbDiscovery>,
     pub(crate) network_printers: Vec<NetworkDiscovery>,
-    pub(crate) usb_warnings: Vec<String>,
-    pub(crate) usb_permission_denied: bool,
+    pub(crate) usb_failures: Vec<UsbEnumerationFailure>,
     pub(crate) registration: RegistrationAvailability,
 }
 
@@ -120,8 +120,7 @@ fn response_from_configuration(
     let enumeration = if request.transport == Some(Transport::Network) {
         super::inventory::UsbEnumeration {
             printers: Vec::new(),
-            warnings: Vec::new(),
-            permission_denied: false,
+            failures: Vec::new(),
         }
     } else {
         inventory.list_tolerant()?
@@ -179,8 +178,7 @@ fn response_from_configuration(
         scan_targets,
         usb_printers,
         network_printers,
-        usb_warnings: enumeration.warnings,
-        usb_permission_denied: enumeration.permission_denied,
+        usb_failures: enumeration.failures,
         registration,
     })
 }
@@ -216,13 +214,15 @@ fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost)
 mod tests {
     use super::*;
     use crate::discovery::{DiscoveredHost, ScanTarget, Subnet};
-    use crate::features::printers::inventory::UsbEnumeration;
+    use crate::features::printers::inventory::{
+        UsbEnumeration, UsbEnumerationFailure, UsbFailureStage,
+    };
     use crate::features::printers::test_support::{TolerantInventory, temporary_configuration};
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
     #[test]
-    fn discover_returns_structured_results_and_tolerant_usb_warnings_without_output() {
+    fn discover_returns_structured_results_and_tolerant_usb_failure_facts_without_output() {
         let configuration = temporary_configuration("typed-discover", "");
         let request = Request {
             config: Some(configuration.path().to_owned()),
@@ -234,8 +234,13 @@ mod tests {
         let mut inventory = TolerantInventory {
             enumeration: Some(UsbEnumeration {
                 printers: Vec::new(),
-                warnings: vec!["could not open USB device 0416:5011: denied".to_owned()],
-                permission_denied: true,
+                failures: vec![UsbEnumerationFailure {
+                    stage: UsbFailureStage::OpenDevice,
+                    vendor_id: 0x0416,
+                    product_id: 0x5011,
+                    reason: "denied".to_owned(),
+                    permission_denied: true,
+                }],
             }),
         };
         let targets = vec![ScanTarget {
@@ -253,8 +258,12 @@ mod tests {
             .expect("partial USB failure should not abort discovery");
 
         assert_eq!(response.scan_targets, targets);
-        assert_eq!(response.usb_warnings.len(), 1);
-        assert!(response.usb_permission_denied);
+        assert_eq!(response.usb_failures.len(), 1);
+        assert_eq!(response.usb_failures[0].stage, UsbFailureStage::OpenDevice);
+        assert_eq!(response.usb_failures[0].vendor_id, 0x0416);
+        assert_eq!(response.usb_failures[0].product_id, 0x5011);
+        assert_eq!(response.usb_failures[0].reason, "denied");
+        assert!(response.usb_failures[0].permission_denied);
         assert_eq!(response.network_printers.len(), 1);
         assert_eq!(response.network_printers[0].host, "10.42.0.71");
         assert!(response.registration.network);

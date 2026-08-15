@@ -38,19 +38,26 @@ pub(super) struct UsbDeviceIdentity {
     pub(super) serial_number: Option<String>,
 }
 /// Best-effort USB enumeration for `printers discover`: printers found so
-/// far, plus a warning line for each device that could not be opened or
-/// whose active configuration could not be inspected. A device-level
-/// failure never aborts the rest of the sweep, the same way the network
-/// sweep silently skips unreachable hosts. `permission_denied` is set when
-/// at least one of those per-device failures was
-/// `CliError::is_permission_denied_usb_open` — the same predicate the
-/// top-level fatal-error print in `lib.rs` uses — computed once here, where
-/// the structured `CliError` is still available, rather than re-derived
-/// from the formatted `warnings` strings by the caller.
+/// far, plus structured facts for each device that could not be opened or
+/// inspected. Rendering those facts belongs to the CLI adapter.
 pub(super) struct UsbEnumeration {
     pub(super) printers: Vec<UsbPrinter>,
-    pub(super) warnings: Vec<String>,
-    pub(super) permission_denied: bool,
+    pub(super) failures: Vec<UsbEnumerationFailure>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UsbFailureStage {
+    OpenDevice,
+    InspectConfiguration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UsbEnumerationFailure {
+    pub(crate) stage: UsbFailureStage,
+    pub(crate) vendor_id: u16,
+    pub(crate) product_id: u16,
+    pub(crate) reason: String,
+    pub(crate) permission_denied: bool,
 }
 #[derive(Debug, PartialEq, Eq)]
 struct UsbPrinterInterface {
@@ -100,8 +107,7 @@ pub(super) trait UsbInventory {
     fn list_tolerant(&mut self) -> Result<UsbEnumeration, CliError> {
         Ok(UsbEnumeration {
             printers: self.list()?,
-            warnings: Vec::new(),
-            permission_denied: false,
+            failures: Vec::new(),
         })
     }
 }
@@ -310,24 +316,18 @@ impl UsbInventory for NusbInventory {
             .wait()
             .map_err(CliError::EnumerateUsb)?;
         let mut printers = Vec::new();
-        let mut warnings = Vec::new();
-        let mut permission_denied = false;
+        let mut failures = Vec::new();
 
         for device_info in devices.filter(is_printer_device) {
             match usb_printers_for_device(&device_info) {
                 Ok(device_printers) => printers.extend(device_printers),
                 Err(error) => {
-                    permission_denied |= error.is_permission_denied_usb_open();
-                    warnings.push(describe_usb_enumeration_failure(&error));
+                    failures.push(usb_enumeration_failure(&error));
                 }
             }
         }
 
-        Ok(UsbEnumeration {
-            printers,
-            warnings,
-            permission_denied,
-        })
+        Ok(UsbEnumeration { printers, failures })
     }
 
     fn identities(&mut self) -> Result<Vec<UsbDeviceIdentity>, CliError> {
@@ -391,27 +391,31 @@ fn usb_printers_for_device(device_info: &nusb::DeviceInfo) -> Result<Vec<UsbPrin
         })
         .collect())
 }
-/// Render a USB enumeration failure gathered by `list_tolerant` as a warning
-/// line for `printers discover`, using the same bare `vendor:product` hex
-/// notation as discover's own `usb:` coordinate line. `CliError`'s Display
-/// uses a `0x`-prefixed form instead, which stays unchanged for the fatal
-/// case where `list()` itself propagates the error (`printers list`,
-/// `printers add`).
-pub(super) fn describe_usb_enumeration_failure(error: &CliError) -> String {
+fn usb_enumeration_failure(error: &CliError) -> UsbEnumerationFailure {
     match error {
         CliError::OpenUsbDevice {
             vendor_id,
             product_id,
             source,
-        } => format!("could not open USB device {vendor_id:04x}:{product_id:04x}: {source}"),
+        } => UsbEnumerationFailure {
+            stage: UsbFailureStage::OpenDevice,
+            vendor_id: *vendor_id,
+            product_id: *product_id,
+            reason: source.to_string(),
+            permission_denied: error.is_permission_denied_usb_open(),
+        },
         CliError::InspectUsbConfiguration {
             vendor_id,
             product_id,
             source,
-        } => format!(
-            "could not inspect the active configuration of USB device {vendor_id:04x}:{product_id:04x}: {source}"
-        ),
-        other => other.to_string(),
+        } => UsbEnumerationFailure {
+            stage: UsbFailureStage::InspectConfiguration,
+            vendor_id: *vendor_id,
+            product_id: *product_id,
+            reason: source.to_string(),
+            permission_denied: false,
+        },
+        _ => unreachable!("USB device inspection returns a typed USB error"),
     }
 }
 fn is_printer_device(device: &nusb::DeviceInfo) -> bool {

@@ -12,10 +12,10 @@ use inquire::validator::Validation;
 use inquire::{CustomType, Select, Text};
 
 use super::super::Connection;
+use super::super::cli::output::{format_network_endpoint, usb_printer_label_parts};
 use super::super::cli::{AddPrinterArgs, PrinterTransport};
 use super::super::discover::cli::{configured_names, discovery_targets, scan_with_progress};
 use super::super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
-use super::super::output::{format_network_endpoint, usb_printer_label_parts};
 use super::{Request, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

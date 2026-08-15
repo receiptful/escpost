@@ -14,6 +14,8 @@ use crate::discovery::Subnet;
 use super::discover::cli::run_discover;
 use super::{Transport, list};
 
+pub(super) mod output;
+
 #[derive(Debug, Args)]
 pub(crate) struct PrintersArgs {
     /// Read printer configuration from this exact file.
@@ -100,7 +102,8 @@ pub(crate) struct AddPrinterArgs {
     /// instead of passing --host.
     #[arg(long, conflicts_with_all = ["host", "vendor_id", "product_id", "serial"])]
     pub(crate) discover: bool,
-    /// Scan this network instead of directly connected networks. May be repeated.
+    /// Scan this network (CIDR notation, for example 10.42.0.0/24) instead
+    /// of the directly connected networks. May be repeated.
     #[arg(long, value_name = "CIDR", value_parser = Subnet::parse, requires = "discover")]
     pub(crate) subnet: Vec<Subnet>,
     /// Per-host connection timeout in milliseconds during discovery.

@@ -12,14 +12,15 @@ use crate::error::CliError;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use super::super::Transport;
+use super::super::cli::output::{
+    NetworkListing, UsbListing, format_network_endpoint, usb_printer_label_parts,
+    write_network_listing, write_usb_listing,
+};
 #[cfg(test)]
 use super::super::inventory::{
     ConnectedUsbPrinter, UsbInventory, UsbPrinter, classify_usb_printers, sort_by_usb_location,
 };
-use super::super::output::{
-    NetworkListing, UsbListing, format_network_endpoint, usb_printer_label_parts,
-    write_network_listing, write_usb_listing,
-};
+use super::super::inventory::{UsbEnumerationFailure, UsbFailureStage};
 use super::{Request, Response, execute_with_observer};
 
 /// What `scan_with_progress` prints before the sweep starts: a
@@ -158,11 +159,15 @@ fn write_response(
     output: &mut impl Write,
     warnings_output: &mut impl Write,
 ) -> Result<(), CliError> {
-    for warning in &response.usb_warnings {
-        writeln!(warnings_output, "Warning: {warning}").map_err(CliError::WriteHumanOutput)?;
+    for failure in &response.usb_failures {
+        write_usb_failure(warnings_output, failure)?;
     }
     #[cfg(target_os = "linux")]
-    if response.usb_permission_denied {
+    if response
+        .usb_failures
+        .iter()
+        .any(|failure| failure.permission_denied)
+    {
         writeln!(
             warnings_output,
             "Fix USB permissions with: sudo escpost printers grant-usb-permissions"
@@ -227,6 +232,22 @@ fn write_response(
     }
     Ok(())
 }
+
+fn write_usb_failure(
+    output: &mut impl Write,
+    failure: &UsbEnumerationFailure,
+) -> Result<(), CliError> {
+    let action = match failure.stage {
+        UsbFailureStage::OpenDevice => "could not open",
+        UsbFailureStage::InspectConfiguration => "could not inspect the active configuration of",
+    };
+    writeln!(
+        output,
+        "Warning: {action} USB device {:04x}:{:04x}: {}",
+        failure.vendor_id, failure.product_id, failure.reason
+    )
+    .map_err(CliError::WriteHumanOutput)
+}
 /// The pure core of `printers discover`: enumerate USB (unless
 /// `--transport network`) and format the sweep hosts (unless `--transport
 /// usb`), printing USB blocks before network blocks with continuous
@@ -249,11 +270,15 @@ fn execute_discover(
         Vec::new()
     } else {
         let usb_enumeration = inventory.list_tolerant()?;
-        for warning in &usb_enumeration.warnings {
-            writeln!(warnings_output, "Warning: {warning}").map_err(CliError::WriteHumanOutput)?;
+        for failure in &usb_enumeration.failures {
+            write_usb_failure(warnings_output, failure)?;
         }
         #[cfg(target_os = "linux")]
-        if usb_enumeration.permission_denied {
+        if usb_enumeration
+            .failures
+            .iter()
+            .any(|failure| failure.permission_denied)
+        {
             writeln!(
                 warnings_output,
                 "Fix USB permissions with: sudo escpost printers grant-usb-permissions"
@@ -483,21 +508,13 @@ mod tests {
 
     /// A `UsbInventory` double that exercises `list_tolerant`'s partial-
     /// failure path directly: some devices enumerate fine, others report a
-    /// canned warning, mirroring what `NusbInventory::list_tolerant` does
+    /// canned failure facts, mirroring what `NusbInventory::list_tolerant` does
     /// when a real device cannot be opened or inspected. `list()` stays
     /// strict (as `printers list`/`add` need), returning only the printers
     /// that "succeeded".
     struct PartiallyFailingInventory {
         printers: Vec<UsbPrinter>,
-        warnings: Vec<String>,
-        /// Set directly by the test rather than derived from `warnings`'
-        /// text: production computes this the same way, from the
-        /// structured `CliError` at the point of failure
-        /// (`CliError::is_permission_denied_usb_open`, checked in
-        /// `NusbInventory::list_tolerant` before the error is ever
-        /// formatted into a warning string), not by pattern-matching the
-        /// formatted message afterward.
-        permission_denied: bool,
+        failures: Vec<UsbEnumerationFailure>,
     }
 
     impl UsbInventory for PartiallyFailingInventory {
@@ -508,8 +525,7 @@ mod tests {
         fn list_tolerant(&mut self) -> Result<UsbEnumeration, CliError> {
             Ok(UsbEnumeration {
                 printers: self.printers.clone(),
-                warnings: self.warnings.clone(),
-                permission_denied: self.permission_denied,
+                failures: self.failures.clone(),
             })
         }
 
@@ -1265,10 +1281,13 @@ in_endpoint = \"0x81\"
         // permission hint below, which has its own dedicated tests.
         let mut inventory = PartiallyFailingInventory {
             printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
-            warnings: vec![
-                "could not inspect the active configuration of USB device 0416:5012: device is not configured".to_owned(),
-            ],
-            permission_denied: false,
+            failures: vec![UsbEnumerationFailure {
+                stage: UsbFailureStage::InspectConfiguration,
+                vendor_id: 0x0416,
+                product_id: 0x5012,
+                reason: "device is not configured".to_owned(),
+                permission_denied: false,
+            }],
         };
         let mut output = Vec::new();
         let mut warnings_output = Vec::new();
@@ -1301,11 +1320,22 @@ in_endpoint = \"0x81\"
     fn discover_appends_the_grant_usb_permissions_hint_once_after_permission_denied_warnings() {
         let mut inventory = PartiallyFailingInventory {
             printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
-            warnings: vec![
-                "could not open USB device 0416:5012: permission denied (errno 13)".to_owned(),
-                "could not open USB device 0416:5013: permission denied (errno 13)".to_owned(),
+            failures: vec![
+                UsbEnumerationFailure {
+                    stage: UsbFailureStage::OpenDevice,
+                    vendor_id: 0x0416,
+                    product_id: 0x5012,
+                    reason: "permission denied (errno 13)".to_owned(),
+                    permission_denied: true,
+                },
+                UsbEnumerationFailure {
+                    stage: UsbFailureStage::OpenDevice,
+                    vendor_id: 0x0416,
+                    product_id: 0x5013,
+                    reason: "permission denied (errno 13)".to_owned(),
+                    permission_denied: true,
+                },
             ],
-            permission_denied: true,
         };
         let mut output = Vec::new();
         let mut warnings_output = Vec::new();
@@ -1337,10 +1367,13 @@ Fix USB permissions with: sudo escpost printers grant-usb-permissions
     fn discover_prints_no_grant_usb_permissions_hint_without_a_permission_denied_warning() {
         let mut inventory = PartiallyFailingInventory {
             printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
-            warnings: vec![
-                "could not inspect the active configuration of USB device 0416:5012: device is not configured".to_owned(),
-            ],
-            permission_denied: false,
+            failures: vec![UsbEnumerationFailure {
+                stage: UsbFailureStage::InspectConfiguration,
+                vendor_id: 0x0416,
+                product_id: 0x5012,
+                reason: "device is not configured".to_owned(),
+                permission_denied: false,
+            }],
         };
         let mut output = Vec::new();
         let mut warnings_output = Vec::new();

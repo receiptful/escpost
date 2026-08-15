@@ -51,6 +51,12 @@ fn printers_add_documents_its_registration_options() {
     assert!(stdout.contains("--product-id <PRODUCT_ID>"));
     assert!(stdout.contains("--serial <SERIAL>"));
     assert!(stdout.contains("--profile <PROFILE>"));
+    assert!(
+        stdout.contains(
+            "      --subnet <CIDR>            Scan this network (CIDR notation, for example 10.42.0.0/24) instead of the directly connected networks. May be repeated\n"
+        ),
+        "the add help must preserve the exact subnet description:\n{stdout}"
+    );
 }
 
 #[cfg(unix)]

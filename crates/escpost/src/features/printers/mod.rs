@@ -7,7 +7,6 @@ pub(crate) mod discover;
 pub(crate) mod grant_usb_permissions;
 mod inventory;
 pub(crate) mod list;
-mod output;
 #[cfg(test)]
 mod test_support;
 
