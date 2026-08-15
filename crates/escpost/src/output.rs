@@ -1,12 +1,11 @@
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io;
 use std::path::Path;
 
 use escpost_render::RenderResult;
 use serde::Serialize;
 
 use crate::application::{self, ApplicationError};
-use crate::error::CliError;
 
 #[derive(Debug, Serialize)]
 struct OutputManifest {
@@ -17,17 +16,21 @@ pub(crate) fn write_single(
     rendered: &RenderResult,
     output: &Path,
     selected_sheet: Option<usize>,
-) -> Result<(), CliError> {
-    let sheet = select_sheet(rendered, selected_sheet)?;
-    if output == Path::new("-") {
-        return write_stdout(&sheet.png);
-    }
-
-    fs::write(output, &sheet.png).map_err(|source| ApplicationError::WriteOutput {
-        path: output.to_path_buf(),
-        source,
+) -> application::Result<()> {
+    fs::write(output, single_png(rendered, selected_sheet)?).map_err(|source| {
+        ApplicationError::WriteOutput {
+            path: output.to_path_buf(),
+            source,
+        }
     })?;
     Ok(())
+}
+
+pub(crate) fn single_png(
+    rendered: &RenderResult,
+    selected_sheet: Option<usize>,
+) -> application::Result<&[u8]> {
+    select_sheet(rendered, selected_sheet).map(|sheet| sheet.png.as_slice())
 }
 
 pub(crate) fn write_all(
@@ -84,13 +87,6 @@ fn select_sheet(
         None if rendered.sheets.len() == 1 => Ok(&rendered.sheets[0]),
         None => Err(ApplicationError::MultipleSheets(rendered.sheets.len())),
     }
-}
-
-fn write_stdout(png: &[u8]) -> Result<(), CliError> {
-    if io::stdout().is_terminal() {
-        return Err(CliError::BinaryOutputToTerminal);
-    }
-    io::stdout().write_all(png).map_err(CliError::WriteStdout)
 }
 
 fn write_manifest(output_directory: &Path, sheets: Vec<String>) -> application::Result<()> {

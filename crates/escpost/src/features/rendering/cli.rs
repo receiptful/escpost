@@ -1,6 +1,6 @@
 //! Terminal adapter for the rendering operation.
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -126,7 +126,13 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
     }
 
     if let Some(output_path) = &arguments.output {
-        output::write_single(&rendered, output_path, arguments.sheet)?;
+        if binary_stdout {
+            let png = output::single_png(&rendered, arguments.sheet)?;
+            let mut stdout = io::stdout();
+            write_stdout(png, stdout.is_terminal(), &mut stdout)?;
+        } else {
+            output::write_single(&rendered, output_path, arguments.sheet)?;
+        }
     }
     if let Some(output_directory) = &arguments.output_dir {
         output::write_all(&rendered, output_directory)?;
@@ -160,6 +166,17 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
     Ok(())
 }
 
+fn write_stdout(
+    png: &[u8],
+    stdout_is_terminal: bool,
+    output: &mut impl Write,
+) -> Result<(), CliError> {
+    if stdout_is_terminal {
+        return Err(CliError::BinaryOutputToTerminal);
+    }
+    output.write_all(png).map_err(CliError::WriteStdout)
+}
+
 fn resolve_profile(
     explicit: Option<String>,
     source_profile: Option<String>,
@@ -176,4 +193,28 @@ fn resolve_profile(
         .with_help_message("Use REFERENCE when no physical printer is known")
         .prompt()
         .map_err(|error| CliError::ProfilePrompt(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interactive_stdout_rejects_binary_png_bytes() {
+        let mut output = Vec::new();
+
+        let error = write_stdout(b"png", true, &mut output).expect_err("stdout should be rejected");
+
+        assert!(matches!(error, CliError::BinaryOutputToTerminal));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn non_terminal_stdout_preserves_exact_png_bytes() {
+        let mut output = Vec::new();
+
+        write_stdout(b"\x89PNG\r\n", false, &mut output).expect("stdout should be writable");
+
+        assert_eq!(output, b"\x89PNG\r\n");
+    }
 }
