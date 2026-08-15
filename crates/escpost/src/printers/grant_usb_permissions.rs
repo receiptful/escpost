@@ -152,15 +152,17 @@ struct InquireConfirmPrompter;
 impl ConfirmPrompter for InquireConfirmPrompter {
     fn confirm_grant(&mut self) -> Result<bool, CliError> {
         // Any prompt failure (Esc, Ctrl-C, a non-interactive stream inquire
-        // itself rejects) maps to `PrinterPrompt`, the same catch-all
-        // `InquireAddPrompter` uses for every one of its own prompts in
-        // `add.rs` — there is no "treat cancellation as declined" special
-        // case there, so this stays consistent rather than inventing one
-        // here for the one place `grant-usb-permissions` prompts at all.
+        // itself rejects) is a hard error rather than silently treated as
+        // declined, mirroring how `InquireAddPrompter` treats every one of
+        // its own prompt failures in `add.rs` — but through this command's
+        // own `ConfirmationPrompt` variant, not `add.rs`'s `PrinterPrompt`:
+        // that message reads "could not read printer information", which
+        // is misleading for a system-change confirmation that has nothing
+        // to do with printer information.
         Confirm::new("Write the rule and reload udev?")
             .with_default(true)
             .prompt()
-            .map_err(|error| CliError::PrinterPrompt(error.to_string()))
+            .map_err(|error| CliError::ConfirmationPrompt(error.to_string()))
     }
 }
 
@@ -384,14 +386,14 @@ mod tests {
         struct FailingPrompter;
         impl ConfirmPrompter for FailingPrompter {
             fn confirm_grant(&mut self) -> Result<bool, CliError> {
-                Err(CliError::PrinterPrompt("interrupted".to_owned()))
+                Err(CliError::ConfirmationPrompt("interrupted".to_owned()))
             }
         }
 
         let error = should_apply(true, &mut FailingPrompter)
             .expect_err("a prompt failure must propagate, not be swallowed as declined");
 
-        assert!(matches!(error, CliError::PrinterPrompt(_)));
+        assert!(matches!(error, CliError::ConfirmationPrompt(_)));
     }
 
     #[test]

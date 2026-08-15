@@ -313,6 +313,10 @@ pub(crate) enum CliError {
     },
 
     #[cfg(target_os = "linux")]
+    #[error("could not read the confirmation: {0}")]
+    ConfirmationPrompt(String),
+
+    #[cfg(target_os = "linux")]
     #[error("could not read existing udev rule {path}: {source}")]
     ReadUsbRulesFile {
         path: PathBuf,
