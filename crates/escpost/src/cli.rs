@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::discovery::Subnet;
+use crate::features::profiles::cli::SourceFilter;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -328,13 +329,6 @@ pub(crate) struct ShowProfileArgs {
     /// Print the profile as JSON instead of the detail view.
     #[arg(long)]
     pub(crate) json: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum SourceFilter {
-    Calibrated,
-    Synthesized,
-    Virtual,
 }
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
