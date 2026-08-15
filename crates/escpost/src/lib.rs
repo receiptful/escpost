@@ -11,7 +11,6 @@ mod output;
 mod print;
 mod profiles;
 pub use features::profiles as profiles_cmd;
-mod render;
 mod serve;
 mod source;
 mod watch;
@@ -46,7 +45,9 @@ pub async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
-        Command::Render(arguments) => render::run(arguments, cli.non_interactive).await,
+        Command::Render(arguments) => {
+            features::rendering::cli::run(arguments, cli.non_interactive).await
+        }
         Command::Print(arguments) => print::run(arguments, cli.non_interactive).await,
         Command::Serve(arguments) => serve::run(arguments, cli.non_interactive).await,
         Command::Printers(arguments) => {

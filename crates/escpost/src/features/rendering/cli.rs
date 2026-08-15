@@ -1,15 +1,18 @@
+//! Terminal adapter for the rendering operation.
+
 use std::io::{self, IsTerminal};
 use std::path::Path;
 
-use escpost_render::{
-    RenderOptions, TracedRenderResult, render_with_options, render_with_trace_and_options,
-};
+use escpost_render::TracedRenderResult;
 
+use crate::application;
 use crate::cli::RenderArgs;
 use crate::error::CliError;
 use crate::{output, profiles, source};
 
-pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<(), CliError> {
+use super::{Request, render};
+
+pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> application::Result<()> {
     let web_enabled =
         arguments.web || arguments.browser || arguments.web_listen.is_some() || arguments.watch;
     let binary_stdout = arguments.output.as_deref() == Some(Path::new("-"));
@@ -31,24 +34,17 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
         && arguments.source != Path::new("-")
         && io::stdin().is_terminal()
         && io::stderr().is_terminal();
-    let profile_id = profiles::resolve(arguments.profile, input.profile, can_prompt)?;
-    let profile = profiles::load(&profile_id)?;
-    let options = RenderOptions {
+    let requested_profile_id = profiles::resolve(arguments.profile, input.profile, can_prompt)?;
+    let response = render(Request {
+        bytes: input.bytes,
+        profile_id: requested_profile_id,
         scale: arguments.scale,
         antialias: arguments.antialias,
-        ..RenderOptions::default()
-    };
-    let (rendered, trace) = if web_enabled {
-        let traced = render_with_trace_and_options(&input.bytes, profile, &options)
-            .map_err(|error| CliError::Render(error.to_string()))?;
-        (traced.render, Some(traced.trace))
-    } else {
-        (
-            render_with_options(&input.bytes, profile, &options)
-                .map_err(|error| CliError::Render(error.to_string()))?,
-            None,
-        )
-    };
+        trace: web_enabled,
+    })?;
+    let profile_id = response.profile_id;
+    let rendered = response.render;
+
     if !binary_stdout {
         eprintln!("Profile: {profile_id}");
     }
@@ -69,7 +65,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
         let jobs = crate::web::JobStore::with_render(
             TracedRenderResult {
                 render: rendered,
-                trace: trace.expect("web rendering requested a trace"),
+                trace: response.trace.expect("web rendering requested a trace"),
             },
             arguments.antialias,
         );

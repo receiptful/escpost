@@ -2,3 +2,4 @@
 
 pub(crate) mod printers;
 pub mod profiles;
+pub(crate) mod rendering;

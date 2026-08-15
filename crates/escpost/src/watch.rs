@@ -2,11 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use escpost_render::{RenderOptions, render_with_trace_and_options};
+use escpost_render::TracedRenderResult;
 
 use crate::cli::InputFormat;
 use crate::error::CliError;
-use crate::{output, profiles, source, web};
+use crate::features::rendering::{self, Request};
+use crate::{output, source, web};
 
 const WATCH_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -68,23 +69,25 @@ async fn run(
     }
 }
 
-fn rerender(config: &WatchConfig) -> Result<escpost_render::TracedRenderResult, CliError> {
+fn rerender(config: &WatchConfig) -> Result<TracedRenderResult, CliError> {
     let input = source::load(&config.source, config.format)?;
-    let profile = profiles::load(&config.profile)?;
-    let options = RenderOptions {
+    let response = rendering::render(Request {
+        bytes: input.bytes,
+        profile_id: config.profile.clone(),
         scale: config.scale,
         antialias: config.antialias,
-        ..RenderOptions::default()
-    };
-    let rendered = render_with_trace_and_options(&input.bytes, profile, &options)
-        .map_err(|error| CliError::Render(error.to_string()))?;
+        trace: true,
+    })?;
     if let Some(path) = &config.output {
-        output::write_single(&rendered.render, path, config.sheet)?;
+        output::write_single(&response.render, path, config.sheet)?;
     }
     if let Some(directory) = &config.output_dir {
-        output::write_all(&rendered.render, directory)?;
+        output::write_all(&response.render, directory)?;
     }
-    Ok(rendered)
+    Ok(TracedRenderResult {
+        render: response.render,
+        trace: response.trace.expect("watch rendering requested a trace"),
+    })
 }
 
 fn inspect(path: &PathBuf) -> Result<SourceStamp, CliError> {
