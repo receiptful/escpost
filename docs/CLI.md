@@ -386,7 +386,7 @@ reports every other USB and network printer it found, exiting successfully.
 Only a failure to enumerate USB devices at all is fatal, exactly like
 `list`. On Linux, when at least one of those warnings is a permission error,
 stderr prints one additional line after the warnings: `Fix USB permissions
-with: sudo escpost printers setup-usb` (see `printers setup-usb` below). The
+with: sudo escpost printers grant-usb-permissions` (see `printers grant-usb-permissions` below). The
 same line follows any other command's fatal USB permission error too — for
 example `print` sending to a USB printer, or `printers add`'s interactive or
 non-interactive USB selection — since those open the device directly instead
@@ -483,7 +483,7 @@ transports instead prints the transport-agnostic "Register a new printer
 with" and hints at the bare `printers add <NAME>`, since the interactive
 wizard it launches prompts for the transport itself.
 
-### `printers setup-usb` (Linux only)
+### `printers grant-usb-permissions` (Linux only)
 
 USB printer device nodes under `/dev/bus/usb/` are root-owned by default on
 most Linux distributions, so `printers discover` degrades to a permission
@@ -491,14 +491,14 @@ warning and any command that opens the device directly — `print`, and
 `printers add`'s USB selection — fails outright until something grants
 access. (`printers list` is unaffected: it checks USB presence from
 operating-system metadata alone and never opens the device, so it cannot hit
-this error; see `printers list` above.) `setup-usb` writes the udev rule
+this error; see `printers list` above.) `grant-usb-permissions` writes the udev rule
 that fixes this and exists only on Linux: the subcommand is absent from
 `--help` and unrecognized if typed on macOS or Windows, where no equivalent
 step is needed.
 
 ```bash
-escpost printers setup-usb
-sudo escpost printers setup-usb
+escpost printers grant-usb-permissions
+sudo escpost printers grant-usb-permissions
 ```
 
 Without root, it only prints the plan: the exact path it would write, the
@@ -734,7 +734,7 @@ the completed implementation must satisfy.
 | CLI-M16 | Reserve `printers discover` for a read-only sweep that enumerates USB printer interfaces and probes network hosts with a bare connect-and-drop TCP handshake that never sends a byte; neither ever writes to `printers.toml`. |
 | CLI-M17 | Without `--subnet`, scan only directly connected IPv4 networks at most a `/24` automatically, skipping larger ones; an explicit `--subnet` scans exactly the given networks instead and removes the `/24` cap. |
 | CLI-M18 | Resolve `printers add --discover` from the sweep: zero discovered hosts is always an error naming the probed port, exactly one is selected automatically, and several open an interactive selection menu or, under `--non-interactive`, are an error listing every candidate. |
-| CLI-M19 | On Linux, offer `printers setup-usb` to install a class-wide, `uaccess`-scoped udev rule granting USB printer access without root each time; without root it only prints the exact plan, and it never silently overwrites a rule whose on-disk content differs from what it would write. Point `discover`'s permission-denied USB warnings at it with one added hint line. |
+| CLI-M19 | On Linux, offer `printers grant-usb-permissions` to install a class-wide, `uaccess`-scoped udev rule granting USB printer access without root each time; without root it only prints the exact plan, and it never silently overwrites a rule whose on-disk content differs from what it would write. Point `discover`'s permission-denied USB warnings at it with one added hint line. |
 
 ### Web requirements
 

@@ -864,21 +864,21 @@ fn printers_list_does_not_create_missing_configuration() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn printers_setup_usb_documents_itself() {
+fn printers_grant_usb_permissions_documents_itself() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args(["printers", "setup-usb", "--help"])
+        .args(["printers", "grant-usb-permissions", "--help"])
         .output()
         .expect("the escpost command should finish");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "command failed:\n{stdout}");
     assert!(stdout.contains("Grant the current user access to USB printers"));
-    assert!(stdout.contains("Usage: escpost printers setup-usb"));
+    assert!(stdout.contains("Usage: escpost printers grant-usb-permissions"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn printers_setup_usb_without_root_prints_the_plan_and_exits_successfully() {
+fn printers_grant_usb_permissions_without_root_prints_the_plan_and_exits_successfully() {
     // This test must not run as root: the whole point is exercising the
     // read-only "print the plan" branch, never the branch that writes to
     // /etc/udev/rules.d or shells out to udevadm.
@@ -889,7 +889,7 @@ fn printers_setup_usb_without_root_prints_the_plan_and_exits_successfully() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args(["printers", "setup-usb"])
+        .args(["printers", "grant-usb-permissions"])
         .output()
         .expect("the escpost command should finish");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -919,7 +919,7 @@ fn printers_setup_usb_without_root_prints_the_plan_and_exits_successfully() {
     );
     assert_eq!(
         stderr.trim_end(),
-        "Run it with: sudo escpost printers setup-usb",
+        "Run it with: sudo escpost printers grant-usb-permissions",
         "stderr should point at rerunning the same command with sudo:\n{stderr}"
     );
 }

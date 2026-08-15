@@ -1,5 +1,5 @@
-//! `printers setup-usb` (Linux only): grant the invoking user's active
-//! local session access to USB printer-class devices via a udev rule.
+//! `printers grant-usb-permissions` (Linux only): grant the invoking user's
+//! active local session access to USB printer-class devices via a udev rule.
 //!
 //! USB device nodes under `/dev/bus/usb/` are root-owned by default on
 //! Linux, so `printers discover` degrades to a per-device permission
@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::cli::SetupUsbArgs;
+use crate::cli::GrantUsbPermissionsArgs;
 use crate::error::CliError;
 
 /// Where the rule is installed. Numbered in the 70-series so it loads after
@@ -41,10 +41,10 @@ SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:0701*:*\", TAG+=\"uaccess\"
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub(super) fn run(_arguments: SetupUsbArgs) -> Result<(), CliError> {
+pub(super) fn run(_arguments: GrantUsbPermissionsArgs) -> Result<(), CliError> {
     if !running_as_root() {
         print!("{}", plan());
-        eprintln!("Run it with: sudo escpost printers setup-usb");
+        eprintln!("Run it with: sudo escpost printers grant-usb-permissions");
         return Ok(());
     }
 
@@ -72,14 +72,14 @@ pub(super) fn run(_arguments: SetupUsbArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-/// What `setup-usb` prints when it is not running as root: the exact rule
-/// it would write, and the commands it would run to load it. Factored out
-/// of `run` so its formatting is directly assertable in a unit test without
-/// capturing stdout.
+/// What `grant-usb-permissions` prints when it is not running as root: the
+/// exact rule it would write, and the commands it would run to load it.
+/// Factored out of `run` so its formatting is directly assertable in a unit
+/// test without capturing stdout.
 fn plan() -> String {
     format!(
         "\
-Without root, this only shows what `sudo escpost printers setup-usb` would do.
+Without root, this only shows what `sudo escpost printers grant-usb-permissions` would do.
 
 Write {RULES_PATH}:
 {RULE_CONTENT}

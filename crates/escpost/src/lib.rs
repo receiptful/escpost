@@ -32,11 +32,11 @@ pub async fn main() -> ExitCode {
             // Fatal USB-open permission errors (`print`, `printers add`'s
             // USB selection) get the same actionable hint discover's
             // tolerant warnings already carry, so a user hitting the
-            // problem the hard way is not left to find `setup-usb` in the
+            // problem the hard way is not left to find `grant-usb-permissions` in the
             // docs.
             #[cfg(target_os = "linux")]
             if error.is_permission_denied_usb_open() {
-                eprintln!("Fix USB permissions with: sudo escpost printers setup-usb");
+                eprintln!("Fix USB permissions with: sudo escpost printers grant-usb-permissions");
             }
             ExitCode::FAILURE
         }

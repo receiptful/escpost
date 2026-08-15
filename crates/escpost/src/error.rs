@@ -355,7 +355,7 @@ pub(crate) enum CliError {
 impl CliError {
     /// Whether this error is a USB **open**-family failure caused by an
     /// operating system permission denial (Linux's EACCES/EPERM, errno 13)
-    /// — the exact condition a udev rule installed by `printers setup-usb`
+    /// — the exact condition a udev rule installed by `printers grant-usb-permissions`
     /// fixes. Covers the three points where escpost calls into nusb's
     /// blocking open/claim path and a root-owned device node surfaces as a
     /// permission error today: opening the device itself (`OpenUsbDevice`,
@@ -406,7 +406,7 @@ mod tests {
         // the open family on purpose, not merely because nothing else was
         // tested: a permission error surfacing after the device was already
         // opened successfully is a different condition than the one
-        // `setup-usb` fixes, and must not trigger the hint.
+        // `grant-usb-permissions` fixes, and must not trigger the hint.
         let error = CliError::WriteUsb {
             endpoint: 0x01,
             source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),

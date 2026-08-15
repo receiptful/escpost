@@ -146,7 +146,7 @@ fn execute_discover(
         if enumeration.permission_denied {
             writeln!(
                 warnings_output,
-                "Fix USB permissions with: sudo escpost printers setup-usb"
+                "Fix USB permissions with: sudo escpost printers grant-usb-permissions"
             )
             .map_err(CliError::WriteHumanOutput)?;
         }
@@ -1183,7 +1183,7 @@ in_endpoint = \"0x81\"
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn discover_appends_the_setup_usb_hint_once_after_permission_denied_warnings() {
+    fn discover_appends_the_grant_usb_permissions_hint_once_after_permission_denied_warnings() {
         let mut inventory = PartiallyFailingInventory {
             printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
             warnings: vec![
@@ -1212,14 +1212,14 @@ in_endpoint = \"0x81\"
             "\
 Warning: could not open USB device 0416:5012: permission denied (errno 13)
 Warning: could not open USB device 0416:5013: permission denied (errno 13)
-Fix USB permissions with: sudo escpost printers setup-usb
+Fix USB permissions with: sudo escpost printers grant-usb-permissions
 "
         );
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn discover_prints_no_setup_usb_hint_without_a_permission_denied_warning() {
+    fn discover_prints_no_grant_usb_permissions_hint_without_a_permission_denied_warning() {
         let mut inventory = PartiallyFailingInventory {
             printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
             warnings: vec![
@@ -1243,8 +1243,8 @@ Fix USB permissions with: sudo escpost printers setup-usb
         let warnings_output =
             String::from_utf8(warnings_output).expect("the warnings should be UTF-8");
         assert!(
-            !warnings_output.contains("setup-usb"),
-            "no permission-denied warning means no setup-usb hint:\n{warnings_output}"
+            !warnings_output.contains("grant-usb-permissions"),
+            "no permission-denied warning means no grant-usb-permissions hint:\n{warnings_output}"
         );
     }
 }

@@ -171,12 +171,12 @@ pub(crate) enum PrintersCommand {
 
     /// Grant the current user access to USB printers (writes a udev rule; run with sudo).
     #[cfg(target_os = "linux")]
-    SetupUsb(SetupUsbArgs),
+    GrantUsbPermissions(GrantUsbPermissionsArgs),
 }
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Args)]
-pub(crate) struct SetupUsbArgs {}
+pub(crate) struct GrantUsbPermissionsArgs {}
 
 #[derive(Debug, Args)]
 pub(crate) struct ListPrintersArgs {
