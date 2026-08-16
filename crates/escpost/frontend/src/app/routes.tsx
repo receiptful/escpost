@@ -5,15 +5,6 @@ import { OverviewPage } from "../features/overview/page";
 import { PrintersPage } from "../features/printers/page";
 import { ProfilesPage } from "../features/profiles/page";
 
-function PlaceholderPage({ title }: { title: string }) {
-  return (
-    <section aria-labelledby={`${title}-heading`} class="space-y-4">
-      <h1 id={`${title}-heading`} class="text-3xl font-bold">{title}</h1>
-      <p class="text-base-content/70">Loading…</p>
-    </section>
-  );
-}
-
 function NotFoundPage() {
   return (
     <section aria-labelledby="not-found-heading" class="space-y-4">

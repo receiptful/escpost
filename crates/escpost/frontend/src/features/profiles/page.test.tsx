@@ -67,12 +67,21 @@ describe("ProfilesPage", () => {
       expect(screen.getByRole("columnheader", { name: header })).toBeTruthy();
     }
     expect(screen.getByText((_, element) => element?.textContent === "CAL: ✓ calibrated · ~ synthesized · ○ virtual   PAPER/PRINT mm, DOTS printable")).toBeTruthy();
-    for (const value of ["80.0 mm", "72.3 mm", "576", "203", "A·B", "A", "B", "–", "✓", "~", "○"]) {
-      expect(screen.getAllByText(value).length).toBeGreaterThanOrEqual(2);
-    }
-    for (const label of ["PROFILE", "VENDOR", "MODEL", "CAL", "PAPER", "PRINT", "DOTS", "DPI", "CUT", "BC", "QR"]) {
-      expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(4);
-    }
+    const expectedRows = [
+      ["CALIBRATED", "Acme", "Pro 80", "✓", "80.0", "72.3", "576", "203", "✓", "A·B", "✓"],
+      ["SYNTHESIZED", "Acme", "Lite 58", "~", "58.0", "48.0", "384", "203", "✓", "A", "–"],
+      ["REFERENCE", "ESCPost", "Reference", "○", "80.0", "72.0", "576", "203", "–", "B", "–"],
+      ["NONE", "Acme", "No codes", "○", "80.0", "64.0", "512", "180", "–", "–", "–"],
+    ];
+    const dataRows = screen.getAllByRole("row").slice(1);
+    const cards = screen.getAllByRole("article");
+    expect(dataRows).toHaveLength(expectedRows.length);
+    expect(cards).toHaveLength(expectedRows.length);
+    expectedRows.forEach((values, index) => {
+      expect(Array.from(dataRows[index].querySelectorAll("td"), (cell) => cell.textContent)).toEqual(values);
+      expect(Array.from(cards[index].querySelectorAll("dt"), (label) => label.textContent)).toEqual(["PROFILE", "VENDOR", "MODEL", "CAL", "PAPER", "PRINT", "DOTS", "DPI", "CUT", "BC", "QR"]);
+      expect(Array.from(cards[index].querySelectorAll("dd"), (field) => field.textContent)).toEqual(values);
+    });
   });
 
   test("distinguishes initial loading, empty catalog, initial API error, and successful retry", async () => {

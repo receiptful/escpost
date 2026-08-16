@@ -4,18 +4,18 @@ import { NetworkRequestError, getPrinters, getProfiles, getStatus } from "../api
 import type { PrintersResponse, ProfilesResponse, StatusResponse } from "../api/types";
 
 type ConnectionState = "loading" | "ready" | "disconnected";
-type PrinterPhase = "loading" | "ready" | "refreshing" | "error";
+type ResourcePhase = "loading" | "ready" | "refreshing" | "error";
 
 export type PrinterResource = {
   data: PrintersResponse | null;
   error: Error | null;
-  phase: PrinterPhase;
+  phase: ResourcePhase;
 };
 
 export type ProfileResource = {
   data: ProfilesResponse | null;
   error: Error | null;
-  phase: PrinterPhase;
+  phase: ResourcePhase;
 };
 
 type AppData = {

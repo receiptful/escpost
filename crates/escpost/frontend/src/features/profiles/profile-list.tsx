@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import type { Profile } from "../../api/types";
 import { useAppData } from "../../app/data";
 
@@ -28,8 +29,8 @@ function fields(profile: Profile) {
     profile.vendor,
     profile.model,
     sourceMarker(profile),
-    `${profile.paper_width_mm.toFixed(1)} mm`,
-    `${profile.printable_width_mm.toFixed(1)} mm`,
+    profile.paper_width_mm.toFixed(1),
+    profile.printable_width_mm.toFixed(1),
     profile.printable_width_dots.toString(),
     profile.dpi_x.toString(),
     checkMarker(profile.full_cut || profile.partial_cut),
@@ -70,7 +71,7 @@ export function ProfileList() {
         <div class="space-y-3 lg:hidden">
           {profileData.map((profile) => <article key={profile.id} class="rounded-box bg-base-100 p-5 shadow-sm">
             <dl class="grid grid-cols-2 gap-3 text-sm">
-              {fields(profile).map((value, index) => <><dt class="font-medium text-base-content/70">{columns[index]}</dt><dd>{value}</dd></>)}
+              {fields(profile).map((value, index) => <Fragment key={columns[index]}><dt class="font-medium text-base-content/70">{columns[index]}</dt><dd>{value}</dd></Fragment>)}
             </dl>
           </article>)}
         </div>
