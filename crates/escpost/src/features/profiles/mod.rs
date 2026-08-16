@@ -8,6 +8,7 @@ use escpost_profiles::{BarcodeSystem, Font, PrinterProfile, ProfileSource};
 use crate::application::{self, ApplicationError};
 
 pub(crate) mod cli;
+pub(crate) mod http;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProfileSourceFilter {

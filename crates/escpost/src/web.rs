@@ -16,6 +16,7 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
+pub(crate) mod error;
 mod frontend;
 mod status;
 
@@ -514,13 +515,18 @@ pub(crate) async fn serve(
     virtual_printer_address: Option<SocketAddr>,
 ) -> std::io::Result<()> {
     let router = Router::new()
+        .merge(crate::features::printers::http::router())
+        .merge(crate::features::profiles::http::router())
         .route("/", get(index))
         .route("/app", get(frontend::redirect))
         .route("/app/", get(frontend::index))
         .route("/app/assets/{*path}", get(frontend::asset))
+        .route("/app/{*path}", get(frontend::index))
         .route("/health", get(health))
         .route("/api/status", get(status::status))
         .route("/api/render", get(current_render))
+        .route("/api", get(error::not_found))
+        .route("/api/{*path}", get(error::not_found))
         .route("/sheets/{file}", get(sheet_png))
         .route("/job", get(download_job))
         .with_state(WebState {

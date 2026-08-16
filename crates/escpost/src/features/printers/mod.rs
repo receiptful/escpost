@@ -3,6 +3,7 @@
 pub(crate) mod add;
 pub(crate) mod cli;
 pub(crate) mod discover;
+pub(crate) mod http;
 mod inventory;
 pub(crate) mod list;
 #[cfg(test)]
