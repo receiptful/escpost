@@ -6,10 +6,10 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   return (
     <section
       aria-label="Connection status"
-      aria-live={compact ? "polite" : undefined}
-      aria-atomic={compact ? "true" : undefined}
+      aria-live="polite"
+      aria-atomic="true"
       class={compact ? "rounded-box bg-base-200 px-3 py-2 text-xs" : "mt-auto rounded-box bg-base-200 p-4 text-sm"}
-      role={compact ? "status" : undefined}
+      role="status"
     >
       <p class="font-medium">Connection</p>
       <p class="mt-1 text-base-content/70">{label}</p>

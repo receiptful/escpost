@@ -273,6 +273,7 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
             response_header(&response, "cache-control"),
             Some("no-store")
         );
+        assert_eq!(response_header(&response, "allow"), Some("GET, HEAD"));
         assert!(matches!(
             response_header(&response, "content-type"),
             Some(value) if value.starts_with("application/json")
@@ -280,7 +281,10 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
         let response: serde_json::Value = serde_json::from_slice(response_body(&response))
             .expect("method failures should be JSON");
         assert_eq!(response["error"]["code"], "method_not_allowed");
-        assert!(response["error"]["message"].is_string());
+        assert_eq!(
+            response["error"]["message"],
+            "This API endpoint only accepts GET and HEAD requests."
+        );
     }
 }
 

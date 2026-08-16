@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
@@ -57,7 +57,7 @@ impl ApiError {
         Self::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "method_not_allowed",
-            "This API endpoint only accepts GET requests.",
+            "This API endpoint only accepts GET and HEAD requests.",
         )
     }
 
@@ -72,7 +72,8 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
+        let status = self.status;
+        let mut response = (
             self.status,
             [(header::CACHE_CONTROL, "no-store")],
             Json(ErrorEnvelope {
@@ -82,7 +83,13 @@ impl IntoResponse for ApiError {
                 },
             }),
         )
-            .into_response()
+            .into_response();
+        if status == StatusCode::METHOD_NOT_ALLOWED {
+            response
+                .headers_mut()
+                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+        }
+        response
     }
 }
 

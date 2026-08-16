@@ -66,17 +66,34 @@ describe("App", () => {
     ).toHaveLength(5);
   });
 
-  test("retains desktop connection state and exposes a polite compact mobile status", async () => {
+  test("exposes polite live connection status semantics for both responsive variants", async () => {
     renderAt("/app/jobs");
 
     await screen.findAllByText("Ready");
-    const mobileStatus = await screen.findByRole("status", { name: "Connection status" });
-    const desktopStatus = screen.getAllByLabelText("Connection status").find(
-      (element) => element.getAttribute("role") !== "status",
-    );
-    expect(desktopStatus?.textContent).toContain("Ready");
-    expect(mobileStatus.getAttribute("aria-live")).toBe("polite");
-    expect(mobileStatus.textContent).toContain("Ready");
+    const statuses = screen.getAllByRole("status", { name: "Connection status" });
+    expect(statuses).toHaveLength(2);
+    for (const status of statuses) {
+      expect(status.getAttribute("aria-live")).toBe("polite");
+      expect(status.getAttribute("aria-atomic")).toBe("true");
+      expect(status.textContent).toContain("Ready");
+    }
+    const desktopStatus = statuses.find((status) => status.closest("aside"));
+    expect(desktopStatus?.closest("aside")?.getAttribute("class")).toContain("hidden");
+    expect(desktopStatus?.closest("aside")?.getAttribute("class")).toContain("lg:flex");
+  });
+
+  test("keeps the mobile connection status in normal flow above content while only navigation is fixed", () => {
+    const view = renderAt("/app/printers");
+
+    const statuses = screen.getAllByRole("status", { name: "Connection status" });
+    const mobileStatus = statuses.find((status) => status.closest("header"));
+    expect(mobileStatus?.closest("header")?.getAttribute("class")).toContain("lg:hidden");
+    expect(mobileStatus?.closest("header")?.nextElementSibling?.tagName).toBe("MAIN");
+    const fixedMobileBar = view.container.querySelector("div.fixed");
+    expect(fixedMobileBar?.querySelector("header")).toBeNull();
+    expect(
+      fixedMobileBar?.querySelector('[aria-label="Mobile workbench navigation"]'),
+    ).toBeTruthy();
   });
 
   test("selects Overview at the normalized workbench root path", () => {
