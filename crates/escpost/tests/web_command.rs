@@ -38,6 +38,81 @@ fn web_mode_serves_the_embedded_workbench() {
 }
 
 #[test]
+fn web_mode_serves_the_new_spa_beside_the_existing_viewer() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let legacy = http_get_bytes(port, "/");
+    let redirect = http_get_bytes(port, "/app");
+    let app = http_get_bytes(port, "/app/");
+    stop(&mut child);
+
+    assert_eq!(response_status(&legacy), "HTTP/1.1 200 OK");
+    assert!(
+        String::from_utf8_lossy(response_body(&legacy)).contains("<title>ESCPost render</title>")
+    );
+    assert_eq!(
+        response_status(&redirect),
+        "HTTP/1.1 308 Permanent Redirect"
+    );
+    assert_eq!(response_header(&redirect, "location"), Some("/app/"));
+    assert_eq!(response_status(&app), "HTTP/1.1 200 OK");
+    assert_eq!(response_header(&app, "cache-control"), Some("no-cache"));
+    assert!(
+        String::from_utf8_lossy(response_body(&app)).contains("<title>ESCPost workbench</title>")
+    );
+}
+
+#[test]
+fn web_mode_serves_hashed_spa_assets_with_immutable_caching() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let app = http_get_bytes(port, "/app/");
+    let html = String::from_utf8_lossy(response_body(&app));
+    let javascript_path = referenced_asset(&html, ".js");
+    let css_path = referenced_asset(&html, ".css");
+    let javascript = http_get_bytes(port, &javascript_path);
+    let css = http_get_bytes(port, &css_path);
+    stop(&mut child);
+
+    assert_eq!(response_status(&javascript), "HTTP/1.1 200 OK");
+    assert!(matches!(
+        response_header(&javascript, "content-type"),
+        Some("text/javascript") | Some("application/javascript")
+    ));
+    assert_eq!(
+        response_header(&javascript, "cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
+    assert_eq!(response_status(&css), "HTTP/1.1 200 OK");
+    assert_eq!(response_header(&css, "content-type"), Some("text/css"));
+    assert_eq!(
+        response_header(&css, "cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
+}
+
+#[test]
+fn web_mode_rejects_unknown_spa_paths_and_asset_traversal() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let unknown = http_get_bytes(port, "/app/printers");
+    let missing = http_get_bytes(port, "/app/assets/missing.js");
+    let traversal = http_get_bytes(port, "/app/assets/../../Cargo.toml");
+    stop(&mut child);
+
+    for response in [&unknown, &missing, &traversal] {
+        assert_eq!(response_status(response), "HTTP/1.1 404 Not Found");
+        assert!(!String::from_utf8_lossy(response_body(response)).contains("[workspace]"));
+    }
+}
+
+#[test]
 fn health_endpoint_reports_ok() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
@@ -576,6 +651,30 @@ fn response_body(response: &[u8]) -> &[u8] {
         .position(|window| window == b"\r\n\r\n")
         .expect("the HTTP response should contain a header boundary");
     &response[boundary + 4..]
+}
+
+fn response_status(response: &[u8]) -> &str {
+    let response = std::str::from_utf8(response).expect("HTTP response should be UTF-8");
+    response
+        .lines()
+        .next()
+        .expect("HTTP response should have a status line")
+}
+
+fn response_header<'a>(response: &'a [u8], requested: &str) -> Option<&'a str> {
+    let response = std::str::from_utf8(response).ok()?;
+    let head = response.split_once("\r\n\r\n")?.0;
+    head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(": ")?;
+        name.eq_ignore_ascii_case(requested).then_some(value)
+    })
+}
+
+fn referenced_asset(html: &str, extension: &str) -> String {
+    html.split('"')
+        .find(|part| part.starts_with("/app/assets/") && part.ends_with(extension))
+        .unwrap_or_else(|| panic!("SPA document should reference a {extension} asset"))
+        .to_owned()
 }
 
 fn stop(child: &mut Child) {

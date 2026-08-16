@@ -16,6 +16,8 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
+mod frontend;
+
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const FIRST_AUTOMATIC_PORT: u16 = 9000;
 const LAST_AUTOMATIC_PORT: u16 = 9099;
@@ -481,6 +483,9 @@ pub(crate) async fn bind(
 pub(crate) async fn serve(listener: TcpListener, jobs: JobStore) -> std::io::Result<()> {
     let router = Router::new()
         .route("/", get(index))
+        .route("/app", get(frontend::redirect))
+        .route("/app/", get(frontend::index))
+        .route("/app/assets/{*path}", get(frontend::asset))
         .route("/health", get(health))
         .route("/api/render", get(current_render))
         .route("/sheets/{file}", get(sheet_png))
