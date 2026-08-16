@@ -26,6 +26,9 @@ describe("OverviewPage", () => {
           jobs_processed: 7,
         }));
       }
+      if (String(input) === "/api/profiles/list") {
+        return Promise.resolve(json({ profiles: [] }));
+      }
       return Promise.resolve(json({
         printers: [
           { name: "Kitchen", transport: "network", availability: "connected", profile: "REFERENCE", connection: { type: "network", host: "10.0.0.8", port: 9100 } },
@@ -45,7 +48,9 @@ describe("OverviewPage", () => {
   });
 
   test("renders Not running when no virtual printer is configured", async () => {
-    globalThis.fetch = (() => Promise.resolve(json({ virtual_printer: null, jobs_processed: 0 }))) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/profiles/list"
+      ? Promise.resolve(json({ profiles: [] }))
+      : Promise.resolve(json({ virtual_printer: null, jobs_processed: 0 }))) as unknown as typeof globalThis.fetch;
     render(<AppDataProvider><OverviewPage /></AppDataProvider>);
     expect(await screen.findByText("Not running")).toBeTruthy();
   });
@@ -54,7 +59,9 @@ describe("OverviewPage", () => {
     let resolveInventory!: (response: Response) => void;
     globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/status"
       ? Promise.resolve(json({ virtual_printer: null, jobs_processed: 0 }))
-      : new Promise<Response>((resolve) => { resolveInventory = resolve; })) as unknown as typeof globalThis.fetch;
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
+        : new Promise<Response>((resolve) => { resolveInventory = resolve; })) as unknown as typeof globalThis.fetch;
 
     const view = render(<AppDataProvider><OverviewPage /></AppDataProvider>);
     expect(await screen.findByText("Printer inventory loading…")).toBeTruthy();
@@ -73,7 +80,9 @@ describe("OverviewPage", () => {
     ];
     globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/status"
       ? Promise.resolve(json({ virtual_printer: null, jobs_processed: 0 }))
-      : Promise.resolve(inventories.shift()!)) as unknown as typeof globalThis.fetch;
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
+        : Promise.resolve(inventories.shift()!)) as unknown as typeof globalThis.fetch;
 
     render(<AppDataProvider><OverviewWithRefresh /></AppDataProvider>);
     expect(await screen.findByText("1 configured")).toBeTruthy();

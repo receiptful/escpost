@@ -31,7 +31,9 @@ describe("PrintersPage", () => {
     let resolvePrinters!: (response: Response) => void;
     renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
       ? Promise.resolve(json(status))
-      : new Promise<Response>((resolve) => { resolvePrinters = resolve; })) as typeof globalThis.fetch);
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
+        : new Promise<Response>((resolve) => { resolvePrinters = resolve; })) as typeof globalThis.fetch);
     expect(screen.getByText("Loading printers…")).toBeTruthy();
     await act(async () => { resolvePrinters(json({ printers: [] })); });
     expect(await screen.findByText("No printers configured.")).toBeTruthy();
@@ -39,7 +41,9 @@ describe("PrintersPage", () => {
     cleanup();
     renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
       ? Promise.resolve(json(status))
-      : Promise.resolve(json({ error: { code: "printer_inventory_unavailable", message: "Printer inventory is unavailable." } }, 500))) as typeof globalThis.fetch);
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
+        : Promise.resolve(json({ error: { code: "printer_inventory_unavailable", message: "Printer inventory is unavailable." } }, 500))) as typeof globalThis.fetch);
     expect(await screen.findByText("Printer inventory is unavailable.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
@@ -52,7 +56,9 @@ describe("PrintersPage", () => {
     ];
     renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
       ? Promise.resolve(json(status))
-      : Promise.resolve(inventories.shift()!)) as typeof globalThis.fetch);
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
+        : Promise.resolve(inventories.shift()!)) as typeof globalThis.fetch);
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Refresh" })); });
@@ -66,7 +72,9 @@ describe("PrintersPage", () => {
   test("renders matching desktop-table and mobile-card printer facts", async () => {
     renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
       ? Promise.resolve(json(status))
-      : Promise.resolve(json({ printers: [printer] }))) as typeof globalThis.fetch);
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
+        : Promise.resolve(json({ printers: [printer] }))) as typeof globalThis.fetch);
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
     expect(screen.getAllByText("Connected")).toHaveLength(2);
     expect(screen.getAllByText("Network")).toHaveLength(2);

@@ -118,7 +118,17 @@ The [`justfile`](justfile) wraps both workflows:
 
 The development frontend runs at `http://127.0.0.1:5173/app/` with hot reload.
 The backend continues to serve the existing embedded viewer at
-`http://127.0.0.1:9000/`. The new `/app/` shell does not replace that viewer yet.
+`http://127.0.0.1:9000/`. The `/app/` workbench does not replace that viewer.
+It currently provides five read-only routes:
+
+- `/app/` — Overview
+- `/app/jobs` — Print jobs, with a link to the existing current-job viewer
+- `/app/printers` — configured printer inventory
+- `/app/profiles` — complete printer-profile catalog
+- `/app/calibration` — calibration guidance
+
+Jobs deliberately continues to link to the legacy viewer at `/`; a job
+inspector is the next workbench milestone.
 
 Run `just --list` to see every recipe. Without `just`, each recipe is a short
 wrapper around `docker compose` or `cargo` and can be run directly. The native

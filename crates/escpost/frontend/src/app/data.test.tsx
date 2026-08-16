@@ -32,12 +32,15 @@ describe("AppDataProvider", () => {
           resolveFirst = resolve;
         });
       }
+      if (String(input) === "/api/profiles/list") {
+        return Promise.resolve(json({ profiles: [] }));
+      }
       return Promise.resolve(json(printerInventory));
     });
     globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
 
     render(<AppDataProvider><Probe /></AppDataProvider>);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
 
     await act(async () => {
       resolveFirst(json(readyStatus));
@@ -50,12 +53,12 @@ describe("AppDataProvider", () => {
     await act(async () => {
       jest.advanceTimersByTime(1_999);
     });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
 
     await act(async () => {
       jest.advanceTimersByTime(1);
     });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
 
   test("aborts the active status request when unmounted", () => {
@@ -64,6 +67,9 @@ describe("AppDataProvider", () => {
       if (String(input) === "/api/status") {
         signal = init?.signal ?? undefined;
         return new Promise<Response>(() => {});
+      }
+      if (String(input) === "/api/profiles/list") {
+        return Promise.resolve(json({ profiles: [] }));
       }
       return Promise.resolve(json(printerInventory));
     }) as unknown as typeof globalThis.fetch;
@@ -80,6 +86,9 @@ describe("AppDataProvider", () => {
     globalThis.fetch = jest.fn((input: RequestInfo | URL) => {
       if (String(input) === "/api/status") {
         return statusResults.shift()!();
+      }
+      if (String(input) === "/api/profiles/list") {
+        return Promise.resolve(json({ profiles: [] }));
       }
       printerRequests += 1;
       return Promise.resolve(json(printerInventory));
@@ -106,6 +115,8 @@ describe("AppDataProvider", () => {
     ];
     globalThis.fetch = jest.fn((input: RequestInfo | URL) => String(input) === "/api/status"
       ? statusResults.shift()!()
+      : String(input) === "/api/profiles/list"
+        ? Promise.resolve(json({ profiles: [] }))
       : Promise.resolve(json(printerInventory))) as unknown as typeof globalThis.fetch;
 
     render(<AppDataProvider><Probe /></AppDataProvider>);

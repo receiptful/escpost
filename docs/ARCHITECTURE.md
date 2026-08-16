@@ -286,10 +286,20 @@ stable job identity and are not the target workbench API.
 
 ### Embedded web applications
 
-The existing latest-job viewer remains authoritative at `/`. A new Preact and
-TypeScript shell is available at `/app/`; it does not yet call application APIs
-or reproduce viewer behavior. Unknown `/app/*` paths return 404 because this
-slice introduces neither a client router nor a fallback route.
+The existing latest-job viewer remains authoritative at `/`. A Preact and
+TypeScript workbench is available at `/app/`, with `preact-iso` client routing
+for Overview, Print jobs, Printers, Profiles, and Calibration. Its responsive
+shell uses semantic tables on wide screens and labeled cards on narrow screens.
+Jobs intentionally links to the legacy viewer while the next workbench
+milestone, a job inspector, is prepared.
+
+Feature-local HTTP adapters call the same application operations as the CLI.
+Read-only routes mirror CLI paths: `GET /api/printers/list` and
+`GET /api/profiles/list`; `GET /api/status` is runtime-only infrastructure,
+not a CLI operation. The shell polls status while mounted, retains successful
+printer and profile responses for the app session, and reports loading, empty,
+error, retry, and stale-data states without introducing client-side filters or
+search parameters.
 
 Bun installs and tests frontend dependencies. Vite builds and serves the
 frontend. Tailwind CSS and DaisyUI provide styling primitives. Axum embeds the

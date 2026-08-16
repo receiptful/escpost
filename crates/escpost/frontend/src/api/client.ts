@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, PrintersResponse, StatusResponse } from "./types";
+import type { ApiErrorEnvelope, PrintersResponse, ProfilesResponse, StatusResponse } from "./types";
 
 export class ApiRequestError extends Error {
   readonly kind = "api";
@@ -85,4 +85,8 @@ export function getStatus(signal?: AbortSignal) {
 export function getPrinters(transport?: "usb" | "network", signal?: AbortSignal) {
   const query = transport ? `?transport=${encodeURIComponent(transport)}` : "";
   return requestJson<PrintersResponse>(`/api/printers/list${query}`, signal);
+}
+
+export function getProfiles(signal?: AbortSignal) {
+  return requestJson<ProfilesResponse>("/api/profiles/list", signal);
 }

@@ -46,3 +46,24 @@ export type Printer = {
 export type PrintersResponse = {
   printers: Printer[];
 };
+
+export type Profile = {
+  id: string;
+  vendor: string;
+  model: string;
+  source: "calibrated" | "synthesized" | "virtual";
+  paper_width_mm: number;
+  printable_width_mm: number;
+  printable_width_dots: number;
+  dpi_x: number;
+  dpi_y: number;
+  full_cut: boolean;
+  partial_cut: boolean;
+  barcode_function_a: boolean;
+  barcode_function_b: boolean;
+  qr_code: boolean;
+};
+
+export type ProfilesResponse = {
+  profiles: Profile[];
+};

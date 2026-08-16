@@ -3,6 +3,7 @@ import { CalibrationPage } from "../features/calibration/page";
 import { JobsPage } from "../features/jobs/page";
 import { OverviewPage } from "../features/overview/page";
 import { PrintersPage } from "../features/printers/page";
+import { ProfilesPage } from "../features/profiles/page";
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -11,10 +12,6 @@ function PlaceholderPage({ title }: { title: string }) {
       <p class="text-base-content/70">Loading…</p>
     </section>
   );
-}
-
-function ProfilesPage() {
-  return <PlaceholderPage title="Profiles" />;
 }
 
 function NotFoundPage() {

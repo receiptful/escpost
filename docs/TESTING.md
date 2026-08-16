@@ -125,10 +125,21 @@ docker compose run --rm frontend bun run typecheck
 docker compose run --rm frontend-build
 ```
 
+During focused frontend work, run the affected component directly, for example:
+
+```bash
+docker compose run --rm --no-deps frontend bun test src/features/profiles/page.test.tsx
+docker compose run --rm --no-deps frontend bun test src/features/printers/page.test.tsx
+```
+
 Rust HTTP integration tests exercise the embedded production bundle, including
-the `/app` redirect, the `/app/` shell, asset MIME and cache headers, missing
-assets, and traversal rejection. The existing viewer at `/` remains covered
-separately until the SPA reaches behavioral parity.
+the `/app` redirect, direct navigation to every workbench route, navigation
+labels in the production bundle, asset MIME and cache headers, missing assets,
+and traversal rejection. They also cover the read-only `/api/status`,
+`/api/printers/list`, and `/api/profiles/list` contracts, while confirming that
+unknown API routes stay JSON rather than falling back to HTML. The existing
+viewer at `/` remains covered separately until the SPA reaches behavioral
+parity.
 
 ### Robustness tests
 

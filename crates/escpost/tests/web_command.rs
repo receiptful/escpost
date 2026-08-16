@@ -93,6 +93,19 @@ fn web_mode_serves_hashed_spa_assets_with_immutable_caching() {
         response_header(&css, "cache-control"),
         Some("public, max-age=31536000, immutable")
     );
+    let javascript = String::from_utf8_lossy(response_body(&javascript));
+    for label in [
+        "Overview",
+        "Print jobs",
+        "Printers",
+        "Profiles",
+        "Calibration",
+    ] {
+        assert!(
+            javascript.contains(label),
+            "the production bundle should contain the {label:?} workbench label"
+        );
+    }
 }
 
 #[test]
@@ -226,12 +239,15 @@ fn direct_spa_navigation_uses_index_without_catching_unknown_api_routes() {
 
     wait_until_listening(&mut child, port);
     let index = http_get_bytes(port, "/app/");
+    let jobs = http_get_bytes(port, "/app/jobs");
     let printers = http_get_bytes(port, "/app/printers");
+    let profiles = http_get_bytes(port, "/app/profiles");
+    let calibration = http_get_bytes(port, "/app/calibration");
     let unknown = http_get_bytes(port, "/app/unknown");
     let unknown_api = http_get_bytes(port, "/api/unknown");
     stop(&mut child);
 
-    for response in [&printers, &unknown] {
+    for response in [&index, &jobs, &printers, &profiles, &calibration, &unknown] {
         assert_eq!(response_status(response), "HTTP/1.1 200 OK");
         assert_eq!(response_header(response, "cache-control"), Some("no-cache"));
         assert_eq!(response_body(response), response_body(&index));
