@@ -68,7 +68,11 @@ pub(super) trait AddPrompter {
         eprintln!("Error: {error}. Choose another printer name.");
     }
     fn transport(&mut self) -> Result<PrinterTransport, CliError>;
-    fn usb_printer(&mut self, printers: Vec<UsbAddTarget>) -> Result<UsbAddTarget, CliError>;
+    fn usb_printer(
+        &mut self,
+        configured_name: Option<&str>,
+        printers: Vec<UsbAddTarget>,
+    ) -> Result<UsbAddTarget, CliError>;
     fn host(&mut self) -> Result<String, CliError>;
     fn port(&mut self) -> Result<u16, CliError>;
     fn profile(&mut self) -> Result<Option<String>, CliError>;
@@ -217,6 +221,7 @@ fn resolve_add(
             ResolvedAddConnection::Usb(select_usb_target(
                 candidates,
                 selector.as_ref(),
+                name.as_deref(),
                 can_prompt,
                 prompter,
             )?)
@@ -291,6 +296,7 @@ fn usb_selector(
 fn select_usb_target(
     candidates: Vec<UsbAddTarget>,
     selector: Option<&UsbSelector>,
+    configured_name: Option<&str>,
     can_prompt: bool,
     prompter: &mut impl AddPrompter,
 ) -> Result<UsbAddTarget, CliError> {
@@ -298,14 +304,14 @@ fn select_usb_target(
         if candidates.is_empty() {
             return Err(CliError::NoUnconfiguredUsbPrinters);
         }
-        return prompter.usb_printer(candidates);
+        return prompter.usb_printer(configured_name, candidates);
     };
 
     let mut matched = filter_usb_targets(candidates, selector);
     match matched.len() {
         0 => Err(CliError::NoMatchingUsbPrinter),
         1 => Ok(matched.remove(0)),
-        _ if can_prompt => prompter.usb_printer(matched),
+        _ if can_prompt => prompter.usb_printer(configured_name, matched),
         _ => Err(CliError::AmbiguousUsbPrinter),
     }
 }
@@ -375,8 +381,12 @@ impl AddPrompter for InquireAddPrompter {
         .map_err(|error| CliError::PrinterPrompt(error.to_string()))
     }
 
-    fn usb_printer(&mut self, printers: Vec<UsbAddTarget>) -> Result<UsbAddTarget, CliError> {
-        Select::new("USB printer", printers)
+    fn usb_printer(
+        &mut self,
+        configured_name: Option<&str>,
+        printers: Vec<UsbAddTarget>,
+    ) -> Result<UsbAddTarget, CliError> {
+        Select::new(&usb_printer_prompt(configured_name), printers)
             .prompt()
             .map_err(|error| CliError::PrinterPrompt(error.to_string()))
     }
@@ -408,6 +418,15 @@ impl AddPrompter for InquireAddPrompter {
             .prompt()
             .map_err(|error| CliError::PrinterPrompt(error.to_string()))?;
         Ok((!profile.trim().is_empty()).then(|| profile.trim().to_owned()))
+    }
+}
+
+fn usb_printer_prompt(configured_name: Option<&str>) -> String {
+    match configured_name {
+        Some(configured_name) => {
+            format!("Select the USB device to register as {configured_name:?}")
+        }
+        None => "Select the USB device to register".to_owned(),
     }
 }
 impl fmt::Display for PrinterTransport {
@@ -635,6 +654,22 @@ mod tests {
     use crate::features::printers::discover::NetworkDiscovery;
 
     #[test]
+    fn usb_selection_prompt_names_the_configured_alias_when_present() {
+        assert_eq!(
+            usb_printer_prompt(Some("nt5890k-usb")),
+            "Select the USB device to register as \"nt5890k-usb\""
+        );
+    }
+
+    #[test]
+    fn usb_selection_prompt_is_neutral_before_an_alias_is_chosen() {
+        assert_eq!(
+            usb_printer_prompt(None),
+            "Select the USB device to register"
+        );
+    }
+
+    #[test]
     fn interactive_network_add_prompts_for_the_port() {
         let arguments = AddPrinterArgs {
             name: None,
@@ -817,7 +852,9 @@ port = 9100
             Some(&configuration),
             arguments,
             true,
-            &mut UsbAddPrompter,
+            &mut UsbAddPrompter {
+                expected_configured_name: None,
+            },
             &mut inventory,
         )
         .expect("the selected USB printer should be saved");
@@ -839,6 +876,39 @@ port = 9100
         assert_eq!(printer["out_endpoint"].as_str(), Some("0x01"));
         assert_eq!(printer["in_endpoint"].as_str(), Some("0x81"));
         fs::remove_dir_all(directory).expect("the test directory should be removable");
+    }
+
+    #[test]
+    fn explicit_name_is_available_while_selecting_a_usb_device() {
+        let arguments = AddPrinterArgs {
+            name: Some("nt5890k-usb".to_owned()),
+            transport: Some(PrinterTransport::Usb),
+            host: None,
+            port: None,
+            vendor_id: None,
+            product_id: None,
+            serial: None,
+            profile: Some("REFERENCE".to_owned()),
+            discover: false,
+            subnet: Vec::new(),
+            timeout: None,
+        };
+        let mut inventory = FixedInventory {
+            printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
+        };
+
+        let resolved = resolve_add(
+            arguments,
+            true,
+            &mut UsbAddPrompter {
+                expected_configured_name: Some("nt5890k-usb"),
+            },
+            &mut inventory,
+            &PrinterConfiguration::default(),
+        )
+        .expect("the explicit name should remain available during USB selection");
+
+        assert_eq!(resolved.name, "nt5890k-usb");
     }
 
     #[test]
@@ -971,6 +1041,7 @@ out_endpoint = "0x01"
                 product_id: 0x5011,
                 serial: None,
             }),
+            None,
             false,
             &mut UnexpectedAddPrompter,
         )
@@ -994,6 +1065,7 @@ out_endpoint = "0x01"
                 product_id: 0x5678,
                 serial: None,
             }),
+            None,
             false,
             &mut UnexpectedAddPrompter,
         )
@@ -1016,6 +1088,7 @@ out_endpoint = "0x01"
                 product_id: 0x5011,
                 serial: None,
             }),
+            None,
             false,
             &mut UnexpectedAddPrompter,
         )
@@ -1038,6 +1111,7 @@ out_endpoint = "0x01"
                 product_id: 0x5011,
                 serial: None,
             }),
+            None,
             true,
             &mut FirstUsbPrompter,
         )
@@ -1170,6 +1244,7 @@ out_endpoint = "0x01"
 
         fn usb_printer(
             &mut self,
+            _configured_name: Option<&str>,
             mut printers: Vec<UsbAddTarget>,
         ) -> Result<UsbAddTarget, CliError> {
             assert!(
@@ -1198,7 +1273,9 @@ out_endpoint = "0x01"
         port_prompts: usize,
     }
 
-    struct UsbAddPrompter;
+    struct UsbAddPrompter {
+        expected_configured_name: Option<&'static str>,
+    }
 
     struct UnexpectedAddPrompter;
 
@@ -1228,7 +1305,11 @@ out_endpoint = "0x01"
             Ok(PrinterTransport::Network)
         }
 
-        fn usb_printer(&mut self, _printers: Vec<UsbAddTarget>) -> Result<UsbAddTarget, CliError> {
+        fn usb_printer(
+            &mut self,
+            _configured_name: Option<&str>,
+            _printers: Vec<UsbAddTarget>,
+        ) -> Result<UsbAddTarget, CliError> {
             panic!("a network printer must not ask for a USB device")
         }
 
@@ -1257,8 +1338,10 @@ out_endpoint = "0x01"
 
         fn usb_printer(
             &mut self,
+            configured_name: Option<&str>,
             mut printers: Vec<UsbAddTarget>,
         ) -> Result<UsbAddTarget, CliError> {
+            assert_eq!(configured_name, self.expected_configured_name);
             assert_eq!(printers.len(), 1);
             Ok(printers.remove(0))
         }
@@ -1285,7 +1368,11 @@ out_endpoint = "0x01"
             panic!("transport prompt was not expected")
         }
 
-        fn usb_printer(&mut self, _printers: Vec<UsbAddTarget>) -> Result<UsbAddTarget, CliError> {
+        fn usb_printer(
+            &mut self,
+            _configured_name: Option<&str>,
+            _printers: Vec<UsbAddTarget>,
+        ) -> Result<UsbAddTarget, CliError> {
             panic!("USB printer prompt was not expected")
         }
 
