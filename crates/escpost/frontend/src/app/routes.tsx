@@ -1,6 +1,8 @@
 import { Route, Router } from "preact-iso";
 import { CalibrationPage } from "../features/calibration/page";
 import { JobsPage } from "../features/jobs/page";
+import { OverviewPage } from "../features/overview/page";
+import { PrintersPage } from "../features/printers/page";
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -9,14 +11,6 @@ function PlaceholderPage({ title }: { title: string }) {
       <p class="text-base-content/70">Loading…</p>
     </section>
   );
-}
-
-function OverviewPage() {
-  return <PlaceholderPage title="Overview" />;
-}
-
-function PrintersPage() {
-  return <PlaceholderPage title="Printers" />;
 }
 
 function ProfilesPage() {

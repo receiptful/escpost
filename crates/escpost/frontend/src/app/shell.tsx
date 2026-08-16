@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { ConnectionStatus } from "./connection-status";
 import { Navigation } from "./navigation";
 
 type AppShellProps = {
@@ -16,10 +17,7 @@ export function AppShell({ children }: AppShellProps) {
         <div class="mt-8">
           <Navigation />
         </div>
-        <section aria-label="Connection status" class="mt-auto rounded-box bg-base-200 p-4 text-sm">
-          <p class="font-medium">Connection</p>
-          <p class="mt-1 text-base-content/70">Loading…</p>
-        </section>
+        <ConnectionStatus />
       </aside>
       <main class="min-h-screen p-4 pb-24 sm:p-8 sm:pb-24 lg:ml-72 lg:p-10">
         <div class="mx-auto w-full max-w-7xl">{children}</div>

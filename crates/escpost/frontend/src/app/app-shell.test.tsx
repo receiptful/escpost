@@ -1,9 +1,22 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, render, screen, within } from "@testing-library/preact";
 import { locationStub } from "preact-iso/prerender";
 import { App } from "../app";
 
-afterEach(cleanup);
+const originalFetch = globalThis.fetch;
+
+beforeEach(() => {
+  globalThis.fetch = ((input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
+    String(input) === "/api/status"
+      ? { virtual_printer: null, jobs_processed: 0 }
+      : { printers: [] },
+  ), { headers: { "content-type": "application/json" } }))) as unknown as typeof globalThis.fetch;
+});
+
+afterEach(() => {
+  cleanup();
+  globalThis.fetch = originalFetch;
+});
 
 function renderAt(path: string) {
   locationStub(path);
