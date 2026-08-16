@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::header;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -11,11 +11,15 @@ use crate::web::error::ApiError;
 use super::{ListRequest, ProfileFacts, list};
 
 pub(crate) fn router() -> Router<WebState> {
-    Router::new().route("/api/profiles/list", get(list_profiles))
+    Router::new().route(
+        "/api/profiles/list",
+        get(list_profiles).fallback(crate::web::error::method_not_allowed),
+    )
 }
 
 async fn list_profiles(
     State(_state): State<WebState>,
+    query: Result<Query<NoQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<
     (
         [(axum::http::HeaderName, &'static str); 1],
@@ -23,6 +27,7 @@ async fn list_profiles(
     ),
     ApiError,
 > {
+    query.map_err(|_| ApiError::invalid_query())?;
     let response = list(ListRequest {
         vendor: None,
         source: None,
@@ -41,6 +46,10 @@ async fn list_profiles(
         }),
     ))
 }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoQuery {}
 
 #[derive(Serialize)]
 struct ListResponse {

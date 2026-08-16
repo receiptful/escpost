@@ -40,7 +40,7 @@ describe("AppDataProvider", () => {
     globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
 
     render(<AppDataProvider><Probe /></AppDataProvider>);
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       resolveFirst(json(readyStatus));
@@ -53,12 +53,12 @@ describe("AppDataProvider", () => {
     await act(async () => {
       jest.advanceTimersByTime(1_999);
     });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       jest.advanceTimersByTime(1);
     });
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   test("aborts the active status request when unmounted", () => {
@@ -105,6 +105,62 @@ describe("AppDataProvider", () => {
     });
     expect(screen.getByText("ready:ready:none")).toBeTruthy();
     expect(printerRequests).toBe(2);
+  });
+
+  test("queues one fresh printer refresh when recovery happens during a failed inventory request", async () => {
+    jest.useFakeTimers();
+    let rejectInitialInventory!: (error: Error) => void;
+    const statusResults = [
+      () => Promise.reject(new TypeError("offline")),
+      () => Promise.resolve(json(readyStatus)),
+    ];
+    let printerRequests = 0;
+    globalThis.fetch = jest.fn((input: RequestInfo | URL) => {
+      if (String(input) === "/api/status") {
+        return statusResults.shift()!();
+      }
+      if (String(input) === "/api/printers/list") {
+        printerRequests += 1;
+        if (printerRequests === 1) {
+          return new Promise<Response>((_, reject) => {
+            rejectInitialInventory = reject;
+          });
+        }
+        return Promise.resolve(json(printerInventory));
+      }
+      return Promise.resolve(json({ profiles: [] }));
+    }) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><Probe /></AppDataProvider>);
+    expect(await screen.findByText("disconnected:loading:Unable to reach the ESCPost server.")).toBeTruthy();
+    expect(printerRequests).toBe(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(2_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("ready:loading:none")).toBeTruthy();
+    expect(printerRequests).toBe(1);
+
+    await act(async () => {
+      rejectInitialInventory(new Error("inventory failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(printerRequests).toBe(2);
+  });
+
+  test("does not request profiles until a Profiles page mounts", async () => {
+    const fetch = jest.fn((input: RequestInfo | URL) => String(input) === "/api/status"
+      ? Promise.resolve(json(readyStatus))
+      : Promise.resolve(json(printerInventory)));
+    globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><Probe /></AppDataProvider>);
+    expect(await screen.findByText("ready:ready:none")).toBeTruthy();
+    expect(fetch.mock.calls.map(([input]) => String(input))).not.toContain("/api/profiles/list");
   });
 
   test("keeps a ready connection when the status endpoint returns an API error", async () => {

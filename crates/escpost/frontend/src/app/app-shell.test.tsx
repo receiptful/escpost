@@ -66,6 +66,19 @@ describe("App", () => {
     ).toHaveLength(5);
   });
 
+  test("retains desktop connection state and exposes a polite compact mobile status", async () => {
+    renderAt("/app/jobs");
+
+    await screen.findAllByText("Ready");
+    const mobileStatus = await screen.findByRole("status", { name: "Connection status" });
+    const desktopStatus = screen.getAllByLabelText("Connection status").find(
+      (element) => element.getAttribute("role") !== "status",
+    );
+    expect(desktopStatus?.textContent).toContain("Ready");
+    expect(mobileStatus.getAttribute("aria-live")).toBe("polite");
+    expect(mobileStatus.textContent).toContain("Ready");
+  });
+
   test("selects Overview at the normalized workbench root path", () => {
     renderAt("/app/");
 

@@ -1,6 +1,8 @@
 use axum::Json;
+use axum::Router;
 use axum::extract::State;
 use axum::http::header;
+use axum::routing::get;
 use serde::Serialize;
 
 use super::WebState;
@@ -41,5 +43,12 @@ pub(super) async fn status(
             virtual_printer,
             jobs_processed: runtime.jobs_processed,
         }),
+    )
+}
+
+pub(super) fn route() -> Router<WebState> {
+    Router::new().route(
+        "/api/status",
+        get(status).fallback(super::error::method_not_allowed),
     )
 }

@@ -1,8 +1,12 @@
 import { useAppData } from "../../app/data";
+import { useEffect } from "preact/hooks";
 import { ProfileList } from "./profile-list";
 
 export function ProfilesPage() {
-  const { profiles, refreshProfiles } = useAppData();
+  const { profiles, ensureProfiles, refreshProfiles } = useAppData();
+  useEffect(() => {
+    void ensureProfiles();
+  }, [ensureProfiles]);
   return (
     <section aria-labelledby="profiles-heading" class="space-y-6">
       <div class="flex flex-wrap items-end justify-between gap-4">

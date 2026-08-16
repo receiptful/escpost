@@ -52,6 +52,14 @@ function ProfileToggle() {
   </>;
 }
 
+function DeferredProfiles() {
+  const [visible, setVisible] = useState(false);
+  return <>
+    <button type="button" onClick={() => setVisible(true)}>Visit profiles</button>
+    {visible && <ProfilesPage />}
+  </>;
+}
+
 afterEach(cleanup);
 
 describe("ProfilesPage", () => {
@@ -142,6 +150,25 @@ describe("ProfilesPage", () => {
     expect(await screen.findAllByText("CALIBRATED")).toHaveLength(2);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Toggle profiles" })); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Toggle profiles" })); });
+    expect(await screen.findAllByText("CALIBRATED")).toHaveLength(2);
+    expect(profileRequests).toBe(1);
+  });
+
+  test("loads profiles once when the Profiles page is first visited", async () => {
+    let profileRequests = 0;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      if (String(input) === "/api/status") return Promise.resolve(json(status));
+      if (String(input) === "/api/profiles/list") {
+        profileRequests += 1;
+        return Promise.resolve(json({ profiles: [profiles[0]] }));
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as typeof globalThis.fetch;
+
+    render(<AppDataProvider><DeferredProfiles /></AppDataProvider>);
+    await screen.findByRole("button", { name: "Visit profiles" });
+    expect(profileRequests).toBe(0);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Visit profiles" })); });
     expect(await screen.findAllByText("CALIBRATED")).toHaveLength(2);
     expect(profileRequests).toBe(1);
   });

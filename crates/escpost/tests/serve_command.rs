@@ -115,7 +115,17 @@ fn api_status_reports_virtual_printer_and_only_successful_captured_jobs() {
     wait_until_listening(&mut child, web_port);
 
     let raw_address = format!("127.0.0.1:{raw_port}");
-    let initial = status_metadata(web_port);
+    let initial_response = http_get_bytes(web_port, "/api/status");
+    assert_eq!(
+        response_header(&initial_response, "cache-control"),
+        Some("no-store")
+    );
+    assert!(matches!(
+        response_header(&initial_response, "content-type"),
+        Some(value) if value.starts_with("application/json")
+    ));
+    let initial: serde_json::Value = serde_json::from_slice(response_body(&initial_response))
+        .expect("the status response should be JSON");
     assert_eq!(initial["virtual_printer"]["state"], "ready");
     assert_eq!(initial["virtual_printer"]["address"], raw_address);
     assert_eq!(initial["jobs_processed"], 0);
@@ -223,11 +233,14 @@ fn serve_flags_a_connection_that_is_still_receiving() {
         .expect("the partial receipt should be writable");
     stream.flush().expect("the partial receipt should flush");
 
-    // A connection holding buffered bytes is reported as receiving.
-    wait_until_receiving(web_port, true);
+    // A connection holding buffered bytes is reported as receiving by the
+    // runtime status endpoint, not only by the legacy render response.
+    let status = wait_until_status_receiving(web_port, true);
+    assert_eq!(status["virtual_printer"]["state"], "receiving");
 
     // Closing finalizes the job and clears the receiving flag.
     drop(stream);
+    let status = wait_until_status_receiving(web_port, false);
     let metadata = wait_until_receiving(web_port, false);
     stop(&mut child);
 
@@ -239,6 +252,7 @@ fn serve_flags_a_connection_that_is_still_receiving() {
         "the finalized job should render"
     );
     assert_eq!(metadata["completion"], "closed");
+    assert_eq!(status["virtual_printer"]["state"], "ready");
 }
 
 #[test]
@@ -649,6 +663,24 @@ fn wait_until_receiving(web_port: u16, expected: bool) -> serde_json::Value {
     }
 }
 
+fn wait_until_status_receiving(web_port: u16, expected: bool) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = status_metadata(web_port);
+        if status["virtual_printer"]["state"].as_str()
+            == Some(if expected { "receiving" } else { "ready" })
+        {
+            return status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the runtime status did not become {}",
+            if expected { "receiving" } else { "ready" }
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn wait_until_listening(child: &mut Child, port: u16) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -704,6 +736,15 @@ fn response_body(response: &[u8]) -> &[u8] {
         .position(|window| window == b"\r\n\r\n")
         .expect("the HTTP response should contain a header boundary");
     &response[boundary + 4..]
+}
+
+fn response_header<'a>(response: &'a [u8], requested: &str) -> Option<&'a str> {
+    let response = std::str::from_utf8(response).ok()?;
+    let head = response.split_once("\r\n\r\n")?.0;
+    head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        (name.eq_ignore_ascii_case(requested)).then_some(value.trim())
+    })
 }
 
 fn stop(child: &mut Child) {

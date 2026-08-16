@@ -25,6 +25,7 @@ type AppData = {
   printers: PrinterResource;
   refreshPrinters: () => Promise<void>;
   profiles: ProfileResource;
+  ensureProfiles: () => Promise<void>;
   refreshProfiles: () => Promise<void>;
 };
 
@@ -51,6 +52,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   const printerData = useRef<PrintersResponse | null>(null);
   const printerRequest = useRef<Promise<void> | null>(null);
   const printerAbort = useRef<AbortController | null>(null);
+  const printerRecoveryPending = useRef(false);
   const profileData = useRef<ProfilesResponse | null>(null);
   const profileRequest = useRef<Promise<void> | null>(null);
   const profileAbort = useRef<AbortController | null>(null);
@@ -87,6 +89,10 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
           printerAbort.current = null;
         }
         printerRequest.current = null;
+        if (printerRecoveryPending.current) {
+          printerRecoveryPending.current = false;
+          void refreshPrinters();
+        }
       });
     printerRequest.current = request;
     return request;
@@ -129,6 +135,13 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
     return request;
   }, []);
 
+  const ensureProfiles = useCallback(async () => {
+    if (profileData.current) {
+      return;
+    }
+    return refreshProfiles();
+  }, [refreshProfiles]);
+
   useEffect(() => {
     let active = true;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -147,7 +160,11 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
           setConnection("ready");
           if (disconnected) {
             disconnected = false;
-            void refreshPrinters();
+            if (printerRequest.current) {
+              printerRecoveryPending.current = true;
+            } else {
+              void refreshPrinters();
+            }
           }
         })
         .catch((error: unknown) => {
@@ -169,7 +186,6 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
     };
 
     void refreshPrinters();
-    void refreshProfiles();
     poll();
     return () => {
       active = false;
@@ -178,12 +194,13 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       }
       statusAbort?.abort();
       printerAbort.current?.abort();
+      printerRecoveryPending.current = false;
       profileAbort.current?.abort();
     };
   }, [refreshPrinters, refreshProfiles]);
 
   return (
-    <AppDataContext.Provider value={{ connection, status, statusError, printers, refreshPrinters, profiles, refreshProfiles }}>
+    <AppDataContext.Provider value={{ connection, status, statusError, printers, refreshPrinters, profiles, ensureProfiles, refreshProfiles }}>
       {children}
     </AppDataContext.Provider>
   );

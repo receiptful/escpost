@@ -23,6 +23,7 @@ export function AppShell({ children }: AppShellProps) {
         <div class="mx-auto w-full max-w-7xl">{children}</div>
       </main>
       <div class="fixed inset-x-0 bottom-0 z-10 border-t border-base-300 bg-base-100 lg:hidden">
+        <div class="px-3 pt-2"><ConnectionStatus compact /></div>
         <Navigation mobile />
       </div>
     </div>

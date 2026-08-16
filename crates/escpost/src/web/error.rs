@@ -53,6 +53,14 @@ impl ApiError {
         )
     }
 
+    pub(crate) fn method_not_allowed() -> Self {
+        Self::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "method_not_allowed",
+            "This API endpoint only accepts GET requests.",
+        )
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
@@ -80,4 +88,8 @@ impl IntoResponse for ApiError {
 
 pub(crate) async fn not_found() -> ApiError {
     ApiError::not_found()
+}
+
+pub(crate) async fn method_not_allowed() -> ApiError {
+    ApiError::method_not_allowed()
 }

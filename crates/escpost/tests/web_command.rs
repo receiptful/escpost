@@ -146,7 +146,9 @@ profile = "REFERENCE"
     let printers = http_get_bytes(port, "/api/printers/list");
     let network_printers = http_get_bytes(port, "/api/printers/list?transport=network");
     let invalid_transport = http_get_bytes(port, "/api/printers/list?transport=invalid");
+    let undeclared_printer_query = http_get_bytes(port, "/api/printers/list?config=host.toml");
     let profiles = http_get_bytes(port, "/api/profiles/list");
+    let undeclared_profile_query = http_get_bytes(port, "/api/profiles/list?source=virtual");
     stop(&mut child);
     fs::remove_dir_all(&configuration_directory)
         .expect("the configuration fixture should be removable");
@@ -187,6 +189,19 @@ profile = "REFERENCE"
             .expect("the invalid query response should be JSON");
     assert_eq!(invalid_transport["error"]["code"], "invalid_query");
     assert!(invalid_transport["error"]["message"].is_string());
+
+    for response in [&undeclared_printer_query, &undeclared_profile_query] {
+        assert_eq!(response_status(response), "HTTP/1.1 400 Bad Request");
+        assert_eq!(response_header(response, "cache-control"), Some("no-store"));
+        assert!(matches!(
+            response_header(response, "content-type"),
+            Some(value) if value.starts_with("application/json")
+        ));
+        let response: serde_json::Value = serde_json::from_slice(response_body(response))
+            .expect("invalid query responses should be JSON");
+        assert_eq!(response["error"]["code"], "invalid_query");
+        assert!(response["error"]["message"].is_string());
+    }
 
     assert_eq!(response_status(&profiles), "HTTP/1.1 200 OK");
     assert_eq!(
@@ -229,6 +244,43 @@ profile = "REFERENCE"
             reference.get(field).is_some(),
             "REFERENCE should expose {field}"
         );
+    }
+}
+
+#[test]
+fn known_api_routes_reject_non_get_methods_with_json_errors() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let paths = ["/api/status", "/api/printers/list", "/api/profiles/list"];
+    let responses: Vec<Vec<u8>> = ["POST", "PUT", "PATCH", "DELETE"]
+        .into_iter()
+        .flat_map(|method| {
+            paths
+                .iter()
+                .map(move |path| http_request_bytes(port, method, path))
+        })
+        .collect();
+    stop(&mut child);
+
+    for response in responses {
+        assert_eq!(
+            response_status(&response),
+            "HTTP/1.1 405 Method Not Allowed"
+        );
+        assert_eq!(
+            response_header(&response, "cache-control"),
+            Some("no-store")
+        );
+        assert!(matches!(
+            response_header(&response, "content-type"),
+            Some(value) if value.starts_with("application/json")
+        ));
+        let response: serde_json::Value = serde_json::from_slice(response_body(&response))
+            .expect("method failures should be JSON");
+        assert_eq!(response["error"]["code"], "method_not_allowed");
+        assert!(response["error"]["message"].is_string());
     }
 }
 
@@ -316,6 +368,15 @@ fn api_status_has_no_virtual_printer_for_render_web_mode() {
         .expect("the status response should be JSON");
     stop(&mut child);
 
+    assert_eq!(response_status(&response), "HTTP/1.1 200 OK");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    assert!(matches!(
+        response_header(&response, "content-type"),
+        Some(value) if value.starts_with("application/json")
+    ));
     assert_eq!(status["virtual_printer"], serde_json::Value::Null);
     assert_eq!(status["jobs_processed"], 0);
 }
