@@ -1,6 +1,6 @@
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
-import { getPrinters, getStatus } from "../api/client";
+import { NetworkRequestError, getPrinters, getStatus } from "../api/client";
 import type { PrintersResponse, StatusResponse } from "../api/types";
 
 type ConnectionState = "loading" | "ready" | "disconnected";
@@ -15,6 +15,7 @@ export type PrinterResource = {
 type AppData = {
   connection: ConnectionState;
   status: StatusResponse | null;
+  statusError: Error | null;
   printers: PrinterResource;
   refreshPrinters: () => Promise<void>;
 };
@@ -30,6 +31,7 @@ const initialPrinters: PrinterResource = {
 export function AppDataProvider({ children }: { children: preact.ComponentChildren }) {
   const [connection, setConnection] = useState<ConnectionState>("loading");
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [statusError, setStatusError] = useState<Error | null>(null);
   const [printers, setPrinters] = useState<PrinterResource>(initialPrinters);
   const printerData = useRef<PrintersResponse | null>(null);
   const printerRequest = useRef<Promise<void> | null>(null);
@@ -86,18 +88,23 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
             return;
           }
           setStatus(nextStatus);
+          setStatusError(null);
           setConnection("ready");
           if (disconnected) {
             disconnected = false;
             void refreshPrinters();
           }
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (!active || statusAbort?.signal.aborted) {
             return;
           }
-          disconnected = true;
-          setConnection("disconnected");
+          const reported = error instanceof Error ? error : new Error("Status is unavailable.");
+          setStatusError(reported);
+          if (error instanceof NetworkRequestError) {
+            disconnected = true;
+            setConnection("disconnected");
+          }
         })
         .finally(() => {
           if (active) {
@@ -119,7 +126,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   }, [refreshPrinters]);
 
   return (
-    <AppDataContext.Provider value={{ connection, status, printers, refreshPrinters }}>
+    <AppDataContext.Provider value={{ connection, status, statusError, printers, refreshPrinters }}>
       {children}
     </AppDataContext.Provider>
   );

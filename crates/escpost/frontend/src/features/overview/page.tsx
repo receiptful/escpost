@@ -11,9 +11,9 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 
 export function OverviewPage() {
   const { connection, printers, status } = useAppData();
-  const inventory = printers.data?.printers ?? [];
-  const connected = inventory.filter((printer) => printer.availability === "connected").length;
-  const unavailable = inventory.filter((printer) => printer.availability === "unavailable").length;
+  const inventory = printers.data?.printers;
+  const connected = inventory?.filter((printer) => printer.availability === "connected").length;
+  const unavailable = inventory?.filter((printer) => printer.availability === "unavailable").length;
   const virtual = status?.virtual_printer;
   const virtualState = !status ? "Checking…" : !virtual ? "Not running" : virtual.state === "receiving" ? "Receiving" : "Ready";
   const serverState = connection === "ready" ? "Ready" : connection === "disconnected" ? "Disconnected" : "Checking…";
@@ -28,14 +28,19 @@ export function OverviewPage() {
         <StatCard label="Server" value={serverState} />
         <StatCard label="Virtual printer" value={virtualState} />
         <StatCard label="Session jobs processed" value={status?.jobs_processed ?? "—"} />
-        <StatCard label="Printers" value={`${inventory.length} configured`} />
+        <StatCard label="Printers" value={inventory ? `${inventory.length} configured` : printers.phase === "loading" ? "Loading…" : "Unknown"} />
       </div>
       <section aria-label="Printer availability" class="rounded-box bg-base-100 p-5 shadow-sm">
         <h2 class="text-lg font-semibold">Printer availability</h2>
-        <div class="mt-4 flex flex-wrap gap-3 text-sm">
-          <span class="badge badge-success">{connected} connected</span>
-          <span class="badge badge-warning">{unavailable} unavailable</span>
-        </div>
+        {inventory ? (
+          <div class="mt-4 flex flex-wrap gap-3 text-sm">
+            <span class="badge badge-success">{connected} connected</span>
+            <span class="badge badge-warning">{unavailable} unavailable</span>
+          </div>
+        ) : (
+          <p class="mt-4 text-base-content/70">{printers.phase === "loading" ? "Printer inventory loading…" : printers.error?.message ?? "Printer inventory is unavailable."}</p>
+        )}
+        {inventory && printers.error && <p role="alert" class="mt-4 text-warning">Showing cached printer data. {printers.error.message}</p>}
       </section>
       <section aria-label="Virtual printer details" class="rounded-box bg-base-100 p-5 shadow-sm">
         <h2 class="text-lg font-semibold">Virtual printer</h2>

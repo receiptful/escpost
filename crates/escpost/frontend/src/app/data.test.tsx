@@ -5,16 +5,16 @@ import { AppDataProvider, useAppData } from "./data";
 const readyStatus = { virtual_printer: null, jobs_processed: 3 };
 const printerInventory = { printers: [] };
 
-function json(body: unknown) {
+function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "content-type": "application/json" },
   });
 }
 
 function Probe() {
-  const { connection, printers } = useAppData();
-  return <p>{`${connection}:${printers.phase}`}</p>;
+  const { connection, printers, statusError } = useAppData();
+  return <p>{`${connection}:${printers.phase}:${statusError?.message ?? "none"}`}</p>;
 }
 
 afterEach(() => {
@@ -46,7 +46,7 @@ describe("AppDataProvider", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText("ready:ready")).toBeTruthy();
+    expect(screen.getByText("ready:ready:none")).toBeTruthy();
     await act(async () => {
       jest.advanceTimersByTime(1_999);
     });
@@ -86,7 +86,7 @@ describe("AppDataProvider", () => {
     }) as unknown as typeof globalThis.fetch;
 
     render(<AppDataProvider><Probe /></AppDataProvider>);
-    expect(await screen.findByText("disconnected:ready")).toBeTruthy();
+    expect(await screen.findByText("disconnected:ready:Unable to reach the ESCPost server.")).toBeTruthy();
     expect(printerRequests).toBe(1);
 
     await act(async () => {
@@ -94,7 +94,28 @@ describe("AppDataProvider", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText("ready:ready")).toBeTruthy();
+    expect(screen.getByText("ready:ready:none")).toBeTruthy();
     expect(printerRequests).toBe(2);
+  });
+
+  test("keeps a ready connection when the status endpoint returns an API error", async () => {
+    jest.useFakeTimers();
+    const statusResults = [
+      () => Promise.resolve(json(readyStatus)),
+      () => Promise.resolve(json({ error: { code: "status_unavailable", message: "Status is unavailable." } }, 503)),
+    ];
+    globalThis.fetch = jest.fn((input: RequestInfo | URL) => String(input) === "/api/status"
+      ? statusResults.shift()!()
+      : Promise.resolve(json(printerInventory))) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><Probe /></AppDataProvider>);
+    expect(await screen.findByText("ready:ready:none")).toBeTruthy();
+
+    await act(async () => {
+      jest.advanceTimersByTime(2_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("ready:ready:Status is unavailable.")).toBeTruthy();
   });
 });
