@@ -10,9 +10,4 @@ cd "$project_directory"
 config_directory=${ESCPOST_CONFIG_HOST_DIR:-"$project_directory/.config"}
 mkdir -p "$config_directory"
 
-# The container mounts this directory at its own conventional path, so let the
-# containerized binary print the host directory instead of that mount target.
-ESCPOST_CONFIG_DISPLAY_DIR=$(CDPATH= cd -- "$config_directory" && pwd)
-export ESCPOST_CONFIG_DISPLAY_DIR
-
 exec docker compose run --rm cli "$@"

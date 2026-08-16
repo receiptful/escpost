@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use escpost_render::TracedRenderResult;
+use escpost_render::{RenderScale, TracedRenderResult};
 
 use crate::application::{self, ApplicationError};
 use crate::error::CliError;
@@ -20,7 +20,7 @@ pub(crate) struct WatchConfig {
     pub(crate) output: Option<PathBuf>,
     pub(crate) output_dir: Option<PathBuf>,
     pub(crate) sheet: Option<usize>,
-    pub(crate) scale: u32,
+    pub(crate) scale: RenderScale,
     pub(crate) antialias: bool,
 }
 

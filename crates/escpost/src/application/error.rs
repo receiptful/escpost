@@ -52,6 +52,9 @@ pub(crate) enum ApplicationError {
     #[error("could not render ESC/POS input: {0}")]
     Render(#[source] escpost_render::RenderError),
 
+    #[error(transparent)]
+    InvalidRenderScale(#[from] escpost_render::InvalidRenderScale),
+
     #[error("single-PNG output requires exactly one sheet, but rendering produced {0}")]
     MultipleSheets(usize),
 
@@ -166,13 +169,13 @@ pub(crate) enum ApplicationError {
         source: std::io::Error,
     },
 
-    #[error("could not read printer configuration {}: {source}", crate::configuration::display_path(.path.as_path()))]
+    #[error("could not read printer configuration {}: {source}", .path.display())]
     ReadPrinterConfiguration {
         path: PathBuf,
         source: std::io::Error,
     },
 
-    #[error("invalid printer configuration {}: {message}", crate::configuration::display_path(.path.as_path()))]
+    #[error("invalid printer configuration {}: {message}", .path.display())]
     InvalidPrinterConfiguration { path: PathBuf, message: String },
 
     #[error("printer name must not be blank")]
@@ -193,7 +196,7 @@ pub(crate) enum ApplicationError {
     #[error("printer {0:?} is already configured")]
     PrinterAlreadyConfigured(String),
 
-    #[error("could not create printer configuration directory {}: {source}", crate::configuration::display_path(.path.as_path()))]
+    #[error("could not create printer configuration directory {}: {source}", .path.display())]
     CreatePrinterConfigurationDirectory {
         path: PathBuf,
         source: std::io::Error,
@@ -202,7 +205,19 @@ pub(crate) enum ApplicationError {
     #[error("could not serialize printer configuration: {0}")]
     SerializePrinterConfiguration(String),
 
-    #[error("could not write printer configuration {}: {source}", crate::configuration::display_path(.path.as_path()))]
+    #[error("could not open printer configuration lock {}: {source}", .path.display())]
+    OpenPrinterConfigurationLock {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("could not lock printer configuration {}: {source}", .path.display())]
+    LockPrinterConfiguration {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("could not write printer configuration {}: {source}", .path.display())]
     WritePrinterConfiguration {
         path: PathBuf,
         source: std::io::Error,

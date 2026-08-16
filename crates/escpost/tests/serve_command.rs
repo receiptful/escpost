@@ -25,11 +25,53 @@ Options:
       --listen <LISTEN>          Address for the RAW TCP printer. When omitted, the first free loopback port from 9100 through 9109 is used
       --web-listen <WEB_LISTEN>  Address for the web viewer. When omitted, the first free loopback port from 9000 through 9099 is used
       --idle-timeout <SECONDS>   Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]
-      --scale <N>                Preview pixel density: subpixels per dot. 1 is dot resolution; N renders at N× density [default: 3]
+      --scale <N>                Preview pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 3]
       --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias=false for faithful 1-bit dots [default: true] [possible values: true, false]
       --no-open                  Do not open the web viewer in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
   -h, --help                     Print help
 "
+    );
+}
+
+#[test]
+fn serve_rejects_an_unsupported_scale_before_opening_listeners() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["serve", "--scale", "0", "--non-interactive"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost command should start");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if child
+            .try_wait()
+            .expect("the child status should be readable")
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            child
+                .kill()
+                .expect("the blocked command should be stoppable");
+            let output = child
+                .wait_with_output()
+                .expect("the stopped command should be reapable");
+            panic!(
+                "serve opened listeners instead of rejecting the scale:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let output = child
+        .wait_with_output()
+        .expect("the rejected command should finish");
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: render scale must be between 1 and 3, got 0\n"
     );
 }
 

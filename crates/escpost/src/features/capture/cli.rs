@@ -6,9 +6,11 @@ use std::time::Duration;
 
 use clap::Args;
 use escpost_profiles::PrinterProfile;
+use escpost_render::RenderScale;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::application::ApplicationError;
 use crate::cli::web as cli_web;
 use crate::error::CliError;
 use crate::{net, profiles, web};
@@ -42,8 +44,7 @@ pub(crate) struct ServeArgs {
     #[arg(long, value_name = "SECONDS", default_value_t = 20.0)]
     pub(crate) idle_timeout: f64,
 
-    /// Preview pixel density: subpixels per dot. 1 is dot resolution; N renders
-    /// at N× density.
+    /// Preview pixel density: 1 to 3 subpixels per dot. 1 is dot resolution.
     #[arg(long, value_name = "N", default_value_t = 3)]
     pub(crate) scale: u32,
 
@@ -74,6 +75,7 @@ fn should_open_browser(
 }
 
 pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(), CliError> {
+    let scale = RenderScale::new(arguments.scale).map_err(ApplicationError::from)?;
     // Validate the configured profile before opening either listener. Captured
     // jobs pass that same validated profile to the synchronous rendering operation.
     let profile = profiles::load(&arguments.profile)?;
@@ -122,7 +124,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         jobs.clone(),
         profile,
         idle_timeout,
-        arguments.scale,
+        scale,
         arguments.antialias,
     ));
     let open_browser = should_open_browser(
@@ -142,7 +144,7 @@ async fn accept_jobs(
     jobs: web::JobStore,
     profile: &'static PrinterProfile,
     idle_timeout: Option<Duration>,
-    scale: u32,
+    scale: RenderScale,
     antialias: bool,
 ) {
     loop {
@@ -169,7 +171,7 @@ async fn capture_job(
     jobs: web::JobStore,
     profile: &'static PrinterProfile,
     idle_timeout: Option<Duration>,
-    scale: u32,
+    scale: RenderScale,
     antialias: bool,
 ) {
     let mut buffer = Vec::new();
@@ -232,7 +234,7 @@ async fn finalize(
     bytes: Vec<u8>,
     profile: &'static PrinterProfile,
     completion: &'static str,
-    scale: u32,
+    scale: RenderScale,
     antialias: bool,
 ) {
     // Rendering is synchronous and CPU-bound; run it off the async workers so a

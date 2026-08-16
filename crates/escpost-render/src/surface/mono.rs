@@ -99,7 +99,7 @@ impl MonoSurface {
         Self {
             width,
             height: 0,
-            scale: scale.max(1),
+            scale,
             antialias,
             coverage: Vec::new(),
         }

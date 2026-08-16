@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
-use crate::configuration;
 use crate::discovery::Subnet;
 use crate::error::CliError;
 
@@ -154,10 +153,7 @@ pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Resul
                     transport: list.transport.map(transport_filter),
                 },
                 |path| {
-                    eprintln!(
-                        "Reading configuration from {}",
-                        configuration::display_path(path)
-                    );
+                    eprintln!("Reading configuration from {}", path.display());
                 },
             )
             .await?;

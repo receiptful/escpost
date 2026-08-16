@@ -117,7 +117,9 @@ Application requests contain validated execution values. Clap argument types
 and HTTP request DTOs remain adapter-owned and convert explicitly into those
 requests. Application responses contain facts, not terminal prose or HTTP
 status codes. HTTP operations never prompt; interactive workflows belong to
-the CLI or browser.
+the CLI or browser. Render requests carry `escpost_render::RenderScale`, whose
+constructor accepts only the supported integer densities 1 through 3. Adapters
+must construct it before source, configuration, listener, or device I/O.
 
 `printers grant-usb-permissions` is the deliberate CLI-only host-command
 exception. Root checks, confirmation, udev rule mutation, `udevadm` execution,
@@ -203,6 +205,13 @@ persist a concrete interface and endpoint selection; it does not route that
 selection through the metadata-only list inventory. Neither workflow claims a
 printer interface, detaches a kernel driver, or sends a USB transfer.
 
+The add operation accepts one `Connection` enum describing the desired USB or
+network configuration. `Request::new` validates the name, optional profile,
+and every connection field, so execution receives a valid request. Its response
+returns the saved name, profile, connection, and configuration path; adapters
+present or serialize those authoritative facts rather than retaining a second
+copy of the request state.
+
 The discovery CLI first converts its arguments into a valid `DiscoveryScope`
 and `NetworkScan`; incompatible options and an invalid port fail before any
 configuration I/O. `prepare` then loads configuration and derives scan targets,
@@ -214,15 +223,23 @@ All inventory commands read `printers.toml` through the same path precedence:
 an explicit `--config` file, then `ESCPOST_CONFIG_DIR`, then the platform user
 configuration directory resolved by Rust's `directories` crate. A missing
 implicit file is an empty configuration, and read-only inventory never creates
-a directory. Bus and address are diagnostic selection labels only because an
-operating system may change them after reconnection. A serial number is stored
-when available; without one, simultaneously connected devices with equal
-VID/PID cannot be distinguished reliably and are reported as ambiguous.
+a directory. Every mutation uses one whole-file transaction: acquire the stable
+sibling `.printers.toml.lock`, read the latest complete text, derive the complete
+replacement, and publish it with an atomic rename. The lock file remains in
+place; the operating system releases its advisory lock when the file descriptor
+closes, including after a process crash. Mutations append only the new printer
+table so hand-edited comments, ordering, and formatting remain intact. Reads do
+not lock because atomic replacement exposes either the old or new complete
+file. Bus and address are diagnostic selection labels only because an operating
+system may change them after reconnection. A serial number is stored when
+available; without one, simultaneously connected devices with equal VID/PID
+cannot be distinguished reliably and are reported as ambiguous.
 
 The Docker wrapper creates and mounts `.config` at the container user's normal
 ESCPost configuration path. This isolates configuration used by a checkout from
 an independently installed binary while keeping Docker-specific paths out of
-the Rust implementation.
+the Rust implementation. Commands and errors report the factual path used by
+the running process; Docker does not rewrite it to a host path.
 
 ## Rust render command
 
@@ -260,23 +277,24 @@ from the asynchronous HTTP task. A successful result atomically replaces the
 visible job. A parse or render failure is reported by the page while the last
 complete sheets remain available.
 
-### Embedded web application
+### Planned embedded web application
 
-The web UI is a Preact and TypeScript single-page application built with Vite.
-Axum owns HTTP routing, JSON APIs, and static asset delivery. The frontend has
-no server-side JavaScript runtime.
+The web UI will be a Preact and TypeScript single-page application built with
+Vite. Axum will own HTTP routing, JSON APIs, and static asset delivery. The
+frontend will have no server-side JavaScript runtime.
 
-Existing web-enabled commands host the same Axum router and embedded frontend.
-`serve` adds RAW job capture; `render --web`, `render --browser`, and
-`render --watch` seed or update the render job store. Every mode exposes the
-same application operations. There is no daemon, separate backend executable,
-or inter-process API.
+Existing web-enabled commands will host the same Axum router and embedded
+frontend. `serve` will add RAW job capture; `render --web`, `render --browser`,
+and `render --watch` will seed or update the render job store. Every mode will
+expose the same application operations. There will be no daemon, separate
+backend executable, or inter-process API.
 
 RAW capture and HTTP serving remain concurrent tasks in one process. Splitting
 them into subprocesses is reserved for a measured performance or isolation
 problem; the architecture does not introduce IPC speculatively.
 
-HTTP operation paths follow the CLI command tree without an API version prefix:
+HTTP operation paths will follow the CLI command tree without an API version
+prefix:
 
 ```text
 escpost printers list       GET  /printers/list
@@ -288,29 +306,30 @@ escpost render              POST /render
 escpost print               POST /print
 ```
 
-Names and parameter concepts transfer between CLI and HTTP. HTTP accepts typed
-query parameters or JSON, never argument arrays or shell strings, and returns
-structured data rather than captured stdout or stderr. The web server calls the
-same feature operations as the CLI; it never invokes the `escpost` executable
-or calls Clap handlers. HTTP-only infrastructure such as health checks and
-static assets need no CLI equivalent.
+Names and parameter concepts will transfer between CLI and HTTP. HTTP will
+accept typed query parameters or JSON, never argument arrays or shell strings,
+and return structured data rather than captured stdout or stderr. The web
+server will call the same feature operations as the CLI; it will never invoke
+the `escpost` executable or call Clap handlers. HTTP-only infrastructure such as
+health checks and static assets will need no CLI equivalent.
 
-Vite emits fixed-name HTML, JavaScript, and CSS assets. The Cargo build script
-runs the pinned frontend toolchain, writes its output under `OUT_DIR`, and the
-`escpost` crate embeds those bytes at compile time. Release artifacts remain a
-single executable and require neither Node.js nor external web assets at
-runtime. Docker images pin Node.js and install dependencies from the lockfile.
+Vite will emit fixed-name HTML, JavaScript, and CSS assets. The Cargo build
+script will run the pinned frontend toolchain, write its output under `OUT_DIR`,
+and the `escpost` crate will embed those bytes at compile time. Release artifacts
+will remain a single executable and require neither Node.js nor external web
+assets at runtime. Docker images will pin Node.js and install dependencies from
+the lockfile.
 
-For development, Vite serves the frontend with hot reload and proxies
-application routes to a running escpost server. Production and test builds
+For development, Vite will serve the frontend with hot reload and proxy
+application routes to a running escpost server. Production and test builds will
 serve only the embedded assets.
 
-Automatic listeners bind to loopback. Explicit `--web-listen` addresses remain
-supported; non-loopback bindings retain the exposure warning. State-changing
-API requests require JSON, reject untrusted origins, and carry a per-process
-same-origin capability so an unrelated browser origin cannot mutate local
-printer state. Authentication, TLS, and remote exposure belong to an operator's
-reverse proxy.
+Automatic listeners will continue to bind to loopback. Explicit `--web-listen`
+addresses will remain supported; non-loopback bindings will retain the exposure
+warning. State-changing API requests will require JSON, reject untrusted
+origins, and carry a per-process same-origin capability so an unrelated browser
+origin cannot mutate local printer state. Authentication, TLS, and remote
+exposure will belong to an operator's reverse proxy.
 
 ## Rendering pipeline
 

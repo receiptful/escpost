@@ -29,7 +29,7 @@ physical USB and network printers from the same CLI.
 
 ## Render and capture ESC/POS data
 
-Install the ESCPost CLI from crates.io with Rust 1.87 or newer:
+Install the ESCPost CLI from crates.io with Rust 1.89 or newer:
 
 ```bash
 cargo install escpost

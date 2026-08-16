@@ -27,27 +27,56 @@ use state::PrinterState;
 use surface::{RenderSurface, encode_png};
 use trace::{CommandSink, NoTrace, TraceCollector};
 
+/// Product-supported preview density in subpixels per printer dot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderScale(u32);
+
+impl RenderScale {
+    pub const MIN: u32 = 1;
+    pub const MAX: u32 = 3;
+
+    pub fn new(value: u32) -> Result<Self, InvalidRenderScale> {
+        if (Self::MIN..=Self::MAX).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(InvalidRenderScale { value })
+        }
+    }
+
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for RenderScale {
+    fn default() -> Self {
+        Self(Self::MIN)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("render scale must be between 1 and 3, got {value}")]
+pub struct InvalidRenderScale {
+    value: u32,
+}
+
+impl InvalidRenderScale {
+    pub fn value(self) -> u32 {
+        self.value
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderOptions {
     pub limits: RenderLimits,
     /// Subpixels per dot. `1` is dot resolution; `N > 1` renders at `N ×`
     /// density. Independent of `antialias`.
-    pub scale: u32,
+    pub scale: RenderScale,
     /// When `false`, glyph coverage is thresholded to hard dots and the sheet
     /// encodes as a faithful 1-bit PNG (the printer's real output, used by
     /// golden tests). When `true`, glyph edges keep their coverage and the sheet
     /// encodes as an 8-bit grayscale preview — cosmetic only, never what prints.
     pub antialias: bool,
-}
-
-impl Default for RenderOptions {
-    fn default() -> Self {
-        Self {
-            limits: RenderLimits::default(),
-            scale: 1,
-            antialias: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,7 +234,12 @@ fn render_surfaces_with_sink<S: RenderSurface, C: CommandSink>(
     command_sink: &mut C,
 ) -> Result<SurfaceRender<S>, RenderError> {
     validate_initial_limits(data, profile, &options.limits)?;
-    let mut state = PrinterState::new(profile, options.limits, options.scale, options.antialias);
+    let mut state = PrinterState::new(
+        profile,
+        options.limits,
+        options.scale.get(),
+        options.antialias,
+    );
     let mut offset = 0;
 
     while offset < data.len() {

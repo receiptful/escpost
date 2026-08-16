@@ -163,11 +163,9 @@ fn printers_add_registers_a_network_printer_in_an_explicit_configuration() {
 
 #[cfg(unix)]
 #[test]
-fn printers_add_reports_the_host_directory_that_backs_the_config_mount() {
-    let directory = temporary_directory("host-display-config");
-    // Stand in for the container mount target and the host directory backing it.
+fn printers_add_reports_the_actual_process_local_configuration_path() {
+    let directory = temporary_directory("process-local-config");
     let config_directory = directory.join("container");
-    let host_directory = directory.join("host");
     fs::create_dir(&config_directory).expect("the config directory should be creatable");
 
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
@@ -182,20 +180,15 @@ fn printers_add_reports_the_host_directory_that_backs_the_config_mount() {
             "10.42.0.71",
         ])
         .env("ESCPOST_CONFIG_DIR", &config_directory)
-        .env("ESCPOST_CONFIG_DISPLAY_DIR", &host_directory)
         .output()
         .expect("the escpost command should finish");
 
     assert_command_succeeded(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let displayed = host_directory.join("printers.toml");
+    let displayed = config_directory.join("printers.toml");
     assert!(
         stderr.contains(&format!("Updated configuration at {}", displayed.display())),
-        "the reported path should name the host directory:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains(config_directory.to_str().expect("the path should be UTF-8")),
-        "the container mount target should not appear in human output:\n{stderr}"
+        "the reported path should name the path used by the process:\n{stderr}"
     );
     // The file is still written to the actual resolved configuration directory.
     assert!(
@@ -207,10 +200,9 @@ fn printers_add_reports_the_host_directory_that_backs_the_config_mount() {
 
 #[cfg(unix)]
 #[test]
-fn printers_list_reports_the_host_directory_it_reads() {
-    let directory = temporary_directory("list-host-display");
+fn printers_list_reports_the_actual_process_local_configuration_path() {
+    let directory = temporary_directory("list-process-local-path");
     let config_directory = directory.join("container");
-    let host_directory = directory.join("host");
     fs::create_dir(&config_directory).expect("the config directory should be creatable");
 
     // The network filter keeps the listing from enumerating USB devices, which
@@ -218,33 +210,27 @@ fn printers_list_reports_the_host_directory_it_reads() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["printers", "list", "--transport", "network"])
         .env("ESCPOST_CONFIG_DIR", &config_directory)
-        .env("ESCPOST_CONFIG_DISPLAY_DIR", &host_directory)
         .output()
         .expect("the escpost command should finish");
 
     assert_command_succeeded(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let displayed = host_directory.join("printers.toml");
+    let displayed = config_directory.join("printers.toml");
     assert!(
         stderr.contains(&format!(
             "Reading configuration from {}",
             displayed.display()
         )),
-        "listing should name the host configuration path:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains(config_directory.to_str().expect("the path should be UTF-8")),
-        "the container mount target should not appear in human output:\n{stderr}"
+        "listing should name the path used by the process:\n{stderr}"
     );
     fs::remove_dir_all(directory).expect("the test directory should be removable");
 }
 
 #[cfg(unix)]
 #[test]
-fn a_configuration_error_names_the_host_directory_path() {
-    let directory = temporary_directory("error-host-display");
+fn a_configuration_error_names_the_actual_process_local_path() {
+    let directory = temporary_directory("error-process-local-path");
     let config_directory = directory.join("container");
-    let host_directory = directory.join("host");
     fs::create_dir(&config_directory).expect("the config directory should be creatable");
     fs::write(config_directory.join("printers.toml"), "this is not TOML")
         .expect("the invalid config should be writable");
@@ -252,20 +238,15 @@ fn a_configuration_error_names_the_host_directory_path() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["printers", "list", "--transport", "network"])
         .env("ESCPOST_CONFIG_DIR", &config_directory)
-        .env("ESCPOST_CONFIG_DISPLAY_DIR", &host_directory)
         .output()
         .expect("the escpost command should finish");
 
     assert!(!output.status.success(), "invalid configuration must fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let displayed = host_directory.join("printers.toml");
+    let displayed = config_directory.join("printers.toml");
     assert!(
         stderr.contains(displayed.to_str().expect("the path should be UTF-8")),
-        "the error should name the host configuration path:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains(config_directory.to_str().expect("the path should be UTF-8")),
-        "the container mount target should not appear in the error:\n{stderr}"
+        "the error should name the path used by the process:\n{stderr}"
     );
     fs::remove_dir_all(directory).expect("the test directory should be removable");
 }

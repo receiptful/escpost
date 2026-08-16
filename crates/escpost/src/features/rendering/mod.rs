@@ -2,7 +2,8 @@
 
 use escpost_profiles::resolver::{self, ResolveError};
 use escpost_render::{
-    RenderOptions, RenderResult, Trace, render_with_options, render_with_trace_and_options,
+    RenderOptions, RenderResult, RenderScale, Trace, render_with_options,
+    render_with_trace_and_options,
 };
 
 use crate::application::{self, ApplicationError};
@@ -12,7 +13,7 @@ pub(crate) mod cli;
 pub(crate) struct Request {
     pub(crate) bytes: Vec<u8>,
     pub(crate) profile_id: String,
-    pub(crate) scale: u32,
+    pub(crate) scale: RenderScale,
     pub(crate) antialias: bool,
     pub(crate) trace: bool,
 }
@@ -58,6 +59,8 @@ fn map_resolve_error(error: ResolveError) -> ApplicationError {
 
 #[cfg(test)]
 mod tests {
+    use escpost_render::RenderScale;
+
     use super::{Request, render};
 
     #[test]
@@ -65,7 +68,7 @@ mod tests {
         let response = render(Request {
             bytes: b"A\n".to_vec(),
             profile_id: "REFERENCE".to_owned(),
-            scale: 1,
+            scale: RenderScale::new(1).unwrap(),
             antialias: false,
             trace: false,
         })
@@ -81,7 +84,7 @@ mod tests {
         let response = render(Request {
             bytes: b"A\n".to_vec(),
             profile_id: "REFERENCE".to_owned(),
-            scale: 1,
+            scale: RenderScale::new(1).unwrap(),
             antialias: false,
             trace: true,
         })

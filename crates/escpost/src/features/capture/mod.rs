@@ -1,7 +1,9 @@
 //! Typed rendering operation for captured RAW ESC/POS jobs.
 
 use escpost_profiles::PrinterProfile;
-use escpost_render::{RenderOptions, TracedRenderResult, render_with_trace_and_options};
+use escpost_render::{
+    RenderOptions, RenderScale, TracedRenderResult, render_with_trace_and_options,
+};
 
 use crate::application::{self, ApplicationError};
 
@@ -11,7 +13,7 @@ pub(crate) mod cli;
 pub(crate) struct RenderRequest {
     pub(crate) bytes: Vec<u8>,
     pub(crate) profile: &'static PrinterProfile,
-    pub(crate) scale: u32,
+    pub(crate) scale: RenderScale,
     pub(crate) antialias: bool,
 }
 
@@ -40,6 +42,8 @@ pub(crate) fn render_job(request: RenderRequest) -> application::Result<RenderRe
 
 #[cfg(test)]
 mod tests {
+    use escpost_render::RenderScale;
+
     use super::{RenderRequest, render_job};
     use crate::profiles;
 
@@ -49,7 +53,7 @@ mod tests {
         let response = render_job(RenderRequest {
             bytes: bytes.clone(),
             profile: profiles::load("REFERENCE").expect("REFERENCE should be available"),
-            scale: 1,
+            scale: RenderScale::new(1).unwrap(),
             antialias: false,
         })
         .expect("the reference profile should render a captured RAW job");

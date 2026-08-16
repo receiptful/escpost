@@ -33,33 +33,59 @@ mod tests {
     }
 
     #[test]
-    fn network_connection_constructor_rejects_a_blank_host() {
-        let error = Connection::network("  ".to_owned(), 9100)
-            .expect_err("a blank host must not form a network connection");
+    fn request_constructor_rejects_a_blank_network_host() {
+        let error = Request::new(
+            None,
+            "kitchen".to_owned(),
+            None,
+            Connection::Network {
+                host: "  ".to_owned(),
+                port: 9100,
+            },
+        )
+        .expect_err("a blank host must not form an add request");
 
         assert!(matches!(error, ApplicationError::BlankPrinterHost));
     }
 
     #[test]
-    fn network_connection_constructor_rejects_port_zero() {
-        let error = Connection::network("10.42.0.71".to_owned(), 0)
-            .expect_err("port zero must not form a network connection");
+    fn request_constructor_rejects_network_port_zero() {
+        let error = Request::new(
+            None,
+            "kitchen".to_owned(),
+            None,
+            Connection::Network {
+                host: "10.42.0.71".to_owned(),
+                port: 0,
+            },
+        )
+        .expect_err("port zero must not form an add request");
 
         assert!(matches!(error, ApplicationError::InvalidPrinterPort));
     }
 
     #[test]
-    fn usb_connection_constructor_rejects_a_blank_serial_number() {
-        let error = Connection::usb(0x0416, 0x5011, Some(" \t".to_owned()), 0, 0x01, Some(0x81))
-            .expect_err("a blank serial number must not form a USB connection");
+    fn request_constructor_rejects_a_blank_usb_serial_number() {
+        let error = Request::new(
+            None,
+            "counter".to_owned(),
+            None,
+            usb_connection(Some(" \t"), 0x01, Some(0x81)),
+        )
+        .expect_err("a blank serial number must not form an add request");
 
         assert!(matches!(error, ApplicationError::BlankUsbSerialNumber));
     }
 
     #[test]
-    fn usb_connection_constructor_rejects_an_invalid_out_endpoint() {
-        let error = Connection::usb(0x0416, 0x5011, None, 0, 0x81, Some(0x81))
-            .expect_err("an IN endpoint must not form a USB OUT connection");
+    fn request_constructor_rejects_an_invalid_usb_out_endpoint() {
+        let error = Request::new(
+            None,
+            "counter".to_owned(),
+            None,
+            usb_connection(None, 0x81, Some(0x81)),
+        )
+        .expect_err("an IN endpoint must not form an add request");
 
         assert!(matches!(
             error,
@@ -68,9 +94,14 @@ mod tests {
     }
 
     #[test]
-    fn usb_connection_constructor_rejects_an_invalid_in_endpoint() {
-        let error = Connection::usb(0x0416, 0x5011, None, 0, 0x01, Some(0x01))
-            .expect_err("an OUT endpoint must not form a USB IN connection");
+    fn request_constructor_rejects_an_invalid_usb_in_endpoint() {
+        let error = Request::new(
+            None,
+            "counter".to_owned(),
+            None,
+            usb_connection(None, 0x01, Some(0x01)),
+        )
+        .expect_err("an OUT endpoint must not form an add request");
 
         assert!(matches!(
             error,
@@ -80,8 +111,7 @@ mod tests {
 
     #[test]
     fn constructors_form_valid_network_and_usb_add_requests() {
-        let network = Connection::network("10.42.0.71".to_owned(), 9200)
-            .expect("a valid host and port should form a network connection");
+        let network = network_connection();
         Request::new(
             None,
             "kitchen".to_owned(),
@@ -89,15 +119,7 @@ mod tests {
             network,
         )
         .expect("valid network registration facts should form an add request");
-        let usb = Connection::usb(
-            0x0416,
-            0x5011,
-            Some("B120300001".to_owned()),
-            0,
-            0x01,
-            Some(0x81),
-        )
-        .expect("valid USB descriptor coordinates should form a USB connection");
+        let usb = usb_connection(Some("B120300001"), 0x01, Some(0x81));
         Request::new(None, "counter".to_owned(), None, usb)
             .expect("valid USB registration facts should form an add request");
     }
@@ -120,6 +142,7 @@ mod tests {
 
         assert_eq!(response.config_path, configuration.path());
         assert_eq!(response.printer_name, "kitchen");
+        assert_eq!(response.profile.as_deref(), Some("REFERENCE"));
         assert_eq!(response.connection, connection);
         let saved = std::fs::read_to_string(configuration.path())
             .expect("the saved configuration should be readable");
@@ -128,8 +151,57 @@ mod tests {
         assert!(saved.contains("port = 9200"));
     }
 
+    #[test]
+    fn add_returns_every_saved_usb_connection_fact() {
+        let configuration = temporary_configuration("typed-usb-add", "");
+        let connection = usb_connection(Some("B120300001"), 0x02, Some(0x83));
+
+        let response = execute(
+            Request::new(
+                Some(configuration.path().to_owned()),
+                "counter".to_owned(),
+                Some("NT-5890K".to_owned()),
+                connection,
+            )
+            .expect("valid USB registration facts should form an add request"),
+        )
+        .expect("the resolved USB request should be saved");
+
+        assert_eq!(response.config_path, configuration.path());
+        assert_eq!(response.printer_name, "counter");
+        assert_eq!(response.profile.as_deref(), Some("NT-5890K"));
+        assert!(matches!(
+            response.connection,
+            Connection::Usb {
+                vendor_id: 0x0416,
+                product_id: 0x5011,
+                serial_number: Some(ref serial_number),
+                interface_number: 0,
+                out_endpoint: 0x02,
+                in_endpoint: Some(0x83),
+            } if serial_number == "B120300001"
+        ));
+    }
+
     fn network_connection() -> Connection {
-        Connection::network("10.42.0.71".to_owned(), 9200)
-            .expect("valid network facts should form a connection")
+        Connection::Network {
+            host: "10.42.0.71".to_owned(),
+            port: 9200,
+        }
+    }
+
+    fn usb_connection(
+        serial_number: Option<&str>,
+        out_endpoint: u8,
+        in_endpoint: Option<u8>,
+    ) -> Connection {
+        Connection::Usb {
+            vendor_id: 0x0416,
+            product_id: 0x5011,
+            serial_number: serial_number.map(str::to_owned),
+            interface_number: 0,
+            out_endpoint,
+            in_endpoint,
+        }
     }
 }

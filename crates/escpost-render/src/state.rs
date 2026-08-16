@@ -175,7 +175,6 @@ impl<S: RenderSurface> PrinterState<S> {
         scale: u32,
         antialias: bool,
     ) -> Self {
-        let scale = scale.max(1);
         let width = profile.geometry.printable_width_dots;
         let default_line_spacing = profile.defaults.line_spacing_dots;
         let font_a = profile.fonts.a.clone();

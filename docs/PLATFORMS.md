@@ -112,10 +112,9 @@ Docker development does not mount the host's installed ESCPost configuration.
 The wrapper creates `<checkout>/.config` as the host user and Compose
 mounts it at `/home/developer/.config/escpost`. A developer can deliberately
 share another host directory by setting `ESCPOST_CONFIG_HOST_DIR`; the
-container still sees its conventional user path. So that commands report a
-location the developer can open, the wrapper passes the backing host directory
-as `ESCPOST_CONFIG_DISPLAY_DIR`, and the binary prints configuration paths
-relative to it instead of the container mount target.
+container still sees its conventional user path. Commands report that factual
+process-local path; when run in Docker, this is the container path rather than
+the backing host path.
 
 ## Transport strategy
 

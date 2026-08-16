@@ -721,7 +721,7 @@ the golden comparison.
 The surface stores 8-bit coverage per subpixel at `scale ×` the dot resolution,
 governed by two independent options:
 
-- `scale` — pixel density (subpixels per dot).
+- `scale` — pixel density (1 to 3 subpixels per dot).
 - `antialias` — encoding. When off, glyph coverage is thresholded to hard dots
   and the sheet packs to a 1-bit PNG; the values are 0/255 so the faithful path
   is bit-identical to bit-packing and the golden fixtures never move. When on,
@@ -738,9 +738,9 @@ one blit.
 
 The library defaults to `scale = 1`, `antialias = false` (faithful), so
 `render()` and every golden test are unaffected. The CLI exposes `--scale <N>`
-and `--antialias[=<bool>]`: `render` defaults to faithful (`1`, off) so its
-artifacts stay true; `serve` defaults to a `3 ×` grayscale preview (nicer out of
-the box), and either can be overridden.
+for values 1 through 3 and `--antialias[=<bool>]`: `render` defaults to faithful
+(`1`, off) so its artifacts stay true; `serve` defaults to a `3 ×` grayscale
+preview (nicer out of the box), and either can be overridden within that range.
 
 ### Consequences
 

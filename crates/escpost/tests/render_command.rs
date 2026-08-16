@@ -33,10 +33,34 @@ Options:
       --browser                  Start the web viewer and open it in the default browser
       --web-listen <WEB_LISTEN>  Exact address for the web viewer
       --watch                    Rerender a filesystem source whenever it changes
-      --scale <N>                Output pixel density: subpixels per dot. 1 is dot resolution; N renders at N× density [default: 1]
+      --scale <N>                Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
       --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
   -h, --help                     Print help
 "
+    );
+}
+
+#[test]
+fn render_rejects_an_unsupported_scale_before_reading_the_source() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "render",
+            "/path/that/does/not/exist",
+            "--profile",
+            "REFERENCE",
+            "--output",
+            "ignored.png",
+            "--scale",
+            "4",
+            "--non-interactive",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: render scale must be between 1 and 3, got 4\n"
     );
 }
 

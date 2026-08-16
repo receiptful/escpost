@@ -5,9 +5,10 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
-use escpost_render::TracedRenderResult;
+use escpost_render::{RenderScale, TracedRenderResult};
 use inquire::Select;
 
+use crate::application::ApplicationError;
 use crate::error::CliError;
 use crate::{output, profiles, source};
 
@@ -54,8 +55,7 @@ pub(crate) struct RenderArgs {
     #[arg(long)]
     pub(crate) watch: bool,
 
-    /// Output pixel density: subpixels per dot. 1 is dot resolution; N renders
-    /// at N× density.
+    /// Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution.
     #[arg(long, value_name = "N", default_value_t = 1)]
     pub(crate) scale: u32,
 
@@ -93,6 +93,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
     if binary_stdout && web_enabled {
         return Err(CliError::StdoutWithWeb);
     }
+    let scale = RenderScale::new(arguments.scale).map_err(ApplicationError::from)?;
     if arguments.watch {
         // Reject stdin before trying to consume it. A developer should get the
         // invalid-invocation error immediately, even if a producer never closes.
@@ -109,7 +110,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
     let response = render(Request {
         bytes: input.bytes,
         profile_id: requested_profile_id,
-        scale: arguments.scale,
+        scale,
         antialias: arguments.antialias,
         trace: web_enabled,
     })?;
@@ -155,7 +156,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
                     output: arguments.output,
                     output_dir: arguments.output_dir,
                     sheet: arguments.sheet,
-                    scale: arguments.scale,
+                    scale,
                     antialias: arguments.antialias,
                 },
                 jobs.clone(),

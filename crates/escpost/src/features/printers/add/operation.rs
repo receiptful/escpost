@@ -3,14 +3,9 @@ use std::path::PathBuf;
 use crate::application::{self, ApplicationError};
 use crate::configuration::{self, UsbPrinterRegistration};
 
-/// Validated transport coordinates for a printer being registered.
+/// Desired transport coordinates for a printer being registered.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Connection {
-    target: ConnectionTarget,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ConnectionTarget {
+pub(crate) enum Connection {
     Usb {
         vendor_id: u16,
         product_id: u16,
@@ -26,52 +21,11 @@ enum ConnectionTarget {
 }
 
 impl Connection {
-    pub(crate) fn usb(
-        vendor_id: u16,
-        product_id: u16,
-        serial_number: Option<String>,
-        interface_number: u8,
-        out_endpoint: u8,
-        in_endpoint: Option<u8>,
-    ) -> application::Result<Self> {
-        if serial_number
-            .as_deref()
-            .is_some_and(|serial_number| serial_number.trim().is_empty())
-        {
-            return Err(ApplicationError::BlankUsbSerialNumber);
+    pub(crate) fn transport(&self) -> &'static str {
+        match self {
+            Self::Usb { .. } => "usb",
+            Self::Network { .. } => "network",
         }
-        if !(0x01..=0x0f).contains(&out_endpoint) {
-            return Err(ApplicationError::InvalidUsbOutEndpoint(out_endpoint));
-        }
-        if let Some(in_endpoint) = in_endpoint
-            && !(0x81..=0x8f).contains(&in_endpoint)
-        {
-            return Err(ApplicationError::InvalidUsbInEndpoint(in_endpoint));
-        }
-
-        Ok(Self {
-            target: ConnectionTarget::Usb {
-                vendor_id,
-                product_id,
-                serial_number,
-                interface_number,
-                out_endpoint,
-                in_endpoint,
-            },
-        })
-    }
-
-    pub(crate) fn network(host: String, port: u16) -> application::Result<Self> {
-        if host.trim().is_empty() {
-            return Err(ApplicationError::BlankPrinterHost);
-        }
-        if port == 0 {
-            return Err(ApplicationError::InvalidPrinterPort);
-        }
-
-        Ok(Self {
-            target: ConnectionTarget::Network { host, port },
-        })
     }
 }
 
@@ -99,6 +53,37 @@ impl Request {
         {
             return Err(ApplicationError::BlankPrinterProfile);
         }
+        match &connection {
+            Connection::Network { host, port } => {
+                if host.trim().is_empty() {
+                    return Err(ApplicationError::BlankPrinterHost);
+                }
+                if *port == 0 {
+                    return Err(ApplicationError::InvalidPrinterPort);
+                }
+            }
+            Connection::Usb {
+                serial_number,
+                out_endpoint,
+                in_endpoint,
+                ..
+            } => {
+                if serial_number
+                    .as_deref()
+                    .is_some_and(|serial_number| serial_number.trim().is_empty())
+                {
+                    return Err(ApplicationError::BlankUsbSerialNumber);
+                }
+                if !(0x01..=0x0f).contains(out_endpoint) {
+                    return Err(ApplicationError::InvalidUsbOutEndpoint(*out_endpoint));
+                }
+                if let Some(in_endpoint) = in_endpoint
+                    && !(0x81..=0x8f).contains(in_endpoint)
+                {
+                    return Err(ApplicationError::InvalidUsbInEndpoint(*in_endpoint));
+                }
+            }
+        }
 
         Ok(Self {
             config,
@@ -113,19 +98,20 @@ impl Request {
 pub(crate) struct Response {
     pub(crate) config_path: PathBuf,
     pub(crate) printer_name: String,
+    pub(crate) profile: Option<String>,
     pub(crate) connection: Connection,
 }
 
 pub(crate) fn execute(request: Request) -> application::Result<Response> {
-    let config_path = match &request.connection.target {
-        ConnectionTarget::Network { host, port } => configuration::add_network_printer(
+    let config_path = match &request.connection {
+        Connection::Network { host, port } => configuration::add_network_printer(
             request.config.as_deref(),
             &request.name,
             host,
             *port,
             request.profile.as_deref(),
         ),
-        ConnectionTarget::Usb {
+        Connection::Usb {
             vendor_id,
             product_id,
             serial_number,
@@ -150,6 +136,7 @@ pub(crate) fn execute(request: Request) -> application::Result<Response> {
     Ok(Response {
         config_path,
         printer_name: request.name,
+        profile: request.profile,
         connection: request.connection,
     })
 }

@@ -63,10 +63,7 @@ pub(crate) async fn run_discover(
             scope,
             scan_targets,
         } => {
-            eprintln!(
-                "Reading configuration from {}",
-                crate::configuration::display_path(config_path)
-            );
+            eprintln!("Reading configuration from {}", config_path.display());
             if let Some(scan) = scope.network_scan()
                 && !scan_targets.is_empty()
             {

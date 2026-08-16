@@ -54,14 +54,6 @@ enum ResolvedAddConnection {
     Usb(UsbAddTarget),
     Network { host: String, port: u16 },
 }
-impl ResolvedAddPrinter {
-    fn transport(&self) -> PrinterTransport {
-        match self.connection {
-            ResolvedAddConnection::Usb(_) => PrinterTransport::Usb,
-            ResolvedAddConnection::Network { .. } => PrinterTransport::Network,
-        }
-    }
-}
 pub(super) trait AddPrompter {
     fn name(&mut self) -> Result<String, CliError>;
     fn reject_name(&mut self, error: &CliError) {
@@ -132,23 +124,29 @@ fn execute_add(
 ) -> Result<String, CliError> {
     let configuration = configuration::load_for_update(config_path)?;
     let resolved = resolve_add(arguments, can_prompt, prompter, inventory, &configuration)?;
-    save_and_report_printer(config_path, &resolved)?;
-    Ok(resolved.name)
+    save_and_report_printer(config_path, &resolved)
 }
 fn save_and_report_printer(
     config_path: Option<&std::path::Path>,
     printer: &ResolvedAddPrinter,
-) -> Result<(), CliError> {
+) -> Result<String, CliError> {
+    let ambiguous_without_serial = matches!(
+        &printer.connection,
+        ResolvedAddConnection::Usb(target) if target.ambiguous_without_serial
+    );
     let connection = match &printer.connection {
-        ResolvedAddConnection::Network { host, port } => Connection::network(host.clone(), *port)?,
-        ResolvedAddConnection::Usb(target) => Connection::usb(
-            target.vendor_id,
-            target.product_id,
-            target.serial_number.clone(),
-            target.interface_number,
-            target.out_endpoint,
-            target.in_endpoint,
-        )?,
+        ResolvedAddConnection::Network { host, port } => Connection::Network {
+            host: host.clone(),
+            port: *port,
+        },
+        ResolvedAddConnection::Usb(target) => Connection::Usb {
+            vendor_id: target.vendor_id,
+            product_id: target.product_id,
+            serial_number: target.serial_number.clone(),
+            interface_number: target.interface_number,
+            out_endpoint: target.out_endpoint,
+            in_endpoint: target.in_endpoint,
+        },
     };
     let response: Response = execute(Request::new(
         config_path.map(std::path::Path::to_owned),
@@ -156,20 +154,18 @@ fn save_and_report_printer(
         printer.profile.clone(),
         connection,
     )?)?;
-    eprintln!("Printer: {}", printer.name);
-    eprintln!("Transport: {}", printer.transport());
+    eprintln!("Printer: {}", response.printer_name);
+    eprintln!("Transport: {}", response.connection.transport());
     eprintln!(
         "Updated configuration at {}",
-        configuration::display_path(&response.config_path)
+        response.config_path.display()
     );
-    if let ResolvedAddConnection::Usb(target) = &printer.connection
-        && target.ambiguous_without_serial
-    {
+    if ambiguous_without_serial {
         eprintln!(
             "Warning: this USB printer has no serial number; printing will be ambiguous while another device with the same USB identity is connected."
         );
     }
-    Ok(())
+    Ok(response.printer_name)
 }
 fn resolve_add(
     arguments: AddPrinterArgs,

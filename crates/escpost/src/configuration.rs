@@ -10,7 +10,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use crate::application::{self, ApplicationError};
 
 const CONFIG_DIRECTORY_ENV: &str = "ESCPOST_CONFIG_DIR";
-const CONFIG_DISPLAY_DIRECTORY_ENV: &str = "ESCPOST_CONFIG_DISPLAY_DIR";
 const PRINTERS_FILE: &str = "printers.toml";
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -255,57 +254,103 @@ fn add_printer_table(
     name: &str,
     printer: toml::Table,
 ) -> application::Result<PathBuf> {
+    mutate_configuration(explicit_path, move |path, existing| {
+        if !existing.is_empty() {
+            PrinterConfiguration::parse(existing).map_err(|message| {
+                ApplicationError::InvalidPrinterConfiguration {
+                    path: path.to_owned(),
+                    message,
+                }
+            })?;
+        }
+        let document = if existing.is_empty() {
+            toml::Table::new()
+        } else {
+            toml::from_str::<toml::Table>(existing).map_err(|error| {
+                ApplicationError::InvalidPrinterConfiguration {
+                    path: path.to_owned(),
+                    message: error.to_string(),
+                }
+            })?
+        };
+        if document.contains_key(name) {
+            return Err(ApplicationError::PrinterAlreadyConfigured(name.to_owned()));
+        }
+
+        // Serialize only the new table, then append it to the original text.
+        // This keeps comments, field order, and formatting chosen by developers.
+        let mut addition = toml::Table::new();
+        addition.insert(name.to_owned(), toml::Value::Table(printer));
+        let addition = toml::to_string_pretty(&addition)
+            .map_err(|error| ApplicationError::SerializePrinterConfiguration(error.to_string()))?;
+        let mut content = existing.to_owned();
+        if !content.is_empty() {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push('\n');
+        }
+        content.push_str(&addition);
+        Ok(content)
+    })
+}
+
+/// Mutate the complete printer configuration under an inter-process lock.
+///
+/// The stable sibling lock file is never removed. The operating system releases
+/// the advisory lock when this process closes the file or exits unexpectedly.
+fn mutate_configuration<F>(
+    explicit_path: Option<&Path>,
+    mutation: F,
+) -> application::Result<PathBuf>
+where
+    F: FnOnce(&Path, &str) -> application::Result<String>,
+{
     let (path, _) = resolve_path(explicit_path)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| {
+        ApplicationError::CreatePrinterConfigurationDirectory {
+            path: parent.to_owned(),
+            source,
+        }
+    })?;
+
+    let file_name = path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new(PRINTERS_FILE))
+        .to_string_lossy();
+    let lock_path = parent.join(format!(".{file_name}.lock"));
+    let mut lock_options = OpenOptions::new();
+    lock_options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    lock_options.mode(0o600);
+    let lock_file = lock_options.open(&lock_path).map_err(|source| {
+        ApplicationError::OpenPrinterConfigurationLock {
+            path: lock_path.clone(),
+            source,
+        }
+    })?;
+    lock_file
+        .lock()
+        .map_err(|source| ApplicationError::LockPrinterConfiguration {
+            path: lock_path,
+            source,
+        })?;
+
     let existing = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(ApplicationError::ReadPrinterConfiguration { path, source }),
-    };
-    if !existing.is_empty() {
-        PrinterConfiguration::parse(&existing).map_err(|message| {
-            ApplicationError::InvalidPrinterConfiguration {
+        Err(source) => {
+            return Err(ApplicationError::ReadPrinterConfiguration {
                 path: path.clone(),
-                message,
-            }
-        })?;
-    }
-    let document = if existing.is_empty() {
-        toml::Table::new()
-    } else {
-        toml::from_str::<toml::Table>(&existing).map_err(|error| {
-            ApplicationError::InvalidPrinterConfiguration {
-                path: path.clone(),
-                message: error.to_string(),
-            }
-        })?
-    };
-    if document.contains_key(name) {
-        return Err(ApplicationError::PrinterAlreadyConfigured(name.to_owned()));
-    }
-
-    // Serialize only the new table, then append it to the original text. This
-    // keeps comments, field order, and formatting chosen by developers.
-    let mut addition = toml::Table::new();
-    addition.insert(name.to_owned(), toml::Value::Table(printer));
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| {
-            ApplicationError::CreatePrinterConfigurationDirectory {
-                path: parent.to_owned(),
                 source,
-            }
-        })?;
-    }
-    let addition = toml::to_string_pretty(&addition)
-        .map_err(|error| ApplicationError::SerializePrinterConfiguration(error.to_string()))?;
-    let mut content = existing;
-    if !content.is_empty() {
-        if !content.ends_with('\n') {
-            content.push('\n');
+            });
         }
-        content.push('\n');
-    }
-    content.push_str(&addition);
+    };
+    let content = mutation(&path, &existing)?;
     write_atomically(&path, content.as_bytes()).map_err(|source| {
         ApplicationError::WritePrinterConfiguration {
             path: path.clone(),
@@ -379,40 +424,6 @@ fn config_directory_override() -> Option<PathBuf> {
     env::var_os(CONFIG_DIRECTORY_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-}
-
-/// Render a configuration path for human output.
-///
-/// The development Docker wrapper mounts a host directory at the container's
-/// conventional configuration path, so a resolved path names a location that
-/// does not exist on the host. When the wrapper records the backing host
-/// directory, map the configuration directory back to it; otherwise show the
-/// path unchanged.
-pub(crate) fn display_path(path: &Path) -> String {
-    display_path_with(
-        path,
-        config_directory_override().as_deref(),
-        config_display_directory().as_deref(),
-    )
-}
-
-fn config_display_directory() -> Option<PathBuf> {
-    env::var_os(CONFIG_DISPLAY_DIRECTORY_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-fn display_path_with(
-    path: &Path,
-    config_directory: Option<&Path>,
-    display_directory: Option<&Path>,
-) -> String {
-    if let (Some(config_directory), Some(display_directory)) = (config_directory, display_directory)
-        && let Ok(relative) = path.strip_prefix(config_directory)
-    {
-        return display_directory.join(relative).display().to_string();
-    }
-    path.display().to_string()
 }
 
 fn platform_config_directory() -> application::Result<PathBuf> {
@@ -508,40 +519,76 @@ fn parse_integer_string(value: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
-    use super::display_path_with;
-
-    #[test]
-    fn a_path_inside_the_config_directory_is_shown_under_the_host_directory() {
-        let display = display_path_with(
-            Path::new("/home/developer/.config/escpost/printers.toml"),
-            Some(Path::new("/home/developer/.config/escpost")),
-            Some(Path::new("/checkout/.config")),
-        );
-
-        assert_eq!(display, "/checkout/.config/printers.toml");
-    }
+    use super::mutate_configuration;
 
     #[test]
-    fn a_path_outside_the_config_directory_is_shown_unchanged() {
-        let display = display_path_with(
-            Path::new("/tmp/explicit/printers.toml"),
-            Some(Path::new("/home/developer/.config/escpost")),
-            Some(Path::new("/checkout/.config")),
+    fn concurrent_mutations_see_the_latest_complete_configuration() {
+        let directory =
+            std::env::temp_dir().join(format!("escpost-locked-mutation-{}", std::process::id()));
+        let path = directory.join("printers.toml");
+        std::fs::create_dir_all(&directory).expect("temporary directory should be creatable");
+        std::fs::write(&path, "# original\n").expect("fixture should be writable");
+
+        let (first_entered_tx, first_entered_rx) = mpsc::channel();
+        let (release_first_tx, release_first_rx) = mpsc::channel();
+        let first_path = path.clone();
+        let first = thread::spawn(move || {
+            mutate_configuration(Some(&first_path), |_path, existing| {
+                first_entered_tx
+                    .send(())
+                    .expect("test receiver should exist");
+                release_first_rx
+                    .recv()
+                    .expect("first mutation should resume");
+                Ok(format!("{existing}# first\n"))
+            })
+        });
+        first_entered_rx
+            .recv()
+            .expect("first mutation should hold the lock");
+
+        let (second_entered_tx, second_entered_rx) = mpsc::channel();
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let second_path = path.clone();
+        let second = thread::spawn(move || {
+            second_started_tx
+                .send(())
+                .expect("test receiver should exist");
+            mutate_configuration(Some(&second_path), |_path, existing| {
+                second_entered_tx
+                    .send(existing.to_owned())
+                    .expect("test receiver should exist");
+                Ok(format!("{existing}# second\n"))
+            })
+        });
+        second_started_rx
+            .recv()
+            .expect("second mutation should attempt to acquire the lock");
+
+        assert!(
+            second_entered_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "the second mutation must wait until the first releases the file lock"
         );
+        release_first_tx
+            .send(())
+            .expect("first mutation should still be waiting");
+        first.join().expect("first thread should finish").unwrap();
+        let content_seen_by_second = second_entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second mutation should proceed after the first");
+        second.join().expect("second thread should finish").unwrap();
 
-        assert_eq!(display, "/tmp/explicit/printers.toml");
-    }
-
-    #[test]
-    fn without_a_host_directory_the_path_is_shown_unchanged() {
-        let display = display_path_with(
-            Path::new("/home/developer/.config/escpost/printers.toml"),
-            Some(Path::new("/home/developer/.config/escpost")),
-            None,
+        assert_eq!(content_seen_by_second, "# original\n# first\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("result should be readable"),
+            "# original\n# first\n# second\n"
         );
-
-        assert_eq!(display, "/home/developer/.config/escpost/printers.toml");
+        std::fs::remove_dir_all(directory).expect("temporary directory should be removable");
     }
 }

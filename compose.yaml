@@ -23,9 +23,6 @@ services:
       # Keep configuration used by this checkout separate from any
       # host-installed ESCPost version.
       ESCPOST_CONFIG_DIR: /home/developer/.config/escpost
-      # Let the containerized binary report the host directory that backs the
-      # mount above instead of its container-only path.
-      ESCPOST_CONFIG_DISPLAY_DIR: ${ESCPOST_CONFIG_DISPLAY_DIR:-}
     volumes:
       - .:/workspace
       - ${ESCPOST_CONFIG_HOST_DIR:-./.config}:/home/developer/.config/escpost
