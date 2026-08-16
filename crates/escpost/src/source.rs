@@ -113,9 +113,18 @@ fn load_file(path: &Path, format: InputFormat) -> application::Result<Vec<u8>> {
 }
 
 fn read(path: &Path) -> application::Result<Vec<u8>> {
-    fs::read(path).map_err(|source| ApplicationError::ReadInput {
-        path: PathBuf::from(path),
-        source,
+    fs::read(path).map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            ApplicationError::InputFileNotFound {
+                path: PathBuf::from(path),
+                source,
+            }
+        } else {
+            ApplicationError::ReadInput {
+                path: PathBuf::from(path),
+                source,
+            }
+        }
     })
 }
 

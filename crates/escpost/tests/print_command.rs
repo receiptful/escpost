@@ -165,6 +165,51 @@ port = 1
 }
 
 #[test]
+fn missing_input_file_is_reported_clearly() {
+    let directory = temporary_directory("missing-input");
+    fs::create_dir_all(&directory).expect("the test directory should be creatable");
+    let configuration = directory.join("printers.toml");
+    fs::write(
+        &configuration,
+        "\
+[counter]
+transport = \"network\"
+host = \"127.0.0.1\"
+port = 1
+",
+    )
+    .expect("the printer configuration should be writable");
+    let missing_source = directory.join("missing.hex");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "print",
+            missing_source
+                .to_str()
+                .expect("the source path should be UTF-8"),
+            "--printer",
+            "counter",
+            "--config",
+            configuration
+                .to_str()
+                .expect("the configuration path should be UTF-8"),
+            "--non-interactive",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("the error should be UTF-8"),
+        format!(
+            "error: ESC/POS input file {:?} was not found\n",
+            missing_source
+        )
+    );
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[test]
 fn unknown_printer_is_rejected_before_an_invalid_source_is_loaded() {
     let directory = temporary_directory("unknown-printer-invalid-source");
     fs::create_dir_all(&directory).expect("the test directory should be creatable");

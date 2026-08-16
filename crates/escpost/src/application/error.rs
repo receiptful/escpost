@@ -15,6 +15,13 @@ pub(crate) enum ApplicationError {
     #[error("unknown printer profile {0:?}")]
     UnknownProfile(String),
 
+    #[error("ESC/POS input file {path:?} was not found")]
+    InputFileNotFound {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("could not read ESC/POS input {path}: {source}")]
     ReadInput {
         path: PathBuf,
@@ -227,8 +234,22 @@ impl ApplicationError {
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
+    use std::path::PathBuf;
 
     use super::ApplicationError;
+
+    #[test]
+    fn missing_input_file_keeps_the_io_error_in_the_source_chain() {
+        let error = ApplicationError::InputFileNotFound {
+            path: PathBuf::from("missing.hex"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "file disappeared"),
+        };
+
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("file disappeared")
+        );
+    }
 
     #[test]
     fn wrapped_stdin_error_remains_in_the_source_chain() {
