@@ -253,6 +253,30 @@ fn direct_spa_navigation_uses_index_without_catching_unknown_api_routes() {
 }
 
 #[test]
+fn unknown_non_get_api_route_uses_the_json_not_found_envelope() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_post_bytes(port, "/api/unknown");
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 404 Not Found");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    assert!(matches!(
+        response_header(&response, "content-type"),
+        Some(value) if value.starts_with("application/json")
+    ));
+    let response: serde_json::Value = serde_json::from_slice(response_body(&response))
+        .expect("unknown API responses should be JSON");
+    assert_eq!(response["error"]["code"], "not_found");
+    assert!(response["error"]["message"].is_string());
+}
+
+#[test]
 fn health_endpoint_reports_ok() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
@@ -808,11 +832,19 @@ fn http_get(port: u16, path: &str) -> String {
 }
 
 fn http_get_bytes(port: u16, path: &str) -> Vec<u8> {
+    http_request_bytes(port, "GET", path)
+}
+
+fn http_post_bytes(port: u16, path: &str) -> Vec<u8> {
+    http_request_bytes(port, "POST", path)
+}
+
+fn http_request_bytes(port: u16, method: &str, path: &str) -> Vec<u8> {
     let mut stream =
         TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
     write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
     )
     .expect("the HTTP request should be writable");
     let mut response = Vec::new();

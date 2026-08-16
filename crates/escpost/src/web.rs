@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{any, get};
 use axum::{Json, Router};
 use escpost_render::{
     CommandCode, CommandTrace, DecodedCommand, Effect, Justification, PaintLifecycle, StateChange,
@@ -525,8 +525,8 @@ pub(crate) async fn serve(
         .route("/health", get(health))
         .route("/api/status", get(status::status))
         .route("/api/render", get(current_render))
-        .route("/api", get(error::not_found))
-        .route("/api/{*path}", get(error::not_found))
+        .route("/api", any(error::not_found))
+        .route("/api/{*path}", any(error::not_found))
         .route("/sheets/{file}", get(sheet_png))
         .route("/job", get(download_job))
         .with_state(WebState {
