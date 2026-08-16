@@ -114,6 +114,22 @@ against the printed loopback URL. Confirm responsive ordered sheets, their
 labels and dimensions, 1× default scale, integer zoom, and watch refresh before
 removing or materially changing an older preview path.
 
+### Frontend tests
+
+The frontend lives under `crates/escpost/frontend`. Run its component tests,
+type checker, and production build through Docker:
+
+```bash
+docker compose run --rm frontend bun test
+docker compose run --rm frontend bun run typecheck
+docker compose run --rm frontend-build
+```
+
+Rust HTTP integration tests exercise the embedded production bundle, including
+the `/app` redirect, the `/app/` shell, asset MIME and cache headers, missing
+assets, and traversal rejection. The existing viewer at `/` remains covered
+separately until the SPA reaches behavioral parity.
+
 ### Robustness tests
 
 Malformed, truncated, adversarial, and resource-intensive streams verify that

@@ -284,11 +284,18 @@ HTML document, current render metadata at `/api/render`, the current raw input
 at `/job`, and current sheets under `/sheets/`. These routes do not provide
 stable job identity and are not the target workbench API.
 
-### Planned embedded web application
+### Embedded web applications
 
-The web UI will be a Preact and TypeScript single-page application built with
-Vite. Axum will own HTTP routing, JSON APIs, and static asset delivery. The
-frontend will have no server-side JavaScript runtime.
+The existing latest-job viewer remains authoritative at `/`. A new Preact and
+TypeScript shell is available at `/app/`; it does not yet call application APIs
+or reproduce viewer behavior. Unknown `/app/*` paths return 404 because this
+slice introduces neither a client router nor a fallback route.
+
+Bun installs and tests frontend dependencies. Vite builds and serves the
+frontend. Tailwind CSS and DaisyUI provide styling primitives. Axum embeds the
+production output with `rust-embed`, serves `index.html` without caching, and
+serves content-hashed assets with immutable caching and their detected MIME
+types. The frontend has no server-side JavaScript runtime.
 
 Existing web-enabled commands will host the same Axum router and embedded
 frontend. `render --web`, `render --browser`, and `render --watch` will seed or
@@ -316,17 +323,17 @@ HTTP infrastructure with capability-local `http.rs` adapters. The configuration
 path is selected when the process starts; HTTP request DTOs cannot select
 arbitrary server filesystem paths.
 
-HTTP operation paths will follow the CLI command tree without an API version
-prefix:
+HTTP operation paths will follow the CLI command tree below an unversioned
+`/api/` prefix:
 
 ```text
-escpost printers list       GET  /printers/list
-escpost printers discover   POST /printers/discover
-escpost printers add        POST /printers/add
-escpost profiles list       GET  /profiles/list
-escpost profiles get ID     GET  /profiles/get/{id}
-escpost render              POST /render
-escpost print               POST /print
+escpost printers list       GET  /api/printers/list
+escpost printers discover   POST /api/printers/discover
+escpost printers add        POST /api/printers/add
+escpost profiles list       GET  /api/profiles/list
+escpost profiles get ID     GET  /api/profiles/get/{id}
+escpost render              POST /api/render
+escpost print               POST /api/print
 ```
 
 Names and parameter concepts will transfer between CLI and HTTP. HTTP will
@@ -339,25 +346,25 @@ envelope without exposing terminal guidance or unnecessary host details.
 The web server will call the same feature operations as the CLI; it will never
 invoke the `escpost` executable or call Clap handlers. HTTP-only infrastructure
 such as health checks and static assets will need no CLI equivalent. Operation,
-UI asset, and job-resource paths will remain distinct. SPA fallback applies only
-to browser navigation and never converts an unknown operation route into HTML.
+UI asset, and job-resource paths will remain distinct.
 
 Jobs will have stable identifiers. Raw bytes, rendered sheets, and other job
 resources will be addressed by job id, while a separate pointer identifies the
 current job. Retention will be bounded in both job count and bytes. Persistence
 is a later opt-in capability rather than a prerequisite for the workbench.
 
-The frontend toolchain and dependency graph will be pinned by the container
-image and lockfile. Vite will emit content-hashed JavaScript and CSS assets.
-Docker and release automation will build and verify the production bundle, and
-the Cargo package will contain those production assets for compile-time
-embedding. Ordinary Cargo builds will not install JavaScript dependencies or
-require network access. Release artifacts will remain a single executable and
-require neither Node.js nor external web assets at runtime.
+The frontend toolchain and dependency graph are pinned by the Bun container
+image and lockfile. Vite emits content-hashed JavaScript and CSS assets. Docker
+and native Just workflows build the production bundle before Cargo; the Cargo
+build fails with an actionable error when that bundle is absent and never
+invokes Bun itself. Generated `dist/` and `node_modules/` directories remain
+untracked. Release artifacts remain a single executable and require neither Bun
+nor external web assets at runtime.
 
-For development, Vite will serve the frontend with hot reload and proxy
-application routes to a running escpost server. Production and test builds will
-serve only the embedded assets.
+For development, Vite serves the frontend with hot reload and proxies `/api`
+requests to the running escpost server. `just docker-web-dev` is the canonical
+workflow; `just native-web-dev` provides the equivalent flow for hosts with
+Rust and Bun. Production and Rust test builds serve only embedded assets.
 
 Automatic listeners will continue to bind to loopback. Explicit `--web-listen`
 addresses will remain supported; non-loopback bindings will retain the exposure

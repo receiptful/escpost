@@ -99,12 +99,13 @@ reusable library APIs.
 
 ## Development
 
-Build, test, and run either natively or in Docker. Both expose the same tasks:
+Build, test, and run either natively or in Docker. Both workflows build the
+embedded frontend before compiling the Rust binary:
 
-- **Native** requires a host Rust toolchain and produces a host binary. Use it
-  for host-only behavior such as opening the browser automatically.
+- **Native** requires host Rust and Bun toolchains and produces a host binary.
+  Use it for host-only behavior such as opening the browser automatically.
 - **Docker** provides the reproducible environment used by tests and CI and
-  requires no host Rust toolchain.
+  requires neither toolchain on the host. It is the canonical workflow.
 
 The [`justfile`](justfile) wraps both workflows:
 
@@ -113,6 +114,11 @@ The [`justfile`](justfile) wraps both workflows:
 | Build the CLI | `just docker-build` | `just native-build` |
 | Run the tests | `just docker-test` | `just native-test` |
 | Run the CLI | `just docker-run serve --no-open` | `just native-run serve` |
+| Run Axum and Vite | `just docker-web-dev` | `just native-web-dev` |
+
+The development frontend runs at `http://127.0.0.1:5173/app/` with hot reload.
+The backend continues to serve the existing embedded viewer at
+`http://127.0.0.1:9000/`. The new `/app/` shell does not replace that viewer yet.
 
 Run `just --list` to see every recipe. Without `just`, each recipe is a short
 wrapper around `docker compose` or `cargo` and can be run directly. The native
