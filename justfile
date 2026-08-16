@@ -24,20 +24,31 @@ docker-test:
 docker-run *args:
     {{docker_cargo}} run -q -p escpost -- {{args}}
 
+# Run the backend and Vite development server in Docker.
+docker-web-dev:
+    docker compose up cli frontend
+
 # --- Native (host Rust toolchain) ---
 
 # Build target/release/escpost.
 native-build:
+    scripts/frontend-build
     cargo build --release -p escpost
 
 # Run the test suite on the host.
 native-test:
+    scripts/frontend-build
     cargo test --workspace --exclude escpost-python
     scripts/test-development-wrapper
 
 # Run the CLI on the host, e.g. `just native-run serve`.
 native-run *args:
+    scripts/frontend-build
     cargo run -q -p escpost -- {{args}}
+
+# Run the backend and Vite development server with host toolchains.
+native-web-dev:
+    scripts/native-web-dev
 
 # --- Utilities ---
 

@@ -1,0 +1,45 @@
+#!/bin/sh
+
+set -eu
+
+repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repository"
+
+scripts/frontend-build
+
+cargo run -q -p escpost -- serve \
+    --listen 127.0.0.1:9100 \
+    --web-listen 127.0.0.1:9000 \
+    --no-open &
+backend_pid=$!
+
+(
+    cd "$repository/crates/escpost/frontend"
+    exec bun run dev
+) &
+frontend_pid=$!
+
+cleanup() {
+    kill "$backend_pid" "$frontend_pid" 2>/dev/null || :
+    wait "$backend_pid" 2>/dev/null || :
+    wait "$frontend_pid" 2>/dev/null || :
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+while kill -0 "$backend_pid" 2>/dev/null \
+    && kill -0 "$frontend_pid" 2>/dev/null; do
+    sleep 1
+done
+
+status=0
+if ! kill -0 "$backend_pid" 2>/dev/null; then
+    wait "$backend_pid" || status=$?
+else
+    wait "$frontend_pid" || status=$?
+fi
+
+exit "$status"

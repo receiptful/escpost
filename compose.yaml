@@ -67,6 +67,13 @@ services:
         cargo build --quiet --locked --package escpost
         exec "$${CARGO_TARGET_DIR}/debug/escpost" "$$@"
       - escpost
+    command:
+      - serve
+      - --listen
+      - 127.0.0.1:9100
+      - --web-listen
+      - 127.0.0.1:9000
+      - --no-open
 
 volumes:
   cargo-home:
