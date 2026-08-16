@@ -13,12 +13,39 @@ x-development-service: &development-service
     - cargo-target:/home/developer/target
     - python-venv:/workspace/.venv
 
+x-frontend-service: &frontend-service
+  image: oven/bun:1.3.14
+  network_mode: host
+  working_dir: /workspace/crates/escpost/frontend
+  user: "0:0"
+  entrypoint: /workspace/scripts/frontend-entrypoint
+  volumes:
+    - .:/workspace
+    - frontend-node-modules:/workspace/crates/escpost/frontend/node_modules
+
 services:
+  frontend-build:
+    <<: *frontend-service
+    command: /workspace/scripts/frontend-build
+
+  frontend:
+    <<: *frontend-service
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
+    command: ["bun", "run", "dev"]
+
   test:
     <<: *development-service
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
 
   cli:
     <<: *development-service
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
     environment:
       # Keep configuration used by this checkout separate from any
       # host-installed ESCPost version.
@@ -45,3 +72,4 @@ volumes:
   cargo-home:
   cargo-target:
   python-venv:
+  frontend-node-modules:

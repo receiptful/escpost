@@ -1,0 +1,9 @@
+#!/bin/sh
+
+set -eu
+
+repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repository/crates/escpost/frontend"
+
+bun install --frozen-lockfile
+exec bun run build

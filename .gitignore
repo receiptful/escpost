@@ -13,6 +13,8 @@ __pycache__/
 
 # Distribution artifacts
 /dist/
+/crates/escpost/frontend/dist/
+/crates/escpost/frontend/node_modules/
 
 # Checkout-local printer configuration and generated test output
 /.config/
