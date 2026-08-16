@@ -134,7 +134,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         std::env::var("BROWSER").ok().as_deref(),
         std::env::var_os("CI").is_some(),
     );
-    let result = cli_web::serve(web_listener, jobs, open_browser).await;
+    let result = cli_web::serve(web_listener, jobs, Some(raw_address), open_browser).await;
     acceptor.abort();
     result
 }

@@ -162,7 +162,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
                 jobs.clone(),
             )?;
         }
-        crate::cli::web::serve(listener, jobs, arguments.browser).await?;
+        crate::cli::web::serve(listener, jobs, None, arguments.browser).await?;
     }
     Ok(())
 }

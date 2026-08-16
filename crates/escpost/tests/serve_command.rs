@@ -108,6 +108,35 @@ fn serve_captures_a_raw_job_and_previews_its_sheets() {
 }
 
 #[test]
+fn api_status_reports_virtual_printer_and_only_successful_captured_jobs() {
+    let mut child = start_serve_on_ephemeral_ports();
+    let (raw_port, web_port) = read_listen_ports(&mut child);
+    wait_until_listening(&mut child, raw_port);
+    wait_until_listening(&mut child, web_port);
+
+    let raw_address = format!("127.0.0.1:{raw_port}");
+    let initial = status_metadata(web_port);
+    assert_eq!(initial["virtual_printer"]["state"], "ready");
+    assert_eq!(initial["virtual_printer"]["address"], raw_address);
+    assert_eq!(initial["jobs_processed"], 0);
+
+    let generation = render_metadata(web_port)["generation"]
+        .as_u64()
+        .expect("the initial render generation should be numeric");
+    send_raw_job(raw_port, b"Count this captured job\n");
+    wait_for_generation_change(web_port, generation);
+    assert_eq!(status_metadata(web_port)["jobs_processed"], 1);
+
+    // An unsupported FS byte fails rendering, so it is not a processed job.
+    send_raw_job(raw_port, b"Do not count this\n\x1c");
+    wait_for_render_error(web_port);
+    let status = status_metadata(web_port);
+    stop(&mut child);
+
+    assert_eq!(status["jobs_processed"], 1);
+}
+
+#[test]
 fn serve_finalizes_a_held_open_connection_after_the_idle_timeout() {
     let mut child = start_serve(&[
         "--profile",
@@ -562,6 +591,24 @@ fn wait_for_first_job(web_port: u16) -> serde_json::Value {
     }
 }
 
+fn wait_for_generation_change(web_port: u16, previous: u64) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let metadata = render_metadata(web_port);
+        if metadata["generation"]
+            .as_u64()
+            .is_some_and(|generation| generation > previous)
+        {
+            return metadata;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the render generation did not advance"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn wait_for_render_error(web_port: u16) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -580,6 +627,11 @@ fn wait_for_render_error(web_port: u16) -> serde_json::Value {
 fn render_metadata(web_port: u16) -> serde_json::Value {
     let response = http_get_bytes(web_port, "/api/render");
     serde_json::from_slice(response_body(&response)).expect("the metadata response should be JSON")
+}
+
+fn status_metadata(web_port: u16) -> serde_json::Value {
+    let response = http_get_bytes(web_port, "/api/status");
+    serde_json::from_slice(response_body(&response)).expect("the status response should be JSON")
 }
 
 fn wait_until_receiving(web_port: u16, expected: bool) -> serde_json::Value {

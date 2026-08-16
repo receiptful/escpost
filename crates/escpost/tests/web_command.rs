@@ -126,6 +126,21 @@ fn health_endpoint_reports_ok() {
 }
 
 #[test]
+fn api_status_has_no_virtual_printer_for_render_web_mode() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/status");
+    let status: serde_json::Value = serde_json::from_slice(response_body(&response))
+        .expect("the status response should be JSON");
+    stop(&mut child);
+
+    assert_eq!(status["virtual_printer"], serde_json::Value::Null);
+    assert_eq!(status["jobs_processed"], 0);
+}
+
+#[test]
 fn web_mode_exposes_ordered_sheet_metadata_and_png_bytes() {
     let port = unused_loopback_port();
     let case = "multi-sheet";

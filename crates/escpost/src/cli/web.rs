@@ -19,6 +19,7 @@ pub(crate) async fn bind(requested: Option<SocketAddr>) -> Result<TcpListener, C
 pub(crate) async fn serve(
     listener: TcpListener,
     jobs: JobStore,
+    virtual_printer_address: Option<SocketAddr>,
     open_browser: bool,
 ) -> Result<(), CliError> {
     let address = listener.local_addr().map_err(CliError::ServeWeb)?;
@@ -30,7 +31,7 @@ pub(crate) async fn serve(
         eprintln!("warning: could not open the browser ({error}); open {url} manually");
     }
 
-    transport::serve(listener, jobs)
+    transport::serve(listener, jobs, virtual_printer_address)
         .await
         .map_err(CliError::ServeWeb)
 }
