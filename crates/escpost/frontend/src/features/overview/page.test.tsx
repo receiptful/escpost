@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { AppDataProvider, useAppData } from "../../app/data";
 import { OverviewPage } from "./page";
 
@@ -38,13 +38,18 @@ describe("OverviewPage", () => {
     }) as typeof globalThis.fetch;
 
     render(<AppDataProvider><OverviewPage /></AppDataProvider>);
-    expect(await screen.findByText("2 configured")).toBeTruthy();
-    expect(screen.getByText("1 connected")).toBeTruthy();
-    expect(screen.getByText("1 unavailable")).toBeTruthy();
-    expect(screen.getByText("Ready")).toBeTruthy();
-    expect(screen.getByText("Receiving")).toBeTruthy();
-    expect(screen.getByText("127.0.0.1:9100")).toBeTruthy();
-    expect(screen.getByText("7")).toBeTruthy();
+    const printers = await screen.findByRole("region", { name: "Printers" });
+    expect(await within(printers).findByText("2 configured")).toBeTruthy();
+    expect(within(printers).getByText("1 connected")).toBeTruthy();
+    expect(within(printers).getByText("1 unavailable")).toBeTruthy();
+
+    const virtualPrinter = screen.getByRole("region", { name: "Virtual printer" });
+    expect(within(virtualPrinter).getByText("Receiving")).toBeTruthy();
+    expect(within(virtualPrinter).getByText("127.0.0.1:9100")).toBeTruthy();
+
+    const jobs = screen.getByRole("region", { name: "Jobs processed" });
+    expect(within(jobs).getByText("7")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Printer availability" })).toBeNull();
   });
 
   test("renders Not running when no virtual printer is configured", async () => {
@@ -53,6 +58,18 @@ describe("OverviewPage", () => {
       : Promise.resolve(json({ virtual_printer: null, jobs_processed: 0 }))) as unknown as typeof globalThis.fetch;
     render(<AppDataProvider><OverviewPage /></AppDataProvider>);
     expect(await screen.findByText("Not running")).toBeTruthy();
+  });
+
+  test("omits printer availability tags whose count is zero", async () => {
+    globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/status"
+      ? Promise.resolve(json({ virtual_printer: null, jobs_processed: 0 }))
+      : Promise.resolve(json({ printers: [] }))) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><OverviewPage /></AppDataProvider>);
+    const printers = await screen.findByRole("region", { name: "Printers" });
+    expect(await within(printers).findByText("0 configured")).toBeTruthy();
+    expect(within(printers).queryByText("0 connected")).toBeNull();
+    expect(within(printers).queryByText("0 unavailable")).toBeNull();
   });
 
   test("shows inventory loading and error states instead of zero counts without printer data", async () => {

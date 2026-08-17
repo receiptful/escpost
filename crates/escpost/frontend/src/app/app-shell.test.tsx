@@ -66,11 +66,11 @@ describe("App", () => {
     ).toHaveLength(5);
   });
 
-  test("exposes polite live connection status semantics for both responsive variants", async () => {
+  test("exposes polite live server status semantics for both responsive variants", async () => {
     renderAt("/app/jobs");
 
     await screen.findAllByText("Ready");
-    const statuses = screen.getAllByRole("status", { name: "Connection status" });
+    const statuses = screen.getAllByRole("status", { name: "Server status" });
     expect(statuses).toHaveLength(2);
     for (const status of statuses) {
       expect(status.getAttribute("aria-live")).toBe("polite");
@@ -82,10 +82,10 @@ describe("App", () => {
     expect(desktopStatus?.closest("aside")?.getAttribute("class")).toContain("lg:flex");
   });
 
-  test("keeps the mobile connection status in normal flow above content while only navigation is fixed", () => {
+  test("keeps the mobile server status in normal flow above content while only navigation is fixed", () => {
     const view = renderAt("/app/printers");
 
-    const statuses = screen.getAllByRole("status", { name: "Connection status" });
+    const statuses = screen.getAllByRole("status", { name: "Server status" });
     const mobileStatus = statuses.find((status) => status.closest("header"));
     expect(mobileStatus?.closest("header")?.getAttribute("class")).toContain("lg:hidden");
     expect(mobileStatus?.closest("header")?.nextElementSibling?.tagName).toBe("MAIN");
