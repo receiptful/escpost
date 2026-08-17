@@ -23,4 +23,4 @@ output=$(
 )
 
 test -d "$test_directory/.config"
-test "$output" = 'docker: compose run --rm cli printers list'
+test "$output" = 'docker: compose run --rm escpost printers list'

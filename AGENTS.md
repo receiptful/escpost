@@ -41,18 +41,18 @@ docker compose run --rm frontend-build
 just docker-web-dev
 ```
 
-The Rust build embeds `crates/escpost/frontend/dist/`. The `test` and `cli`
+The Rust build embeds `crates/escpost/frontend/dist/`. The `test` and `escpost`
 services build that bundle automatically. Do not commit `dist/` or
 `node_modules/`; commit `bun.lock`. Native Just recipes require Bun in addition
 to Rust and build the frontend before invoking Cargo.
 
 ### Running the CLI
 
-The `cli` service builds and runs the compiled binary, and maps USB devices plus
+The `escpost` service builds and runs the compiled binary, and maps USB devices plus
 a checkout-local config directory:
 
 ```bash
-docker compose run --rm cli render example-jobs/cafe-order-voucher.hex --output-dir .test-output/out
+docker compose run --rm escpost render example-jobs/cafe-order-voucher.hex --output-dir .test-output/out
 ```
 
 ## Golden images

@@ -236,7 +236,7 @@ system may change them after reconnection. A serial number is stored when
 available; without one, simultaneously connected devices with equal VID/PID
 cannot be distinguished reliably and are reported as ambiguous.
 
-The Docker Compose CLI service mounts the checkout-local `.config` directory at
+The Docker Compose `escpost` service mounts the checkout-local `.config` directory at
 the container user's normal ESCPost configuration path. This isolates
 configuration used by a checkout from an independently installed binary while
 keeping Docker-specific paths out of the Rust implementation. Commands and

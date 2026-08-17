@@ -26,7 +26,7 @@ docker-run *args:
 
 # Run the backend and Vite development server in Docker.
 docker-web-dev:
-    docker compose up cli frontend
+    docker compose up escpost frontend
 
 # --- Native (host Rust toolchain) ---
 

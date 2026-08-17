@@ -41,7 +41,7 @@ services:
       frontend-build:
         condition: service_completed_successfully
 
-  cli:
+  escpost:
     <<: *development-service
     depends_on:
       frontend-build:

@@ -10,4 +10,4 @@ cd "$project_directory"
 config_directory=${ESCPOST_CONFIG_HOST_DIR:-"$project_directory/.config"}
 mkdir -p "$config_directory"
 
-exec docker compose run --rm cli "$@"
+exec docker compose run --rm escpost "$@"

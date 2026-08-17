@@ -518,7 +518,7 @@ fn read_listen_ports_from(stderr: &mut impl BufRead) -> (u16, u16) {
 }
 
 fn send_raw_job(port: u16, bytes: &[u8]) {
-    // The CLI service uses host networking, so a loopback connection can be
+    // The escpost service uses host networking, so a loopback connection can be
     // refused transiently while the host is busy. Retry until a deadline.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
