@@ -37,6 +37,8 @@ services:
 
   test:
     <<: *development-service
+    profiles:
+      - tools
     depends_on:
       frontend-build:
         condition: service_completed_successfully
@@ -64,6 +66,24 @@ services:
       - -c
       - |
         set -eu
+        if [ "$${1:-}" = serve ] && [ "$${ESCPOST_WATCH:-1}" = 1 ]; then
+          exec watchexec \
+            --restart \
+            --watch /workspace/Cargo.toml \
+            --watch /workspace/Cargo.lock \
+            --watch /workspace/crates/escpost/Cargo.toml \
+            --watch /workspace/crates/escpost/build.rs \
+            --watch /workspace/crates/escpost/assets \
+            --watch /workspace/crates/escpost/src \
+            --watch /workspace/crates/escpost-profiles/Cargo.toml \
+            --watch /workspace/crates/escpost-profiles/profiles \
+            --watch /workspace/crates/escpost-profiles/src \
+            --watch /workspace/crates/escpost-render/Cargo.toml \
+            --watch /workspace/crates/escpost-render/assets \
+            --watch /workspace/crates/escpost-render/src \
+            -- \
+            cargo run --quiet --locked --package escpost -- "$$@"
+        fi
         cargo build --quiet --locked --package escpost
         exec "$${CARGO_TARGET_DIR}/debug/escpost" "$$@"
       - escpost

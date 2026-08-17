@@ -372,9 +372,14 @@ untracked. Release artifacts remain a single executable and require neither Bun
 nor external web assets at runtime.
 
 For development, Vite serves the frontend with hot reload and proxies `/api`
-requests to the running escpost server. `just docker-web-dev` is the canonical
-workflow; `just native-web-dev` provides the equivalent flow for hosts with
-Rust and Bun. Production and Rust test builds serve only embedded assets.
+requests to the running escpost server. `docker compose up` is the canonical
+Docker workflow: Vite updates the frontend in place, while Watchexec rebuilds
+and restarts the complete Rust process after backend changes. The frontend
+source tree is outside the Rust watch set. `./escpost serve` and
+`just docker-web-dev` alias this workflow; `just native-web-dev` provides the
+equivalent flow for hosts with Rust and Bun. Production builds and Rust tests
+serve only embedded assets; set `ESCPOST_WATCH=0` for a production-like Compose
+run.
 
 Automatic listeners will continue to bind to loopback. Explicit `--web-listen`
 addresses will remain supported; non-loopback bindings will retain the exposure

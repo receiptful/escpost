@@ -10,4 +10,8 @@ cd "$project_directory"
 config_directory=${ESCPOST_CONFIG_HOST_DIR:-"$project_directory/.config"}
 mkdir -p "$config_directory"
 
+if [ "$#" -eq 1 ] && [ "$1" = serve ]; then
+  exec docker compose up
+fi
+
 exec docker compose run --rm escpost "$@"

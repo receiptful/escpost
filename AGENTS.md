@@ -37,8 +37,8 @@ docker compose run --rm frontend bun test
 docker compose run --rm frontend bun run typecheck
 docker compose run --rm frontend-build
 
-# Axum backend plus Vite hot reload
-just docker-web-dev
+# Axum with restart-on-change plus Vite hot reload
+docker compose up
 ```
 
 The Rust build embeds `crates/escpost/frontend/dist/`. The `test` and `escpost`

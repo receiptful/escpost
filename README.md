@@ -114,10 +114,12 @@ The [`justfile`](justfile) wraps both workflows:
 | Build the CLI | `just docker-build` | `just native-build` |
 | Run the tests | `just docker-test` | `just native-test` |
 | Run the CLI | `just docker-run serve --no-open` | `just native-run serve` |
-| Run Axum and Vite | `just docker-web-dev` | `just native-web-dev` |
+| Run Axum and Vite | `docker compose up` | `just native-web-dev` |
 
-The development frontend runs at `http://127.0.0.1:5173/app/` with hot reload.
-The backend continues to serve the existing embedded viewer at
+`docker compose up` is the complete development stack. `./escpost serve` and
+`just docker-web-dev` are aliases for it. Backend source changes restart the
+Rust process; Vite serves the frontend at `http://127.0.0.1:5173/app/` with hot
+reload. The backend continues to serve the existing embedded viewer at
 `http://127.0.0.1:9000/`. The `/app/` workbench does not replace that viewer.
 It currently provides five read-only routes:
 
@@ -129,6 +131,9 @@ It currently provides five read-only routes:
 
 Jobs deliberately continues to link to the legacy viewer at `/`; a job
 inspector is the next workbench milestone.
+
+For a production-like run of the embedded frontend without development
+watchers, use `docker compose run --rm -e ESCPOST_WATCH=0 escpost serve`.
 
 Run `just --list` to see every recipe. Without `just`, each recipe is a short
 wrapper around `docker compose` or `cargo` and can be run directly. The native
