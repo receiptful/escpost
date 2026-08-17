@@ -25,6 +25,9 @@ export function OverviewPage() {
         <h1 id="overview-heading" class="mt-1 text-3xl font-bold">Overview</h1>
       </div>
       <div class="grid gap-4 md:grid-cols-3">
+        <SummaryCard label="Jobs processed">
+          <p class="mt-2 text-2xl font-bold">{status?.jobs_processed ?? "—"}</p>
+        </SummaryCard>
         <SummaryCard label="Printers">
           {inventory ? (
             <>
@@ -44,10 +47,6 @@ export function OverviewPage() {
         <SummaryCard label="Virtual printer">
           <p class="mt-2 text-2xl font-bold">{virtualState}</p>
           <p class="mt-2 text-base-content/70">{virtual?.address ?? "No virtual printer is running."}</p>
-        </SummaryCard>
-        <SummaryCard label="Jobs processed">
-          <p class="mt-2 text-2xl font-bold">{status?.jobs_processed ?? "—"}</p>
-          <p class="mt-2 text-base-content/70">Successful jobs in this server session.</p>
         </SummaryCard>
       </div>
     </section>
