@@ -18,6 +18,7 @@ use tokio::sync::RwLock;
 
 pub(crate) mod error;
 mod frontend;
+mod jobs;
 mod status;
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -518,6 +519,7 @@ pub(crate) async fn serve(
         .merge(crate::features::printers::http::router())
         .merge(crate::features::profiles::http::router())
         .merge(status::route())
+        .merge(jobs::router())
         .route("/", get(index))
         .route("/app", get(frontend::redirect))
         .route("/app/", get(frontend::index))

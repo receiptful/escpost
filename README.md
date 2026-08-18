@@ -120,17 +120,17 @@ The [`justfile`](justfile) wraps both workflows:
 `just docker-web-dev` are aliases for it. Backend source changes restart the
 Rust process; Vite serves the frontend at `http://127.0.0.1:5173/app/` with hot
 reload. The backend continues to serve the existing embedded viewer at
-`http://127.0.0.1:9000/`. The `/app/` workbench does not replace that viewer.
-It currently provides five read-only routes:
+`http://127.0.0.1:9000/`. The `/app/` workbench does not remove that viewer.
+It provides five read-only routes:
 
 - `/app/` — Overview
-- `/app/jobs` — Print jobs, with a link to the existing current-job viewer
+- `/app/jobs` — current print job, sheets, command trace, and annotations
 - `/app/printers` — configured printer inventory
 - `/app/profiles` — complete printer-profile catalog
 - `/app/calibration` — calibration guidance
 
-Jobs deliberately continues to link to the legacy viewer at `/`; a job
-inspector is the next workbench milestone.
+The viewer at `/` remains available as a behavioral reference while the Preact
+workbench gains the remaining operational features.
 
 For a production-like run of the embedded frontend without development
 watchers, use `docker compose run --rm -e ESCPOST_WATCH=0 escpost serve`.

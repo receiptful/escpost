@@ -1,4 +1,4 @@
-import type { ApiErrorEnvelope, PrintersResponse, ProfilesResponse, StatusResponse } from "./types";
+import type { ApiErrorEnvelope, CurrentJobResponse, PrintersResponse, ProfilesResponse, StatusResponse } from "./types";
 
 export class ApiRequestError extends Error {
   readonly kind = "api";
@@ -89,4 +89,8 @@ export function getPrinters(transport?: "usb" | "network", signal?: AbortSignal)
 
 export function getProfiles(signal?: AbortSignal) {
   return requestJson<ProfilesResponse>("/api/profiles/list", signal);
+}
+
+export function getCurrentJob(signal?: AbortSignal) {
+  return requestJson<CurrentJobResponse>("/api/jobs/current", signal);
 }

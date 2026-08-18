@@ -61,6 +61,14 @@ impl ApiError {
         )
     }
 
+    pub(crate) fn job_not_found() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+            "The requested print job is no longer available.",
+        )
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,

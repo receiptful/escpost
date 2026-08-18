@@ -67,3 +67,48 @@ export type Profile = {
 export type ProfilesResponse = {
   profiles: Profile[];
 };
+
+export type Position = { x: number; y: number };
+export type Region = { x: number; y: number; width: number; height: number };
+
+export type CommandEffect =
+  | { type: "state_change"; state: string; before: string; after: string }
+  | { type: "motion"; before: Position; after: Position }
+  | { type: "paint"; bounds: Region };
+
+export type JobCommand = {
+  byte_start: number;
+  byte_end: number;
+  name: string;
+  detail: string;
+  paint_lifecycle?: "buffered" | "committed";
+  annotation?: { label: string; content: string };
+  effects: CommandEffect[];
+};
+
+export type JobSheet = {
+  number: number;
+  name: string;
+  width_dots?: number;
+  height_dots?: number;
+  image_url?: string;
+  commands: JobCommand[];
+};
+
+export type CurrentJob = {
+  id: string;
+  completed_at_unix_ms?: number;
+  completion?: "closed" | "timeout";
+  antialias: boolean;
+  warnings: string[];
+  input_url?: string;
+  sheets: JobSheet[];
+};
+
+export type CurrentJobResponse = {
+  receiving: boolean;
+  profile: string;
+  error: string | null;
+  hint?: string;
+  job: CurrentJob | null;
+};

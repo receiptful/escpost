@@ -9,7 +9,9 @@ beforeEach(() => {
   globalThis.fetch = ((input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
     String(input) === "/api/status"
       ? { virtual_printer: null, jobs_processed: 0 }
-      : { printers: [] },
+      : String(input) === "/api/jobs/current"
+        ? { receiving: false, profile: "REFERENCE", error: null, job: null }
+        : { printers: [] },
   ), { headers: { "content-type": "application/json" } }))) as unknown as typeof globalThis.fetch;
 });
 
@@ -24,13 +26,12 @@ function renderAt(path: string) {
 }
 
 describe("App", () => {
-  test("shows the current job viewer from the Print jobs route", () => {
+  test("shows the current job workbench from the Print jobs route", async () => {
     renderAt("/app/jobs");
 
     expect(screen.getByRole("heading", { name: "Print jobs" })).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "Open current job viewer" }).getAttribute("href"),
-    ).toBe("/");
+    expect(await screen.findByText("Waiting for first job")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open current job viewer" })).toBeNull();
     expect(
       within(screen.getByRole("navigation", { name: "Workbench navigation" }))
         .getByRole("link", { name: "Print jobs" })

@@ -2,3 +2,114 @@
 @plugin "daisyui" {
   themes: light --default, dark --prefersdark;
 }
+
+.receipt-paper {
+  box-sizing: content-box;
+  padding: 24px 18px;
+  background: transparent;
+  color: black;
+}
+
+.receipt-paper > div {
+  background: white;
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%);
+}
+
+.receipt-paper-margin {
+  background: white;
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%);
+}
+
+.receipt-paper-margin > div {
+  box-shadow: none;
+}
+
+.receipt-paper-flash {
+  animation: receipt-paper-flash 650ms ease-out;
+}
+
+.receipt-pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.receipt-antialiased {
+  image-rendering: auto;
+}
+
+.trace-group {
+  --trace-color: oklch(55% 0 0);
+  --trace-fill: oklch(70% 0 0 / 28%);
+  cursor: pointer;
+  outline: none;
+}
+
+.trace-group.trace-previewed {
+  --trace-color: oklch(55% 0 0);
+  --trace-fill: oklch(70% 0 0 / 30%);
+}
+
+.trace-group.trace-pinned {
+  --trace-color: oklch(58% 0.2 250);
+  --trace-fill: oklch(70% 0.18 250 / 34%);
+}
+
+.trace-region {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.5;
+  pointer-events: all;
+}
+
+.trace-motion,
+.trace-label {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.trace-label {
+  --trace-label-font-size: 12px;
+}
+
+.trace-motion {
+  fill: none;
+  stroke: var(--trace-color);
+  stroke-width: 1.5;
+}
+
+.trace-motion-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+}
+
+.trace-label rect {
+  fill: white;
+  stroke: var(--trace-color);
+}
+
+.trace-label text {
+  fill: var(--trace-color);
+  font-family: var(--font-sans);
+  font-size: var(--trace-label-font-size);
+}
+
+.trace-label .trace-label-action {
+  font-weight: 700;
+}
+
+.trace-group:is(:hover, :focus-visible, .trace-previewed, .trace-pinned) .trace-region {
+  fill: var(--trace-fill);
+  stroke: var(--trace-color);
+}
+
+.trace-group:is(:hover, :focus-visible, .trace-previewed, .trace-pinned) :is(.trace-motion, .trace-label) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@keyframes receipt-paper-flash {
+  from { box-shadow: 0 0 0 0.4rem oklch(70% 0.17 160 / 45%); }
+  to { box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%); }
+}

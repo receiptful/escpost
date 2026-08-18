@@ -136,10 +136,11 @@ Rust HTTP integration tests exercise the embedded production bundle, including
 the `/app` redirect, direct navigation to every workbench route, navigation
 labels in the production bundle, asset MIME and cache headers, missing assets,
 and traversal rejection. They also cover the read-only `/api/status`,
-`/api/printers/list`, and `/api/profiles/list` contracts, while confirming that
-unknown API routes stay JSON rather than falling back to HTML. The existing
-viewer at `/` remains covered separately until the SPA reaches behavioral
-parity.
+`/api/printers/list`, `/api/profiles/list`, and current-job resource contracts,
+while confirming that unknown API routes stay JSON rather than falling back to
+HTML. Job-resource tests verify that a replaced job identifier cannot resolve
+to a newer job. The existing viewer at `/` remains covered separately as a
+behavioral reference during the SPA transition.
 
 ### Robustness tests
 

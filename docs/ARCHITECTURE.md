@@ -286,12 +286,12 @@ stable job identity and are not the target workbench API.
 
 ### Embedded web applications
 
-The existing latest-job viewer remains authoritative at `/`. A Preact and
-TypeScript workbench is available at `/app/`, with `preact-iso` client routing
-for Overview, Print jobs, Printers, Profiles, and Calibration. Its responsive
-shell uses semantic tables on wide screens and labeled cards on narrow screens.
-Jobs intentionally links to the legacy viewer while the next workbench
-milestone, a job inspector, is prepared.
+The existing latest-job viewer remains available at `/` as a behavioral
+reference. A Preact and TypeScript workbench is available at `/app/`, with
+`preact-iso` client routing for Overview, Print jobs, Printers, Profiles, and
+Calibration. Its responsive shell uses semantic tables on wide screens and
+labeled cards on narrow screens. Print jobs renders the current job directly;
+job history is a later capability.
 
 Feature-local HTTP adapters call the same application operations as the CLI.
 Read-only routes mirror CLI paths: `GET /api/printers/list` and
@@ -300,6 +300,15 @@ not a CLI operation. The shell polls status while mounted, retains successful
 printer and profile responses for the app session, and reports loading, empty,
 error, retry, and stale-data states without introducing client-side filters or
 search parameters.
+
+The current-job projection is `GET /api/jobs/current`. It reports reception and
+render status plus one optional immutable job document. That document contains
+ungrouped command/effect facts and job-scoped URLs for raw input and rendered
+sheets. The frontend groups adjacent commands and derives annotations because
+those are visualization decisions. `GET /api/jobs/{job_id}/input` and
+`GET /api/jobs/{job_id}/sheets/{sheet_number}` reject a stale job identifier;
+they never substitute resources from a newer job. All current-job resources
+use `Cache-Control: no-store`.
 
 Bun installs and tests frontend dependencies. Vite builds and serves the
 frontend. Tailwind CSS and DaisyUI provide styling primitives. Axum embeds the
@@ -358,10 +367,11 @@ invoke the `escpost` executable or call Clap handlers. HTTP-only infrastructure
 such as health checks and static assets will need no CLI equivalent. Operation,
 UI asset, and job-resource paths will remain distinct.
 
-Jobs will have stable identifiers. Raw bytes, rendered sheets, and other job
-resources will be addressed by job id, while a separate pointer identifies the
-current job. Retention will be bounded in both job count and bytes. Persistence
-is a later opt-in capability rather than a prerequisite for the workbench.
+Current jobs have process-scoped stable identifiers. Raw bytes and rendered
+sheets are addressed by job id, while `/api/jobs/current` identifies the latest
+complete job and reports concurrent reception separately. Historical retention
+will be bounded in both job count and bytes when job history is introduced.
+Persistence remains a later opt-in capability.
 
 The frontend toolchain and dependency graph are pinned by the Bun container
 image and lockfile. Vite emits content-hashed JavaScript and CSS assets. Docker

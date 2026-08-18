@@ -253,7 +253,14 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let mut child = start_case_web("single-sheet", port);
 
     wait_until_listening(&mut child, port);
-    let paths = ["/api/status", "/api/printers/list", "/api/profiles/list"];
+    let paths = [
+        "/api/status",
+        "/api/printers/list",
+        "/api/profiles/list",
+        "/api/jobs/current",
+        "/api/jobs/1/sheets/1",
+        "/api/jobs/1/input",
+    ];
     let responses: Vec<Vec<u8>> = ["POST", "PUT", "PATCH", "DELETE"]
         .into_iter()
         .flat_map(|method| {
@@ -477,6 +484,53 @@ fn web_mode_exposes_experimental_command_traces() {
 }
 
 #[test]
+fn current_job_api_exposes_ungrouped_trace_facts_and_stable_resources() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/jobs/current");
+    let current: serde_json::Value = serde_json::from_slice(response_body(&response))
+        .expect("the current job response should be JSON");
+    let image_url = current["job"]["sheets"][0]["image_url"]
+        .as_str()
+        .expect("a rendered sheet should have an image URL")
+        .to_owned();
+    let image = http_get_bytes(port, &image_url);
+    let missing = http_get_bytes(port, "/api/jobs/999/sheets/1");
+    let invalid_query = http_get_bytes(port, "/api/jobs/current?generation=1");
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 200 OK");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    assert_eq!(current["receiving"], false);
+    assert_eq!(current["profile"], "REFERENCE");
+    assert!(current["error"].is_null());
+    assert_eq!(current["job"]["id"], "1");
+    assert!(current["job"].get("input_url").is_none());
+    assert_eq!(current["job"]["sheets"][0]["number"], 1);
+    assert!(current["job"]["sheets"][0]["commands"].is_array());
+    assert_eq!(response_status(&image), "HTTP/1.1 200 OK");
+    assert_eq!(response_header(&image, "content-type"), Some("image/png"));
+    assert_eq!(response_header(&image, "cache-control"), Some("no-store"));
+    assert_eq!(&response_body(&image)[..8], b"\x89PNG\r\n\x1a\n");
+
+    assert_eq!(response_status(&missing), "HTTP/1.1 404 Not Found");
+    assert_eq!(response_header(&missing, "cache-control"), Some("no-store"));
+    let missing: serde_json::Value =
+        serde_json::from_slice(response_body(&missing)).expect("missing jobs should return JSON");
+    assert_eq!(missing["error"]["code"], "job_not_found");
+
+    assert_eq!(response_status(&invalid_query), "HTTP/1.1 400 Bad Request");
+    let invalid_query: serde_json::Value = serde_json::from_slice(response_body(&invalid_query))
+        .expect("invalid job queries should return JSON");
+    assert_eq!(invalid_query["error"]["code"], "invalid_query");
+}
+
+#[test]
 fn web_mode_lists_buffered_text_without_fabricating_a_sheet_image() {
     let temporary_directory = temporary_directory("buffered-command-trace");
     let input_path = temporary_directory.join("receipt.bin");
@@ -654,13 +708,27 @@ fn watch_mode_replaces_the_render_after_the_source_changes() {
         .expect("the escpost command should start");
 
     wait_until_listening(&mut child, port);
+    let current_before = http_get_bytes(port, "/api/jobs/current");
+    let current_before: serde_json::Value = serde_json::from_slice(response_body(&current_before))
+        .expect("the current job should be JSON");
+    let previous_job_id = current_before["job"]["id"]
+        .as_str()
+        .expect("the current job should have an id")
+        .to_owned();
+    let previous_image_url = current_before["job"]["sheets"][0]["image_url"]
+        .as_str()
+        .expect("the current job should have an image URL")
+        .to_owned();
     let before = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
     fs::write(&input_path, b"After\n").expect("the changed input should be writable");
     let deadline = Instant::now() + Duration::from_secs(5);
-    let after = loop {
+    let (after, current_after) = loop {
         let candidate = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
-        if candidate != before {
-            break candidate;
+        let current_response = http_get_bytes(port, "/api/jobs/current");
+        let current: serde_json::Value = serde_json::from_slice(response_body(&current_response))
+            .expect("the current job should remain JSON");
+        if candidate != before && current["job"]["id"] != previous_job_id {
+            break (candidate, current);
         }
         assert!(
             Instant::now() < deadline,
@@ -668,9 +736,24 @@ fn watch_mode_replaces_the_render_after_the_source_changes() {
         );
         thread::sleep(Duration::from_millis(50));
     };
+    let replaced_resource = http_get_bytes(port, &previous_image_url);
+    let current_image_url = current_after["job"]["sheets"][0]["image_url"]
+        .as_str()
+        .expect("the replacement job should have an image URL");
+    let current_image = http_get_bytes(port, current_image_url);
     stop(&mut child);
 
     assert_eq!(&after[..8], b"\x89PNG\r\n\x1a\n");
+    assert_ne!(current_after["job"]["id"], previous_job_id);
+    assert_eq!(
+        response_status(&replaced_resource),
+        "HTTP/1.1 404 Not Found"
+    );
+    let replaced_resource: serde_json::Value =
+        serde_json::from_slice(response_body(&replaced_resource))
+            .expect("a replaced job resource should return JSON");
+    assert_eq!(replaced_resource["error"]["code"], "job_not_found");
+    assert_eq!(&response_body(&current_image)[..8], b"\x89PNG\r\n\x1a\n");
     fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");
 }
 
@@ -944,20 +1027,25 @@ fn response_body(response: &[u8]) -> &[u8] {
 }
 
 fn response_status(response: &[u8]) -> &str {
-    let response = std::str::from_utf8(response).expect("HTTP response should be UTF-8");
-    response
+    response_head(response)
         .lines()
         .next()
         .expect("HTTP response should have a status line")
 }
 
 fn response_header<'a>(response: &'a [u8], requested: &str) -> Option<&'a str> {
-    let response = std::str::from_utf8(response).ok()?;
-    let head = response.split_once("\r\n\r\n")?.0;
-    head.lines().skip(1).find_map(|line| {
+    response_head(response).lines().skip(1).find_map(|line| {
         let (name, value) = line.split_once(": ")?;
         name.eq_ignore_ascii_case(requested).then_some(value)
     })
+}
+
+fn response_head(response: &[u8]) -> &str {
+    let boundary = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("the HTTP response should contain a header boundary");
+    std::str::from_utf8(&response[..boundary]).expect("HTTP headers should be UTF-8")
 }
 
 fn referenced_asset(html: &str, extension: &str) -> String {

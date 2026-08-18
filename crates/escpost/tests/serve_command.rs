@@ -83,6 +83,14 @@ fn serve_captures_a_raw_job_and_previews_its_sheets() {
     wait_until_listening(&mut child, raw_port);
     wait_until_listening(&mut child, web_port);
 
+    let waiting_response = http_get_bytes(web_port, "/api/jobs/current");
+    let waiting: serde_json::Value = serde_json::from_slice(response_body(&waiting_response))
+        .expect("the waiting job response should be JSON");
+    assert_eq!(waiting["job"], serde_json::Value::Null);
+    assert_eq!(waiting["receiving"], false);
+    assert_eq!(waiting["profile"], "REFERENCE");
+    assert!(waiting["hint"].as_str().is_some());
+
     // A RAW/AppSocket client sends one job and closes the connection, which is
     // the default end-of-job boundary.
     send_raw_job(raw_port, b"Captured over RAW\n");
@@ -196,10 +204,20 @@ fn serve_offers_the_captured_raw_input_for_download() {
     let metadata = wait_for_first_job(web_port);
     assert_eq!(metadata["input_available"], true);
 
-    let response = http_get_bytes(web_port, "/job");
+    let current_response = http_get_bytes(web_port, "/api/jobs/current");
+    let current: serde_json::Value = serde_json::from_slice(response_body(&current_response))
+        .expect("the current job response should be JSON");
+    let input_url = current["job"]["input_url"]
+        .as_str()
+        .expect("captured input should have a stable download URL");
+    let response = http_get_bytes(web_port, input_url);
     stop(&mut child);
 
     assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
     assert!(
         String::from_utf8_lossy(&response)
             .to_ascii_lowercase()
