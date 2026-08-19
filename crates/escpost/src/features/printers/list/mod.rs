@@ -16,6 +16,10 @@ use super::{Availability, Transport};
 pub(crate) mod cli;
 
 const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long to wait before confirming a failed probe. RAW TCP is frequently
+/// single-session, so a printer busy with a job refuses one connection while
+/// being perfectly healthy; only a second refusal means unavailable.
+const PROBE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Request {
@@ -211,19 +215,33 @@ fn structured_printers(
     printers
 }
 
+async fn probe_once(host: &str, port: u16, probe_timeout: Duration) -> bool {
+    timeout(probe_timeout, TcpStream::connect((host, port)))
+        .await
+        .is_ok_and(|result| result.is_ok())
+}
+
+/// Probes once, and if that fails, waits `retry_delay` and probes again
+/// before declaring the printer unavailable. See `PROBE_RETRY_DELAY` for why
+/// a single refusal is not conclusive for RAW TCP printers.
+async fn probe_with_confirmation(host: &str, port: u16, retry_delay: Duration) -> bool {
+    if probe_once(host, port, NETWORK_PROBE_TIMEOUT).await {
+        return true;
+    }
+    tokio::time::sleep(retry_delay).await;
+    probe_once(host, port, NETWORK_PROBE_TIMEOUT).await
+}
+
 async fn probe_network_printers(configuration: &PrinterConfiguration) -> Vec<bool> {
     let mut probes = JoinSet::new();
     for (index, printer) in configuration.network_printers().iter().enumerate() {
         let host = printer.host.clone();
         let port = printer.port;
         probes.spawn(async move {
-            let connected = timeout(
-                NETWORK_PROBE_TIMEOUT,
-                TcpStream::connect((host.as_str(), port)),
+            (
+                index,
+                probe_with_confirmation(&host, port, PROBE_RETRY_DELAY).await,
             )
-            .await
-            .is_ok_and(|result| result.is_ok());
-            (index, connected)
         });
     }
     let mut statuses = vec![false; configuration.network_printers().len()];
@@ -465,5 +483,46 @@ port = 9100
         assert_eq!(usb.printers.len(), 1);
         assert_eq!(usb.printers[0].name, "counter");
         assert_eq!(usb.printers[0].transport, Transport::Usb);
+    }
+
+    #[tokio::test]
+    async fn a_printer_that_answers_only_on_the_second_attempt_is_connected() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a loopback listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener has an address")
+            .port();
+        drop(listener);
+
+        // First probe fails: nothing is listening yet. The listener opens during
+        // the retry delay, so the confirming probe succeeds.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+                .await
+                .expect("the port should be free");
+            let _ = listener.accept().await;
+        });
+
+        let connected =
+            probe_with_confirmation("127.0.0.1", port, Duration::from_millis(400)).await;
+
+        assert!(connected);
+    }
+
+    #[tokio::test]
+    async fn a_printer_that_never_answers_is_unavailable() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener has an address")
+            .port();
+        drop(listener);
+
+        let connected = probe_with_confirmation("127.0.0.1", port, Duration::from_millis(50)).await;
+
+        assert!(!connected);
     }
 }
