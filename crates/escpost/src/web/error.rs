@@ -45,6 +45,14 @@ impl ApiError {
         )
     }
 
+    pub(crate) fn network_detection_failure() -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "network_detection_unavailable",
+            "The machine's network interfaces could not be read.",
+        )
+    }
+
     pub(crate) fn not_found() -> Self {
         Self::new(
             StatusCode::NOT_FOUND,

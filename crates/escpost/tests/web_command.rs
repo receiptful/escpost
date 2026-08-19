@@ -248,6 +248,27 @@ profile = "REFERENCE"
 }
 
 #[test]
+fn discovery_networks_lists_detected_and_skipped_adapters() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/printers/discover/networks");
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 200 OK");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    let body = String::from_utf8_lossy(response_body(&response));
+    assert!(body.contains("\"networks\":"));
+    assert!(body.contains("\"skipped\":"));
+    assert!(body.contains("\"default_port\":9100"));
+    assert!(body.contains("\"default_timeout_ms\":1000"));
+}
+
+#[test]
 fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
@@ -256,6 +277,7 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let paths = [
         "/api/status",
         "/api/printers/list",
+        "/api/printers/discover/networks",
         "/api/profiles/list",
         "/api/jobs/current",
         "/api/jobs/1/sheets/1",

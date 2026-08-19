@@ -16,6 +16,7 @@ use super::inventory::{
 };
 
 pub(crate) mod cli;
+pub(crate) mod http;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DiscoveryScope {

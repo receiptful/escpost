@@ -12,10 +12,12 @@ use super::list::{self, ConnectionFacts, Printer};
 use super::{Availability, Transport};
 
 pub(crate) fn router() -> Router<WebState> {
-    Router::new().route(
-        "/api/printers/list",
-        get(list_printers).fallback(crate::web::error::method_not_allowed),
-    )
+    Router::new()
+        .route(
+            "/api/printers/list",
+            get(list_printers).fallback(crate::web::error::method_not_allowed),
+        )
+        .merge(super::discover::http::router())
 }
 
 #[derive(Deserialize)]
