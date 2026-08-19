@@ -107,6 +107,11 @@ pub(crate) enum DiscoveryEvent<'a> {
     UsbPrinter(&'a UsbDiscovery),
     #[allow(dead_code)]
     UsbFailure(&'a UsbEnumerationFailure),
+    /// One classified network host, fired as `discovery::scan` finds it.
+    /// `discovery::ScanEvent::Found` fires at most once per address even
+    /// when scan targets overlap (see its own doc comment), so this fires
+    /// at most once per host too: the set of hosts announced this way
+    /// equals the set in the final `Response.network_printers`.
     #[allow(dead_code)]
     NetworkPrinter(&'a NetworkDiscovery),
     NetworkScanProgress {
@@ -487,6 +492,57 @@ mod tests {
             emitted_network.len(),
             1,
             "the loopback listener should be found"
+        );
+    }
+
+    #[tokio::test]
+    async fn overlapping_subnets_still_emit_exactly_one_network_printer_event() {
+        // Two --subnet values that both cover 127.0.0.2 (mirroring
+        // `printers discover --subnet 10.0.0.0/25 --subnet 10.0.0.0/24`):
+        // 127.0.0.2/32 names it directly, and 127.0.0.0/30 also covers it
+        // (its other host address, 127.0.0.1, is this machine's own and
+        // gets self-excluded). A streaming consumer must not see the same
+        // printer twice just because two targets both happened to probe it.
+        let configuration = temporary_configuration("discover-overlap", "");
+        let (_listener, port) = loopback_listener([127, 0, 0, 2]);
+        let scan = NetworkScan::new(
+            port,
+            vec![
+                Subnet::parse("127.0.0.2/32").expect("valid subnet"),
+                Subnet::parse("127.0.0.0/30").expect("valid subnet"),
+            ],
+            Duration::from_millis(200),
+        )
+        .expect("the overlapping network scan should be valid");
+        let prepared = prepare(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::Network(scan),
+        )
+        .expect("network discovery should prepare");
+        let mut inventory = TolerantInventory { enumeration: None };
+        let mut emitted_network = Vec::new();
+
+        let response = execute(
+            prepared,
+            |event| {
+                if let DiscoveryEvent::NetworkPrinter(printer) = event {
+                    emitted_network.push(printer.clone());
+                }
+            },
+            &mut inventory,
+        )
+        .await
+        .expect("overlapping discovery should finish");
+
+        assert_eq!(
+            emitted_network.len(),
+            1,
+            "one host answering through two overlapping targets must still fire one event: \
+             {emitted_network:?}"
+        );
+        assert_eq!(
+            emitted_network, response.network_printers,
+            "the streamed set must equal the final Response's set"
         );
     }
 

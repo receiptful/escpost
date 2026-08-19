@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -281,6 +282,12 @@ pub(crate) enum ScanEvent<'a> {
     },
     /// A host accepted a connection. Reported as it happens so a caller can
     /// show results before the sweep finishes.
+    ///
+    /// Fired at most once per address, even when overlapping `ScanTarget`s
+    /// probe the same host twice: the set of addresses this reports equals
+    /// the set in `scan`'s returned `Vec<DiscoveredHost>`. A streaming
+    /// consumer and a caller that only reads the return value must see the
+    /// same discovered hosts.
     Found(&'a DiscoveredHost),
 }
 
@@ -290,13 +297,15 @@ pub(crate) enum ScanEvent<'a> {
 /// case for a sweep and are silently skipped.
 ///
 /// `on_event` receives `Progress { completed: 0, total }` once up front
-/// before any probe is spawned, a `Found` for each host that accepts a
-/// connection as it happens, and a `Progress` after every probe completes
-/// (found or not), ending with `Progress { completed: total, total }`.
-/// `total` is the number of probes actually spawned (every target host minus
-/// its target's excluded address), so a caller building a progress bar can
-/// size it exactly. This module stays free of any UI concern beyond that
-/// callback; rendering from it is the caller's job.
+/// before any probe is spawned, a `Found` for each newly discovered address
+/// as it happens (see `ScanEvent::Found` for the one-event-per-address
+/// guarantee this keeps even when targets overlap), and a `Progress` after
+/// every probe completes (found or not), ending with
+/// `Progress { completed: total, total }`. `total` is the number of probes
+/// actually spawned (every target host minus its target's excluded
+/// address), so a caller building a progress bar can size it exactly. This
+/// module stays free of any UI concern beyond that callback; rendering from
+/// it is the caller's job.
 pub(crate) async fn scan(
     targets: &[ScanTarget],
     port: u16,
@@ -339,9 +348,16 @@ pub(crate) async fn scan(
 
     let mut done = 0u64;
     let mut hosts = Vec::new();
+    // Overlapping explicit --subnet values may probe one address twice;
+    // `announced` keeps `Found` to one event per address so a streaming
+    // consumer sees exactly what the deduped return value below reports.
+    // Bounded by hosts that actually answered, not by probes spawned.
+    let mut announced = HashSet::new();
     while let Some(result) = probes.join_next().await {
         if let Ok(Some(host)) = result {
-            on_event(ScanEvent::Found(&host));
+            if announced.insert(host.address) {
+                on_event(ScanEvent::Found(&host));
+            }
             hosts.push(host);
         }
         done += 1;
@@ -350,7 +366,7 @@ pub(crate) async fn scan(
             total,
         });
     }
-    // Overlapping explicit --subnet values may find one address twice.
+    // The returned ordering is what the CLI renders and must not change.
     hosts.sort_by_key(|host| u32::from(host.address));
     hosts.dedup_by_key(|host| host.address);
     hosts
@@ -737,6 +753,51 @@ mod tests {
                 interface: Some("lo".to_owned()),
             }],
             "a Found event should carry the discovered host as soon as it answers"
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_reports_a_found_event_at_most_once_per_address_even_with_overlapping_targets() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("an ephemeral loopback port should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener should report its address")
+            .port();
+        // Two targets both covering 127.0.0.1: overlapping explicit
+        // --subnet values (e.g. 10.0.0.0/25 and 10.0.0.0/24) probe such a
+        // host twice, once per target, so this reproduces that at scan()'s
+        // level rather than relying on real overlapping subnets.
+        let target = ScanTarget {
+            subnet: Subnet::parse("127.0.0.1/32").expect("a valid CIDR should parse"),
+            interface: Some("lo".to_owned()),
+            excluded: Vec::new(),
+        };
+        let targets = vec![target.clone(), target];
+
+        let mut found = Vec::new();
+        let hosts = scan(&targets, port, Duration::from_secs(1), |event| {
+            if let ScanEvent::Found(host) = event {
+                found.push(host.clone());
+            }
+        })
+        .await;
+
+        assert_eq!(
+            found.len(),
+            1,
+            "one address answering twice must still fire Found once: {found:?}"
+        );
+        assert_eq!(
+            found
+                .into_iter()
+                .map(|host| host.address)
+                .collect::<Vec<_>>(),
+            hosts
+                .into_iter()
+                .map(|host| host.address)
+                .collect::<Vec<_>>(),
+            "the addresses announced through Found must equal the deduped return value"
         );
     }
 
