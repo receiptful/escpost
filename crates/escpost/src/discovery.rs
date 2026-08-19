@@ -57,9 +57,6 @@ impl Subnet {
 
     /// Whether this subnet covers an address, used to exclude the scanning
     /// host's own addresses from any target that contains them.
-    // Not yet called outside tests: the caller that filters explicit scan
-    // targets down to their containing subnet lands in the next change.
-    #[allow(dead_code)]
     pub(crate) fn contains(&self, address: Ipv4Addr) -> bool {
         u32::from(address) & prefix_mask(self.prefix) == u32::from(self.network)
     }
@@ -155,10 +152,13 @@ pub(crate) fn probe_count(targets: &[ScanTarget]) -> u64 {
         .sum()
 }
 
-pub(crate) fn local_scan_targets() -> application::Result<Vec<ScanTarget>> {
+/// Every IPv4 address this machine holds, loopback included. Both target
+/// builders need it: automatic detection to find subnets, explicit subnets to
+/// find what must not be probed.
+pub(crate) fn local_interface_addresses() -> application::Result<Vec<InterfaceAddress>> {
     let interfaces =
         if_addrs::get_if_addrs().map_err(ApplicationError::EnumerateNetworkInterfaces)?;
-    let addresses = interfaces
+    Ok(interfaces
         .into_iter()
         .filter_map(|interface| match interface.addr {
             if_addrs::IfAddr::V4(v4) => Some(InterfaceAddress {
@@ -168,8 +168,30 @@ pub(crate) fn local_scan_targets() -> application::Result<Vec<ScanTarget>> {
             }),
             if_addrs::IfAddr::V6(_) => None,
         })
-        .collect();
-    Ok(auto_scan_targets(addresses))
+        .collect())
+}
+
+/// Targets for subnets the developer named. A named subnet the machine sits on
+/// is treated exactly like an automatically detected one: same interface label,
+/// same self-exclusion. A subnet elsewhere gets neither.
+pub(crate) fn explicit_scan_targets(
+    subnets: &[Subnet],
+    addresses: &[InterfaceAddress],
+) -> Vec<ScanTarget> {
+    subnets
+        .iter()
+        .map(|subnet| {
+            let local = addresses
+                .iter()
+                .filter(|interface| subnet.contains(interface.address))
+                .collect::<Vec<_>>();
+            ScanTarget {
+                subnet: *subnet,
+                interface: local.first().map(|interface| interface.name.clone()),
+                excluded: local.iter().map(|interface| interface.address).collect(),
+            }
+        })
+        .collect()
 }
 
 /// A bound on simultaneous connection attempts, well below typical file
@@ -254,7 +276,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DiscoveredHost, InterfaceAddress, ScanTarget, Subnet, auto_scan_targets, probe_count, scan,
+        DiscoveredHost, InterfaceAddress, ScanTarget, Subnet, auto_scan_targets,
+        explicit_scan_targets, probe_count, scan,
     };
 
     #[test]
@@ -402,6 +425,50 @@ mod tests {
         }];
 
         assert_eq!(probe_count(&targets), 252);
+    }
+
+    #[test]
+    fn an_explicit_subnet_takes_the_label_and_exclusions_of_a_matching_adapter() {
+        let addresses = vec![InterfaceAddress {
+            name: "enx0".to_owned(),
+            address: Ipv4Addr::new(10, 42, 0, 71),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+        }];
+        let subnets = vec![Subnet::parse("10.42.0.0/24").expect("a valid CIDR should parse")];
+
+        let targets = explicit_scan_targets(&subnets, &addresses);
+
+        assert_eq!(targets[0].interface.as_deref(), Some("enx0"));
+        assert_eq!(targets[0].excluded, vec![Ipv4Addr::new(10, 42, 0, 71)]);
+    }
+
+    #[test]
+    fn an_explicit_subnet_this_machine_is_not_on_has_no_label_and_no_exclusions() {
+        let addresses = vec![InterfaceAddress {
+            name: "enx0".to_owned(),
+            address: Ipv4Addr::new(10, 42, 0, 71),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+        }];
+        let subnets = vec![Subnet::parse("10.9.0.0/24").expect("a valid CIDR should parse")];
+
+        let targets = explicit_scan_targets(&subnets, &addresses);
+
+        assert_eq!(targets[0].interface, None);
+        assert!(targets[0].excluded.is_empty());
+    }
+
+    #[test]
+    fn an_explicit_loopback_subnet_still_excludes_the_loopback_address() {
+        let addresses = vec![InterfaceAddress {
+            name: "lo".to_owned(),
+            address: Ipv4Addr::new(127, 0, 0, 1),
+            netmask: Ipv4Addr::new(255, 0, 0, 0),
+        }];
+        let subnets = vec![Subnet::parse("127.0.0.0/24").expect("a valid CIDR should parse")];
+
+        let targets = explicit_scan_targets(&subnets, &addresses);
+
+        assert_eq!(targets[0].excluded, vec![Ipv4Addr::new(127, 0, 0, 1)]);
     }
 
     #[tokio::test]

@@ -1433,7 +1433,11 @@ out_endpoint = "0x01"
 
     #[tokio::test]
     async fn add_discovery_uses_shared_correlation_before_concrete_add() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port should bind");
+        // 127.0.0.2 rather than 127.0.0.1: the whole 127.0.0.0/8 block routes
+        // to loopback, but only 127.0.0.1 is the machine's own address, so an
+        // explicit /32 on 127.0.0.2 is not self-excluded and this stand-in
+        // "printer" stays discoverable.
+        let listener = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
         let port = listener
             .local_addr()
             .expect("the listener should have an address")
@@ -1442,7 +1446,7 @@ out_endpoint = "0x01"
         let config = directory.join("printers.toml");
         fs::write(
             &config,
-            format!("[existing]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = {port}\n"),
+            format!("[existing]\ntransport = \"network\"\nhost = \"127.0.0.2\"\nport = {port}\n"),
         )
         .expect("the existing configuration should be writable");
         let mut arguments = AddPrinterArgs {
@@ -1455,7 +1459,7 @@ out_endpoint = "0x01"
             serial: None,
             profile: None,
             discover: true,
-            subnet: vec![Subnet::parse("127.0.0.1/32").expect("valid subnet")],
+            subnet: vec![Subnet::parse("127.0.0.2/32").expect("valid subnet")],
             timeout: Some(50),
         };
 

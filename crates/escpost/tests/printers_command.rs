@@ -1019,7 +1019,11 @@ fn printers_discover_documents_its_options() {
 #[cfg(unix)]
 #[test]
 fn printers_discover_finds_a_listening_loopback_printer() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port should bind");
+    // 127.0.0.2 rather than 127.0.0.1: the whole 127.0.0.0/8 block routes to
+    // loopback, but only 127.0.0.1 is this machine's own address, so an
+    // explicit /32 on 127.0.0.2 is not self-excluded and this stand-in
+    // "printer" stays discoverable.
+    let listener = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
     let port = listener
         .local_addr()
         .expect("the listener should report its address")
@@ -1035,7 +1039,7 @@ fn printers_discover_finds_a_listening_loopback_printer() {
             "--transport",
             "network",
             "--subnet",
-            "127.0.0.1/32",
+            "127.0.0.2/32",
             "--port",
             &port.to_string(),
         ])
@@ -1045,14 +1049,14 @@ fn printers_discover_finds_a_listening_loopback_printer() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "command failed:\n{stdout}");
-    assert!(stdout.contains(&format!("[1] 127.0.0.1:{port}")));
+    assert!(stdout.contains(&format!("[1] 127.0.0.2:{port}")));
     assert!(stdout.contains("status: new"));
     assert!(
         stderr.contains(&format!("Scanning 1 network on port {port}:")),
         "stderr should announce the scanned network count:\n{stderr}"
     );
     assert!(
-        stderr.contains("  - 127.0.0.1/32"),
+        stderr.contains("  - 127.0.0.2/32"),
         "stderr should list the scanned network:\n{stderr}"
     );
     assert!(
@@ -1166,7 +1170,11 @@ fn printers_discover_validates_zero_port_before_reading_configuration() {
 #[cfg(unix)]
 #[test]
 fn printers_add_discover_registers_the_single_discovered_printer() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port should bind");
+    // 127.0.0.2 rather than 127.0.0.1: the whole 127.0.0.0/8 block routes to
+    // loopback, but only 127.0.0.1 is this machine's own address, so an
+    // explicit /32 on 127.0.0.2 is not self-excluded and this stand-in
+    // "printer" stays discoverable.
+    let listener = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
     let port = listener
         .local_addr()
         .expect("the listener should report its address")
@@ -1182,7 +1190,7 @@ fn printers_add_discover_registers_the_single_discovered_printer() {
             "network",
             "--discover",
             "--subnet",
-            "127.0.0.1/32",
+            "127.0.0.2/32",
             "--port",
             &port.to_string(),
         ],
@@ -1197,7 +1205,7 @@ fn printers_add_discover_registers_the_single_discovered_printer() {
         .as_table()
         .expect("the configured printer should be a table");
     assert_eq!(printer["transport"].as_str(), Some("network"));
-    assert_eq!(printer["host"].as_str(), Some("127.0.0.1"));
+    assert_eq!(printer["host"].as_str(), Some("127.0.0.2"));
     assert_eq!(printer["port"].as_integer(), Some(i64::from(port)));
     fs::remove_dir_all(directory).expect("the test directory should be removable");
 }

@@ -251,21 +251,15 @@ fn response_from_prepared(
 }
 
 pub(crate) fn discovery_targets(subnets: &[Subnet]) -> application::Result<Vec<ScanTarget>> {
+    let addresses = discovery::local_interface_addresses()?;
     if subnets.is_empty() {
-        let targets = discovery::local_scan_targets()?;
+        let targets = discovery::auto_scan_targets(addresses);
         if targets.is_empty() {
             return Err(ApplicationError::NoDiscoverableSubnets);
         }
         return Ok(targets);
     }
-    Ok(subnets
-        .iter()
-        .map(|subnet| ScanTarget {
-            subnet: *subnet,
-            interface: None,
-            excluded: Vec::new(),
-        })
-        .collect())
+    Ok(discovery::explicit_scan_targets(subnets, &addresses))
 }
 
 fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost) -> Vec<String> {
