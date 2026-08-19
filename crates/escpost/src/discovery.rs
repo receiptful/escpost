@@ -108,18 +108,48 @@ pub(crate) struct ScanTarget {
     pub(crate) excluded: Vec<Ipv4Addr>,
 }
 
-/// The connected subnets an automatic scan sweeps: non-loopback, contiguous
-/// netmask, no larger than /24, first interface wins on duplicates.
-pub(crate) fn auto_scan_targets(addresses: Vec<InterfaceAddress>) -> Vec<ScanTarget> {
+/// Why an adapter is not swept automatically. Reported rather than dropped:
+/// silence here reads as "this machine has no networks".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SkipReason {
+    /// Larger than `AUTO_SCAN_MINIMUM_PREFIX` allows.
+    TooLarge,
+    /// A non-contiguous netmask cannot name a CIDR subnet.
+    UnusableNetmask,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SkippedInterface {
+    pub(crate) name: String,
+    pub(crate) subnet: Option<Subnet>,
+    pub(crate) reason: SkipReason,
+}
+
+/// Automatic detection with its omissions kept. Loopback is not reported: it is
+/// never a candidate, so naming it would be noise.
+pub(crate) fn detect_networks(
+    addresses: Vec<InterfaceAddress>,
+) -> (Vec<ScanTarget>, Vec<SkippedInterface>) {
     let mut targets: Vec<ScanTarget> = Vec::new();
+    let mut skipped = Vec::new();
     for interface in addresses {
         if interface.address.is_loopback() {
             continue;
         }
         let Some(subnet) = Subnet::from_interface(interface.address, interface.netmask) else {
+            skipped.push(SkippedInterface {
+                name: interface.name,
+                subnet: None,
+                reason: SkipReason::UnusableNetmask,
+            });
             continue;
         };
         if subnet.prefix() < AUTO_SCAN_MINIMUM_PREFIX {
+            skipped.push(SkippedInterface {
+                name: interface.name,
+                subnet: Some(subnet),
+                reason: SkipReason::TooLarge,
+            });
             continue;
         }
         match targets.iter_mut().find(|target| target.subnet == subnet) {
@@ -133,11 +163,11 @@ pub(crate) fn auto_scan_targets(addresses: Vec<InterfaceAddress>) -> Vec<ScanTar
             }),
         }
     }
-    targets
+    (targets, skipped)
 }
 
 /// How many addresses a scan of these targets will probe. Both the progress
-/// bar and the pre-scan announcements are sized from this.
+/// bar and the pre-scan announcement are sized from this.
 pub(crate) fn probe_count(targets: &[ScanTarget]) -> u64 {
     targets
         .iter()
@@ -276,7 +306,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DiscoveredHost, InterfaceAddress, ScanTarget, Subnet, auto_scan_targets,
+        DiscoveredHost, InterfaceAddress, ScanTarget, SkipReason, Subnet, detect_networks,
         explicit_scan_targets, probe_count, scan,
     };
 
@@ -360,8 +390,8 @@ mod tests {
 
     #[test]
     fn auto_targets_keep_small_connected_subnets_and_remember_the_interface() {
-        let targets =
-            auto_scan_targets(vec![interface("enx0", [10, 42, 0, 1], [255, 255, 255, 0])]);
+        let (targets, skipped) =
+            detect_networks(vec![interface("enx0", [10, 42, 0, 1], [255, 255, 255, 0])]);
 
         assert_eq!(
             targets,
@@ -371,21 +401,25 @@ mod tests {
                 excluded: vec![Ipv4Addr::new(10, 42, 0, 1)],
             }]
         );
+        assert!(skipped.is_empty());
     }
 
     #[test]
     fn auto_targets_skip_loopback_and_networks_larger_than_a_24() {
-        let targets = auto_scan_targets(vec![
+        let (targets, skipped) = detect_networks(vec![
             interface("lo", [127, 0, 0, 1], [255, 0, 0, 0]),
             interface("docker0", [172, 17, 0, 1], [255, 255, 0, 0]),
         ]);
 
         assert!(targets.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "docker0");
+        assert_eq!(skipped[0].reason, SkipReason::TooLarge);
     }
 
     #[test]
     fn auto_targets_deduplicate_identical_subnets() {
-        let targets = auto_scan_targets(vec![
+        let (targets, _) = detect_networks(vec![
             interface("eth0", [10, 42, 0, 1], [255, 255, 255, 0]),
             interface("eth0:1", [10, 42, 0, 2], [255, 255, 255, 0]),
         ]);
@@ -396,7 +430,7 @@ mod tests {
 
     #[test]
     fn automatic_targets_exclude_every_local_address_of_one_subnet() {
-        let targets = auto_scan_targets(vec![
+        let (targets, _) = detect_networks(vec![
             InterfaceAddress {
                 name: "enx0".to_owned(),
                 address: Ipv4Addr::new(10, 42, 0, 71),
@@ -414,6 +448,57 @@ mod tests {
             targets[0].excluded,
             vec![Ipv4Addr::new(10, 42, 0, 71), Ipv4Addr::new(10, 42, 0, 72)]
         );
+    }
+
+    #[test]
+    fn detection_reports_an_adapter_whose_subnet_is_too_large_to_sweep() {
+        let (targets, skipped) = detect_networks(vec![
+            InterfaceAddress {
+                name: "enx0".to_owned(),
+                address: Ipv4Addr::new(10, 42, 0, 71),
+                netmask: Ipv4Addr::new(255, 255, 255, 0),
+            },
+            InterfaceAddress {
+                name: "enp5s0".to_owned(),
+                address: Ipv4Addr::new(10, 0, 0, 5),
+                netmask: Ipv4Addr::new(255, 255, 0, 0),
+            },
+        ]);
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "enp5s0");
+        assert_eq!(skipped[0].reason, SkipReason::TooLarge);
+        assert_eq!(
+            skipped[0].subnet.map(|subnet| subnet.to_string()),
+            Some("10.0.0.0/16".to_owned())
+        );
+    }
+
+    #[test]
+    fn detection_never_reports_loopback_as_skipped() {
+        let (_, skipped) = detect_networks(vec![InterfaceAddress {
+            name: "lo".to_owned(),
+            address: Ipv4Addr::new(127, 0, 0, 1),
+            netmask: Ipv4Addr::new(255, 0, 0, 0),
+        }]);
+
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn detection_reports_an_adapter_whose_netmask_is_not_contiguous() {
+        let (targets, skipped) = detect_networks(vec![InterfaceAddress {
+            name: "weird0".to_owned(),
+            address: Ipv4Addr::new(10, 42, 0, 1),
+            netmask: Ipv4Addr::new(255, 0, 255, 0),
+        }]);
+
+        assert!(targets.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "weird0");
+        assert_eq!(skipped[0].reason, SkipReason::UnusableNetmask);
+        assert_eq!(skipped[0].subnet, None);
     }
 
     #[test]

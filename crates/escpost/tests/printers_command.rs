@@ -1052,8 +1052,8 @@ fn printers_discover_finds_a_listening_loopback_printer() {
     assert!(stdout.contains(&format!("[1] 127.0.0.2:{port}")));
     assert!(stdout.contains("status: new"));
     assert!(
-        stderr.contains(&format!("Scanning 1 network on port {port}:")),
-        "stderr should announce the scanned network count:\n{stderr}"
+        stderr.contains(&format!("Scanning 1 network on port {port} (1 addresses):")),
+        "stderr should announce the scanned network count and probe count:\n{stderr}"
     );
     assert!(
         stderr.contains("  - 127.0.0.2/32"),
@@ -1070,6 +1070,27 @@ fn printers_discover_finds_a_listening_loopback_printer() {
         "stderr should hint at registering the new printer:\n{stderr}"
     );
     fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[test]
+fn printers_discover_announces_how_many_addresses_it_will_probe() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "printers",
+            "discover",
+            "--transport",
+            "network",
+            "--subnet",
+            "10.42.0.0/30",
+            "--timeout",
+            "1",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "command failed:\n{stderr}");
+    assert!(stderr.contains("Scanning 1 network on port 9100 (2 addresses):"));
 }
 
 #[cfg(unix)]

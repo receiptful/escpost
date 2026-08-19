@@ -14,6 +14,7 @@ use super::super::cli::scan_announcement;
 use super::super::cli::{DiscoverPrintersArgs, InventoryTransport};
 use super::super::inventory::{UsbEnumerationFailure, UsbFailureStage};
 use super::{DiscoveryEvent, DiscoveryScope, NetworkScan, Response, execute, prepare};
+use crate::discovery::SkipReason;
 use crate::error::CliError;
 
 impl TryFrom<DiscoverPrintersArgs> for DiscoveryScope {
@@ -62,11 +63,26 @@ pub(crate) async fn run_discover(
             config_path,
             scope,
             scan_targets,
+            skipped,
         } => {
             eprintln!("Reading configuration from {}", config_path.display());
             if let Some(scan) = scope.network_scan()
                 && !scan_targets.is_empty()
             {
+                for adapter in skipped {
+                    match (adapter.reason, adapter.subnet) {
+                        (SkipReason::TooLarge, Some(subnet)) => eprintln!(
+                            "Skipped {} ({subnet}): larger than /24, scan it with --subnet {subnet}",
+                            adapter.name
+                        ),
+                        (SkipReason::TooLarge, None) | (SkipReason::UnusableNetmask, _) => {
+                            eprintln!(
+                                "Skipped {}: its netmask does not name a scannable subnet",
+                                adapter.name
+                            )
+                        }
+                    }
+                }
                 eprintln!("{}", scan_announcement(scan_targets, scan.port()));
                 if scan.uses_automatic_subnets() {
                     eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
@@ -498,7 +514,7 @@ Fix USB permissions with: sudo escpost printers grant-usb-permissions
 
         assert_eq!(
             scan_announcement(&targets, 9100),
-            "Scanning 2 networks on port 9100:\n  - 10.42.0.0/24 (enx0)\n  - 192.168.50.0/24"
+            "Scanning 2 networks on port 9100 (507 addresses):\n  - 10.42.0.0/24 (enx0)\n  - 192.168.50.0/24"
         );
     }
 
@@ -512,7 +528,7 @@ Fix USB permissions with: sudo escpost printers grant-usb-permissions
 
         assert_eq!(
             scan_announcement(&targets, 9200),
-            "Scanning 1 network on port 9200:\n  - 10.42.0.0/24"
+            "Scanning 1 network on port 9200 (254 addresses):\n  - 10.42.0.0/24"
         );
     }
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::application::{self, ApplicationError};
 use crate::configuration::{self, PrinterConfiguration};
-use crate::discovery::{self, DiscoveredHost, ScanTarget, Subnet};
+use crate::discovery::{self, DiscoveredHost, ScanTarget, SkippedInterface, Subnet};
 
 use super::inventory::{
     NusbInventory, UsbEnumerationFailure, UsbInventory, UsbPrinter, classify_usb_printers,
@@ -78,6 +78,13 @@ pub(crate) struct PreparedDiscovery {
     config_path: PathBuf,
     scope: DiscoveryScope,
     scan_targets: Vec<ScanTarget>,
+    skipped: Vec<SkippedInterface>,
+}
+
+impl PreparedDiscovery {
+    pub(crate) fn skipped(&self) -> &[SkippedInterface] {
+        &self.skipped
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,6 +93,7 @@ pub(crate) enum DiscoveryEvent<'a> {
         config_path: &'a std::path::Path,
         scope: &'a DiscoveryScope,
         scan_targets: &'a [ScanTarget],
+        skipped: &'a [SkippedInterface],
     },
     NetworkScanProgress {
         completed: u64,
@@ -131,15 +139,16 @@ pub(crate) fn prepare(
 ) -> application::Result<PreparedDiscovery> {
     let configuration = configuration::load_for_update(config.as_deref())?;
     let config_path = configuration::resolved_path(config.as_deref())?;
-    let scan_targets = match scope.network_scan() {
-        Some(scan) => discovery_targets(scan.subnets())?,
-        None => Vec::new(),
+    let (scan_targets, skipped) = match scope.network_scan() {
+        Some(scan) => resolve_targets(scan.subnets())?,
+        None => (Vec::new(), Vec::new()),
     };
     Ok(PreparedDiscovery {
         configuration,
         config_path,
         scope,
         scan_targets,
+        skipped,
     })
 }
 
@@ -151,6 +160,7 @@ pub(crate) async fn execute(
         config_path: &prepared.config_path,
         scope: &prepared.scope,
         scan_targets: &prepared.scan_targets,
+        skipped: prepared.skipped(),
     });
     let hosts = if let Some(scan) = prepared.scope.network_scan() {
         discovery::scan(
@@ -250,16 +260,21 @@ fn response_from_prepared(
     })
 }
 
-pub(crate) fn discovery_targets(subnets: &[Subnet]) -> application::Result<Vec<ScanTarget>> {
+pub(crate) fn resolve_targets(
+    subnets: &[Subnet],
+) -> application::Result<(Vec<ScanTarget>, Vec<SkippedInterface>)> {
     let addresses = discovery::local_interface_addresses()?;
     if subnets.is_empty() {
-        let targets = discovery::auto_scan_targets(addresses);
+        let (targets, skipped) = discovery::detect_networks(addresses);
         if targets.is_empty() {
             return Err(ApplicationError::NoDiscoverableSubnets);
         }
-        return Ok(targets);
+        return Ok((targets, skipped));
     }
-    Ok(discovery::explicit_scan_targets(subnets, &addresses))
+    Ok((
+        discovery::explicit_scan_targets(subnets, &addresses),
+        Vec::new(),
+    ))
 }
 
 fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost) -> Vec<String> {
@@ -291,6 +306,20 @@ mod tests {
             Duration::from_millis(50),
         )
         .expect("the explicit network scan should be valid")
+    }
+
+    #[test]
+    fn a_prepared_discovery_carries_its_skipped_adapters() {
+        let configuration = temporary_configuration("discover-skipped", "");
+        let prepared = prepare(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::Network(explicit_network_scan()),
+        )
+        .expect("network discovery should prepare");
+
+        // An explicit subnet resolves without interface detection, so nothing is
+        // skipped, and the accessor exists for the automatic case.
+        assert!(prepared.skipped().is_empty());
     }
 
     #[test]
