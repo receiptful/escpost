@@ -23,6 +23,46 @@ afterEach(() => {
 });
 
 describe("AppDataProvider", () => {
+  test("polls printer inventory five seconds after each completed response", async () => {
+    jest.useFakeTimers();
+    let printerRequests = 0;
+    let resolveInitialInventory!: (response: Response) => void;
+    globalThis.fetch = jest.fn((input: RequestInfo | URL) => {
+      if (String(input) === "/api/status") return Promise.resolve(json(readyStatus));
+      printerRequests += 1;
+      if (printerRequests === 1) {
+        return new Promise<Response>((resolve) => {
+          resolveInitialInventory = resolve;
+        });
+      }
+      return Promise.resolve(json(printerInventory));
+    }) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><Probe /></AppDataProvider>);
+    expect(printerRequests).toBe(1);
+    await act(async () => {
+      resolveInitialInventory(json(printerInventory));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("ready:ready:none")).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => { jest.advanceTimersByTime(4_999); });
+    expect(printerRequests).toBe(1);
+    await act(async () => {
+      jest.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    expect(printerRequests).toBe(2);
+  });
+
   test("waits two seconds after a status response before starting the next request", async () => {
     jest.useFakeTimers();
     let resolveFirst!: (response: Response) => void;

@@ -23,7 +23,7 @@ export function SheetPreview(props: Props) {
     return null;
   }
   return (
-    <figure class="space-y-2">
+    <figure class="shrink-0 space-y-2">
       <figcaption class="flex flex-wrap items-baseline justify-between gap-2 text-sm">
         <span class="font-semibold">{sheet.name}</span>
         <span class="text-base-content/60">

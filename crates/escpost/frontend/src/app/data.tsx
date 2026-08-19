@@ -30,6 +30,7 @@ type AppData = {
 };
 
 const AppDataContext = createContext<AppData | null>(null);
+const PRINTER_POLL_INTERVAL = 5_000;
 
 const initialPrinters: PrinterResource = {
   data: null,
@@ -145,6 +146,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   useEffect(() => {
     let active = true;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let printerTimeout: ReturnType<typeof setTimeout> | undefined;
     let statusAbort: AbortController | null = null;
     let disconnected = false;
 
@@ -185,12 +187,23 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
         });
     };
 
-    void refreshPrinters();
+    const pollPrinters = () => {
+      void refreshPrinters().finally(() => {
+        if (active) {
+          printerTimeout = setTimeout(pollPrinters, PRINTER_POLL_INTERVAL);
+        }
+      });
+    };
+
+    pollPrinters();
     poll();
     return () => {
       active = false;
       if (timeout !== undefined) {
         clearTimeout(timeout);
+      }
+      if (printerTimeout !== undefined) {
+        clearTimeout(printerTimeout);
       }
       statusAbort?.abort();
       printerAbort.current?.abort();

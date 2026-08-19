@@ -1,10 +1,12 @@
 import type { ComponentChildren } from "preact";
+import logoDark from "../../assets/logo_dark.png";
+import logoLight from "../../assets/logo_light.png";
 import { useAppData } from "../../app/data";
 
 function SummaryCard({ children, label }: { children: ComponentChildren; label: string }) {
   return (
-    <section aria-label={label} class="rounded-box bg-base-100 p-5 shadow-sm">
-      <h2 class="text-sm font-medium text-base-content/70">{label}</h2>
+    <section aria-label={label} class="rounded-box bg-base-100 p-5 text-center shadow-sm">
+      <h2 class="text-left text-sm font-medium text-base-content/70">{label}</h2>
       {children}
     </section>
   );
@@ -19,11 +21,12 @@ export function OverviewPage() {
   const virtualState = !status ? "Checking…" : !virtual ? "Not running" : virtual.state === "receiving" ? "Receiving" : "Ready";
 
   return (
-    <section aria-labelledby="overview-heading" class="space-y-6">
-      <div>
-        <p class="text-sm font-semibold text-primary">Workbench</p>
-        <h1 id="overview-heading" class="mt-1 text-3xl font-bold">Overview</h1>
-      </div>
+    <section aria-labelledby="overview-heading" class="mx-auto w-full max-w-7xl space-y-8 pt-6 lg:pt-10">
+      <h1 id="overview-heading" class="sr-only">Overview</h1>
+      <picture class="mx-auto block w-full max-w-lg">
+        <source media="(prefers-color-scheme: dark)" srcSet={logoDark} />
+        <img class="w-full rounded-box" src={logoLight} alt="ESCPost" />
+      </picture>
       <div class="grid gap-4 md:grid-cols-3">
         <SummaryCard label="Jobs processed">
           <p class="mt-2 text-2xl font-bold">{status?.jobs_processed ?? "—"}</p>
@@ -33,7 +36,7 @@ export function OverviewPage() {
             <>
               <p class="mt-2 text-2xl font-bold">{inventory.length} configured</p>
               {((connected ?? 0) > 0 || (unavailable ?? 0) > 0) && (
-                <div class="mt-4 flex flex-wrap gap-3 text-sm">
+                <div class="mt-4 flex flex-wrap justify-center gap-3 text-sm">
                   {(connected ?? 0) > 0 && <span class="badge badge-success">{connected} connected</span>}
                   {(unavailable ?? 0) > 0 && <span class="badge badge-warning">{unavailable} unavailable</span>}
                 </div>

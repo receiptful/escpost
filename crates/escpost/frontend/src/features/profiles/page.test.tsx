@@ -118,21 +118,14 @@ describe("ProfilesPage", () => {
     expect(await screen.findAllByText("CALIBRATED")).toHaveLength(2);
   });
 
-  test("retains cached catalog facts and reports a failed refresh", async () => {
-    const responses = [
-      json({ profiles: [profiles[0]] }),
-      json({ error: { code: "profile_catalog_unavailable", message: "Profile catalog is unavailable." } }, 500),
-    ];
+  test("does not offer a refresh control for the compiled profile catalog", async () => {
     renderPage(((input: RequestInfo | URL) => {
       if (String(input) === "/api/status") return Promise.resolve(json(status));
-      if (String(input) === "/api/profiles/list") return Promise.resolve(responses.shift()!);
+      if (String(input) === "/api/profiles/list") return Promise.resolve(json({ profiles: [profiles[0]] }));
       return Promise.resolve(json({ printers: [] }));
     }) as typeof globalThis.fetch);
     expect(await screen.findAllByText("CALIBRATED")).toHaveLength(2);
-
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Refresh" })); });
-    expect(await screen.findByText("Showing cached profile data. Profile catalog is unavailable.")).toBeTruthy();
-    expect(screen.getAllByText("CALIBRATED")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
   });
 
   test("keeps the successful unfiltered catalog for the workbench session", async () => {

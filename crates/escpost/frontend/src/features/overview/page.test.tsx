@@ -18,6 +18,23 @@ function OverviewWithRefresh() {
 }
 
 describe("OverviewPage", () => {
+  test("top-aligns the dashboard beneath a theme-aware ESCPost logo", () => {
+    globalThis.fetch = (() => new Promise<Response>(() => {})) as unknown as typeof globalThis.fetch;
+    const view = render(<AppDataProvider><OverviewPage /></AppDataProvider>);
+    const page = view.container.querySelector("section");
+
+    expect(page?.getAttribute("class")).toContain("mx-auto");
+    expect(page?.getAttribute("class")).toContain("pt-6");
+    expect(page?.getAttribute("class")).not.toContain("my-auto");
+    expect(page?.getAttribute("class")).toContain("max-w-7xl");
+
+    const logo = screen.getByRole("img", { name: "ESCPost" });
+    expect(logo.getAttribute("src")).toContain("logo_light");
+    const darkLogo = logo.parentElement?.querySelector("source");
+    expect(darkLogo?.getAttribute("media")).toBe("(prefers-color-scheme: dark)");
+    expect(darkLogo?.getAttribute("srcset")).toContain("logo_dark");
+  });
+
   test("derives printer counts and renders virtual printer facts", async () => {
     globalThis.fetch = ((input: RequestInfo | URL) => {
       if (String(input) === "/api/status") {
@@ -50,6 +67,29 @@ describe("OverviewPage", () => {
     const jobs = screen.getByRole("region", { name: "Jobs processed" });
     expect(within(jobs).getByText("7")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Printer availability" })).toBeNull();
+  });
+
+  test("left-aligns card headings while centering card values", async () => {
+    globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/status"
+      ? Promise.resolve(json({ virtual_printer: null, jobs_processed: 1 }))
+      : Promise.resolve(json({
+        printers: [
+          { name: "Kitchen", transport: "network", availability: "connected", profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } },
+        ],
+      }))) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><OverviewPage /></AppDataProvider>);
+    const cards = await Promise.all([
+      screen.findByRole("region", { name: "Jobs processed" }),
+      screen.findByRole("region", { name: "Printers" }),
+      screen.findByRole("region", { name: "Virtual printer" }),
+    ]);
+
+    for (const card of cards) {
+      expect(card.getAttribute("class")).toContain("text-center");
+      expect(within(card).getByRole("heading").getAttribute("class")).toContain("text-left");
+    }
+    expect((await screen.findByText("1 connected")).parentElement?.getAttribute("class")).toContain("justify-center");
   });
 
   test("renders Not running when no virtual printer is configured", async () => {

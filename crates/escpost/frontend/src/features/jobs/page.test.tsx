@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { JobsPage } from "./page";
 
 function json(body: unknown) {
@@ -105,10 +105,36 @@ describe("JobsPage", () => {
     await screen.findByText("Hi");
 
     const toggle = screen.getByRole("checkbox", { name: "Paper margin" });
+    const status = screen.getByRole("group", { name: "Current job status" });
+    expect(within(status).getByRole("checkbox", { name: "Paper margin" })).toBe(toggle);
+    expect(within(status).getByRole("link", { name: "Download raw input" })).toBeTruthy();
     expect((toggle as HTMLInputElement).checked).toBe(true);
     fireEvent.click(toggle);
     expect(localStorage.getItem("escpost.paper_margin")).toBe("false");
     expect(document.querySelector(".receipt-paper-margin")).toBeNull();
+  });
+
+  test("lays multiple sheets left-to-right and wraps only when space runs out", async () => {
+    const secondSheet = {
+      ...currentJob.job.sheets[0],
+      number: 2,
+      name: "sheet-002.png",
+      image_url: "/api/jobs/7/sheets/2",
+      commands: [],
+    };
+    globalThis.fetch = jest.fn(() => Promise.resolve(json({
+      ...currentJob,
+      job: { ...currentJob.job, sheets: [...currentJob.job.sheets, secondSheet] },
+    }))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    await screen.findByAltText("Rendered receipt sheet 1 of 2");
+    expect(screen.getByAltText("Rendered receipt sheet 2 of 2")).toBeTruthy();
+    const sheetFlow = screen.getByRole("region", { name: "Rendered receipt sheets" }).firstElementChild;
+    expect(sheetFlow?.getAttribute("class")).toContain("flex-wrap");
+    expect(sheetFlow?.getAttribute("class")).toContain("items-start");
+    expect(sheetFlow?.getAttribute("class")).not.toContain("flex-col");
+    expect(sheetFlow?.getAttribute("class")).not.toContain("items-center");
   });
 
   test("reveals annotations from commands and commands from annotations", async () => {

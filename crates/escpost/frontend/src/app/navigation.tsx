@@ -23,17 +23,19 @@ export function Navigation({ mobile = false }: NavigationProps) {
   return (
     <nav aria-label={label}>
       <ul class={mobile ? "grid grid-cols-5" : "menu gap-1 p-0"}>
-        {destinations.map(({ href, label: destinationLabel }) => (
-          <li key={href}>
-            <a
-              aria-current={isCurrentPath(path, href) ? "page" : undefined}
-              class={mobile ? "flex min-h-16 flex-col items-center justify-center px-1 text-center text-xs" : ""}
-              href={href}
-            >
-              {destinationLabel}
-            </a>
-          </li>
-        ))}
+        {destinations.map(({ href, label: destinationLabel }) => {
+          const current = isCurrentPath(path, href);
+          const className = mobile
+            ? `flex min-h-16 flex-col items-center justify-center px-1 text-center text-xs ${current ? "bg-primary text-primary-content font-semibold" : ""}`
+            : current ? "menu-active font-semibold" : "";
+          return (
+            <li key={href}>
+              <a aria-current={current ? "page" : undefined} class={className} href={href}>
+                {destinationLabel}
+              </a>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );

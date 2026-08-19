@@ -107,23 +107,13 @@ export function JobsPage() {
 
   return (
     <section aria-labelledby="jobs-heading" class="space-y-5">
-      <header class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p class="text-sm font-semibold text-primary">Workbench</p>
-          <h1 id="jobs-heading" class="mt-1 text-3xl font-bold">Print jobs</h1>
-        </div>
-        <label class="label cursor-pointer gap-3 rounded-lg border border-base-300 px-3 py-2">
-          <span class="label-text">Paper margin</span>
-          <input
-            type="checkbox"
-            class="toggle toggle-primary toggle-sm"
-            checked={paperMargin}
-            onChange={(event) => changePaperMargin(event.currentTarget.checked)}
-          />
-        </label>
-      </header>
+      <h1 id="jobs-heading" class="sr-only">Print jobs</h1>
 
-      <JobStatus resource={resource} />
+      <JobStatus
+        resource={resource}
+        paperMargin={paperMargin}
+        onPaperMarginChange={changePaperMargin}
+      />
 
       {job && grouped && (
         <div class="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
@@ -133,7 +123,7 @@ export function JobsPage() {
             aria-label="Rendered receipt sheets"
             class="min-w-0 overflow-auto rounded-box border border-base-300 bg-base-200 p-4 xl:max-h-[calc(100vh-8rem)]"
           >
-            <div class="flex min-w-max flex-col items-center gap-8">
+            <div class="flex flex-wrap items-start justify-start gap-8">
               {grouped.sheets.map((sheet) => (
                 <SheetPreview
                   key={sheet.number}
@@ -174,12 +164,16 @@ export function JobsPage() {
   );
 }
 
-function JobStatus({ resource }: { resource: ReturnType<typeof useCurrentJob> }) {
+function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
+  resource: ReturnType<typeof useCurrentJob>;
+  paperMargin: boolean;
+  onPaperMarginChange: (enabled: boolean) => void;
+}) {
   const data = resource.data;
   const job = data?.job;
   return (
     <div class="space-y-3" aria-live="polite">
-      <div class="flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 p-4">
+      <div role="group" aria-label="Current job status" class="flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 p-4">
         <span class="font-semibold">Profile</span>
         <span class="badge badge-outline">{data?.profile || "Unknown"}</span>
         {data?.receiving ? (
@@ -190,8 +184,17 @@ function JobStatus({ resource }: { resource: ReturnType<typeof useCurrentJob> })
           </span>
         ) : null}
         {job?.completion === "timeout" && <span class="badge badge-warning">idle-timeout</span>}
+        <label class="label ml-auto cursor-pointer gap-3 rounded-lg px-2 py-1">
+          <span class="label-text">Paper margin</span>
+          <input
+            type="checkbox"
+            class="toggle toggle-primary toggle-sm"
+            checked={paperMargin}
+            onChange={(event) => onPaperMarginChange(event.currentTarget.checked)}
+          />
+        </label>
         {job?.input_url && !data?.receiving && (
-          <a class="btn btn-ghost btn-sm ml-auto" href={job.input_url} download>Download raw input</a>
+          <a class="btn btn-ghost btn-sm" href={job.input_url} download>Download raw input</a>
         )}
       </div>
       {resource.loading && !data && <div class="skeleton h-20 w-full" aria-label="Loading current job" />}
@@ -205,13 +208,9 @@ function JobStatus({ resource }: { resource: ReturnType<typeof useCurrentJob> })
         <div key={warning} class="alert alert-warning"><span>{warning}</span></div>
       ))}
       {!resource.loading && data && !job && !data.error && (
-        <div class="hero min-h-56 rounded-box border border-dashed border-base-300 bg-base-100">
-          <div class="hero-content text-center">
-            <div>
-              <h2 class="text-xl font-bold">Waiting for first job</h2>
-              {data.hint && <p class="mt-2 text-base-content/65">{data.hint}</p>}
-            </div>
-          </div>
+        <div class="min-h-56 rounded-box border border-dashed border-base-300 bg-base-100 p-8">
+          <h2 class="text-xl font-bold">Waiting for first job</h2>
+          {data.hint && <p class="mt-2 text-base-content/65">{data.hint}</p>}
         </div>
       )}
     </div>

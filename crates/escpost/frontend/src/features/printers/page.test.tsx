@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { afterEach, describe, expect, jest, test } from "bun:test";
+import { act, cleanup, render, screen } from "@testing-library/preact";
 import { AppDataProvider } from "../../app/data";
 import { PrintersPage } from "./page";
 
@@ -24,7 +24,10 @@ function renderPage(fetch: typeof globalThis.fetch) {
   return render(<AppDataProvider><PrintersPage /></AppDataProvider>);
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  jest.useRealTimers();
+});
 
 describe("PrintersPage", () => {
   test("distinguishes initial loading, empty inventory, and initial API error", async () => {
@@ -48,7 +51,8 @@ describe("PrintersPage", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
-  test("replaces cached printer facts after refresh and retains them after a failed refresh", async () => {
+  test("replaces cached printer facts after automatic refresh and retains them after a failed refresh", async () => {
+    jest.useFakeTimers();
     const inventories = [
       json({ printers: [printer] }),
       json({ printers: [{ ...printer, name: "Bar" }] }),
@@ -61,10 +65,17 @@ describe("PrintersPage", () => {
         : Promise.resolve(inventories.shift()!)) as typeof globalThis.fetch);
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Refresh" })); });
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    await act(async () => {
+      jest.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
     expect(await screen.findAllByText("Bar")).toHaveLength(2);
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Refresh" })); });
+    await act(async () => {
+      jest.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
     expect(await screen.findByText("Showing cached printer data. Printer inventory is unavailable.")).toBeTruthy();
     expect(screen.getAllByText("Bar")).toHaveLength(2);
   });

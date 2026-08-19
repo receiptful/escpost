@@ -39,7 +39,6 @@ export function PrinterList() {
 
   return (
     <div class="space-y-4">
-      {printers.phase === "refreshing" && <p aria-live="polite" class="text-sm text-base-content/70">Refreshing printers…</p>}
       {printers.error && (
         <p role="alert" class="alert alert-warning">
           Showing cached printer data. {printers.error.message}
