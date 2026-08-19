@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use crate::application::{self, ApplicationError};
 use crate::configuration::{self, PrinterConfiguration};
-use crate::discovery::{self, DiscoveredHost, ScanTarget, SkippedInterface, Subnet};
+use crate::discovery::{
+    self, DiscoveredHost, InterfaceAddress, ScanTarget, SkippedInterface, Subnet,
+};
 
 use super::inventory::{
     NusbInventory, UsbEnumerationFailure, UsbInventory, UsbPrinter, classify_usb_printers,
@@ -140,7 +142,15 @@ pub(crate) fn prepare(
     let configuration = configuration::load_for_update(config.as_deref())?;
     let config_path = configuration::resolved_path(config.as_deref())?;
     let (scan_targets, skipped) = match scope.network_scan() {
-        Some(scan) => resolve_targets(scan.subnets())?,
+        Some(scan) => {
+            let (targets, skipped) = resolve_targets(scan.subnets())?;
+            if targets.is_empty()
+                && let Some(error) = empty_targets_error(&scope, &skipped)
+            {
+                return Err(error);
+            }
+            (targets, skipped)
+        }
         None => (Vec::new(), Vec::new()),
     };
     Ok(PreparedDiscovery {
@@ -150,6 +160,26 @@ pub(crate) fn prepare(
         scan_targets,
         skipped,
     })
+}
+
+/// Whether an empty automatic sweep is fatal, and the error to report if so.
+/// A network-only scope has no fallback: zero targets means zero work, so it
+/// fails. A combined scope still has USB to enumerate, so an empty network
+/// sweep is reported through `skipped` instead of aborting the command.
+fn empty_targets_error(
+    scope: &DiscoveryScope,
+    skipped: &[SkippedInterface],
+) -> Option<ApplicationError> {
+    if scope.includes_usb() {
+        return None;
+    }
+    let detail = discovery::describe_skipped(skipped);
+    let detail = if detail.is_empty() {
+        String::new()
+    } else {
+        format!(": {detail}")
+    };
+    Some(ApplicationError::NoDiscoverableSubnets(detail))
 }
 
 pub(crate) async fn execute(
@@ -260,21 +290,31 @@ fn response_from_prepared(
     })
 }
 
+/// Targets for the given subnets, or for every automatically detected one
+/// when `subnets` is empty. An empty result is not an error here: whether
+/// zero targets is fatal depends on the discovery scope, which only `prepare`
+/// knows, so that decision lives there instead.
 pub(crate) fn resolve_targets(
     subnets: &[Subnet],
 ) -> application::Result<(Vec<ScanTarget>, Vec<SkippedInterface>)> {
     let addresses = discovery::local_interface_addresses()?;
+    Ok(resolve_targets_from(subnets, addresses))
+}
+
+/// The pure half of `resolve_targets`, split out so automatic detection can
+/// be tested against a chosen `InterfaceAddress` list instead of this
+/// machine's real interfaces.
+fn resolve_targets_from(
+    subnets: &[Subnet],
+    addresses: Vec<InterfaceAddress>,
+) -> (Vec<ScanTarget>, Vec<SkippedInterface>) {
     if subnets.is_empty() {
-        let (targets, skipped) = discovery::detect_networks(addresses);
-        if targets.is_empty() {
-            return Err(ApplicationError::NoDiscoverableSubnets);
-        }
-        return Ok((targets, skipped));
+        return discovery::detect_networks(addresses);
     }
-    Ok((
+    (
         discovery::explicit_scan_targets(subnets, &addresses),
         Vec::new(),
-    ))
+    )
 }
 
 fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost) -> Vec<String> {
@@ -289,7 +329,7 @@ fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{DiscoveredHost, ScanTarget, Subnet};
+    use crate::discovery::{DiscoveredHost, ScanTarget, SkipReason, Subnet};
     use crate::features::printers::inventory::{
         UsbEnumeration, UsbEnumerationFailure, UsbFailureStage,
     };
@@ -320,6 +360,74 @@ mod tests {
         // An explicit subnet resolves without interface detection, so nothing is
         // skipped, and the accessor exists for the automatic case.
         assert!(prepared.skipped().is_empty());
+    }
+
+    fn office_network_interface() -> InterfaceAddress {
+        // A single /16 adapter and nothing else: the motivating case for
+        // Finding 1/2 — every candidate interface is too large to sweep
+        // automatically, so automatic detection has nothing left to offer.
+        InterfaceAddress {
+            name: "enp5s0".to_owned(),
+            address: Ipv4Addr::new(10, 0, 0, 5),
+            netmask: Ipv4Addr::new(255, 255, 0, 0),
+        }
+    }
+
+    #[test]
+    fn resolving_automatic_targets_reports_every_skipped_adapter_without_erroring() {
+        // `resolve_targets` itself always calls the real OS for its address
+        // list, which a unit test cannot pin down; `resolve_targets_from`
+        // is the pure half that does the actual filtering, exercised here
+        // with a chosen interface list instead of this machine's real one.
+        let (targets, skipped) = resolve_targets_from(&[], vec![office_network_interface()]);
+
+        assert!(targets.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "enp5s0");
+        assert_eq!(skipped[0].reason, SkipReason::TooLarge);
+    }
+
+    #[test]
+    fn an_empty_automatic_sweep_is_not_fatal_for_a_scope_that_still_has_usb() {
+        let scope = DiscoveryScope::All(explicit_network_scan());
+
+        assert!(empty_targets_error(&scope, &[]).is_none());
+    }
+
+    #[test]
+    fn an_empty_automatic_sweep_fails_a_network_only_scope_and_names_the_skipped_adapter() {
+        let scope = DiscoveryScope::Network(explicit_network_scan());
+        let skipped = vec![SkippedInterface {
+            name: "enp5s0".to_owned(),
+            subnet: Some(Subnet::parse("10.0.0.0/16").expect("valid subnet")),
+            reason: SkipReason::TooLarge,
+        }];
+
+        let error = empty_targets_error(&scope, &skipped)
+            .expect("a network-only scope with nothing to scan must fail");
+
+        assert!(matches!(error, ApplicationError::NoDiscoverableSubnets(_)));
+        assert_eq!(
+            error.to_string(),
+            "no directly connected IPv4 network is small enough to scan automatically \
+             (at most /24): enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16"
+        );
+    }
+
+    #[test]
+    fn an_empty_automatic_sweep_with_nothing_skipped_still_names_no_adapters() {
+        // No non-loopback interface existed at all, so there is nothing to
+        // list — the message falls back to its unqualified form rather than
+        // a dangling ": ".
+        let scope = DiscoveryScope::Network(explicit_network_scan());
+
+        let error = empty_targets_error(&scope, &[])
+            .expect("a network-only scope with nothing to scan must fail");
+
+        assert_eq!(
+            error.to_string(),
+            "no directly connected IPv4 network is small enough to scan automatically (at most /24)"
+        );
     }
 
     #[test]

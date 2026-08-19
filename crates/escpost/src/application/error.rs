@@ -82,10 +82,14 @@ pub(crate) enum ApplicationError {
     #[error("could not enumerate network interfaces: {0}")]
     EnumerateNetworkInterfaces(#[source] std::io::Error),
 
+    /// The trailing string names which adapters were skipped and why, in the
+    /// same vocabulary as the CLI's pre-scan skip lines (`SkippedInterface::describe`),
+    /// so a user sees one explanation whether the omission is partial or total.
+    /// Empty when there was nothing to name — no non-loopback interface existed at all.
     #[error(
-        "no directly connected IPv4 network is small enough to scan automatically (at most /24)"
+        "no directly connected IPv4 network is small enough to scan automatically (at most /24){0}"
     )]
-    NoDiscoverableSubnets,
+    NoDiscoverableSubnets(String),
 
     #[error("no USB device matches vendor {vendor_id:#06x} and product {product_id:#06x}")]
     UsbDeviceNotFound { vendor_id: u16, product_id: u16 },

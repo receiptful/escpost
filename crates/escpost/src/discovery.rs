@@ -118,11 +118,47 @@ pub(crate) enum SkipReason {
     UnusableNetmask,
 }
 
+/// An adapter left out of an automatic sweep. Exists so the omission can be
+/// told to the user instead of silently vanishing: without this, a machine
+/// whose only interface is too large to sweep reports "no networks" as if it
+/// had none, rather than naming the one it declined to scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SkippedInterface {
     pub(crate) name: String,
     pub(crate) subnet: Option<Subnet>,
     pub(crate) reason: SkipReason,
+}
+
+impl SkippedInterface {
+    /// One line naming the adapter and, when the subnet is known, the command
+    /// that scans it anyway. Shared by the CLI's pre-scan skip lines and the
+    /// "nothing to scan" error, so a user reads one explanation for an
+    /// omission rather than two differently worded ones.
+    pub(crate) fn describe(&self) -> String {
+        match (self.reason, self.subnet) {
+            (SkipReason::TooLarge, Some(subnet)) => format!(
+                "{} ({subnet}): larger than /24, scan it with --subnet {subnet}",
+                self.name
+            ),
+            (SkipReason::TooLarge, None) | (SkipReason::UnusableNetmask, _) => {
+                format!(
+                    "{}: its netmask does not name a scannable subnet",
+                    self.name
+                )
+            }
+        }
+    }
+}
+
+/// Every skipped adapter's `describe()`, joined into one reportable clause.
+/// Empty when nothing was skipped, so a caller can splice it straight into a
+/// message without a special case for "nothing to say".
+pub(crate) fn describe_skipped(skipped: &[SkippedInterface]) -> String {
+    skipped
+        .iter()
+        .map(SkippedInterface::describe)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Automatic detection with its omissions kept. Loopback is not reported: it is
@@ -306,8 +342,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DiscoveredHost, InterfaceAddress, ScanTarget, SkipReason, Subnet, detect_networks,
-        explicit_scan_targets, probe_count, scan,
+        DiscoveredHost, InterfaceAddress, ScanTarget, SkipReason, SkippedInterface, Subnet,
+        describe_skipped, detect_networks, explicit_scan_targets, probe_count, scan,
     };
 
     #[test]
@@ -499,6 +535,61 @@ mod tests {
         assert_eq!(skipped[0].name, "weird0");
         assert_eq!(skipped[0].reason, SkipReason::UnusableNetmask);
         assert_eq!(skipped[0].subnet, None);
+    }
+
+    #[test]
+    fn describe_names_the_subnet_and_the_flag_that_scans_it_for_a_too_large_adapter() {
+        let skipped = SkippedInterface {
+            name: "enp5s0".to_owned(),
+            subnet: Some(Subnet::parse("10.0.0.0/16").expect("a valid CIDR should parse")),
+            reason: SkipReason::TooLarge,
+        };
+
+        assert_eq!(
+            skipped.describe(),
+            "enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16"
+        );
+    }
+
+    #[test]
+    fn describe_names_the_adapter_without_a_subnet_for_an_unusable_netmask() {
+        let skipped = SkippedInterface {
+            name: "weird0".to_owned(),
+            subnet: None,
+            reason: SkipReason::UnusableNetmask,
+        };
+
+        assert_eq!(
+            skipped.describe(),
+            "weird0: its netmask does not name a scannable subnet"
+        );
+    }
+
+    #[test]
+    fn describe_skipped_joins_every_adapter_with_a_semicolon() {
+        let skipped = vec![
+            SkippedInterface {
+                name: "enp5s0".to_owned(),
+                subnet: Some(Subnet::parse("10.0.0.0/16").expect("a valid CIDR should parse")),
+                reason: SkipReason::TooLarge,
+            },
+            SkippedInterface {
+                name: "weird0".to_owned(),
+                subnet: None,
+                reason: SkipReason::UnusableNetmask,
+            },
+        ];
+
+        assert_eq!(
+            describe_skipped(&skipped),
+            "enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16; \
+             weird0: its netmask does not name a scannable subnet"
+        );
+    }
+
+    #[test]
+    fn describe_skipped_is_empty_when_nothing_was_skipped() {
+        assert_eq!(describe_skipped(&[]), "");
     }
 
     #[test]

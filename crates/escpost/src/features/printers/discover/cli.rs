@@ -14,7 +14,6 @@ use super::super::cli::scan_announcement;
 use super::super::cli::{DiscoverPrintersArgs, InventoryTransport};
 use super::super::inventory::{UsbEnumerationFailure, UsbFailureStage};
 use super::{DiscoveryEvent, DiscoveryScope, NetworkScan, Response, execute, prepare};
-use crate::discovery::SkipReason;
 use crate::error::CliError;
 
 impl TryFrom<DiscoverPrintersArgs> for DiscoveryScope {
@@ -66,26 +65,18 @@ pub(crate) async fn run_discover(
             skipped,
         } => {
             eprintln!("Reading configuration from {}", config_path.display());
-            if let Some(scan) = scope.network_scan()
-                && !scan_targets.is_empty()
-            {
+            if let Some(scan) = scope.network_scan() {
+                // Printed whenever an adapter was skipped, even if nothing is
+                // left to scan: a combined USB+network discovery still has USB
+                // work to do, and the omission must be reported either way.
                 for adapter in skipped {
-                    match (adapter.reason, adapter.subnet) {
-                        (SkipReason::TooLarge, Some(subnet)) => eprintln!(
-                            "Skipped {} ({subnet}): larger than /24, scan it with --subnet {subnet}",
-                            adapter.name
-                        ),
-                        (SkipReason::TooLarge, None) | (SkipReason::UnusableNetmask, _) => {
-                            eprintln!(
-                                "Skipped {}: its netmask does not name a scannable subnet",
-                                adapter.name
-                            )
-                        }
-                    }
+                    eprintln!("Skipped {}", adapter.describe());
                 }
-                eprintln!("{}", scan_announcement(scan_targets, scan.port()));
-                if scan.uses_automatic_subnets() {
-                    eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+                if !scan_targets.is_empty() {
+                    eprintln!("{}", scan_announcement(scan_targets, scan.port()));
+                    if scan.uses_automatic_subnets() {
+                        eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+                    }
                 }
             }
         }
