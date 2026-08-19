@@ -272,28 +272,44 @@ pub(crate) struct DiscoveredHost {
     pub(crate) interface: Option<String>,
 }
 
+/// What a sweep reports while it runs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ScanEvent<'a> {
+    Progress {
+        completed: u64,
+        total: u64,
+    },
+    /// A host accepted a connection. Reported as it happens so a caller can
+    /// show results before the sweep finishes.
+    Found(&'a DiscoveredHost),
+}
+
 /// Sweep every candidate address of every target. Opening and immediately
 /// dropping a stream proves a listener without sending a byte the printer
 /// could interpret as ESC/POS data. Failures and timeouts are the normal
 /// case for a sweep and are silently skipped.
 ///
-/// `on_progress` is called once up front with `(0, total)` before any probe
-/// is spawned, then again with `(done, total)` after each probe completes,
-/// ending with `(total, total)`. `total` is the number of probes actually
-/// spawned (every target host minus its target's excluded address), so a
-/// caller building a progress bar can size it exactly. This module stays
-/// free of any UI concern beyond that callback; rendering a bar from it is
-/// the caller's job.
+/// `on_event` receives `Progress { completed: 0, total }` once up front
+/// before any probe is spawned, a `Found` for each host that accepts a
+/// connection as it happens, and a `Progress` after every probe completes
+/// (found or not), ending with `Progress { completed: total, total }`.
+/// `total` is the number of probes actually spawned (every target host minus
+/// its target's excluded address), so a caller building a progress bar can
+/// size it exactly. This module stays free of any UI concern beyond that
+/// callback; rendering from it is the caller's job.
 pub(crate) async fn scan(
     targets: &[ScanTarget],
     port: u16,
     probe_timeout: Duration,
-    mut on_progress: impl FnMut(u64, u64),
+    mut on_event: impl FnMut(ScanEvent<'_>),
 ) -> Vec<DiscoveredHost> {
     // Counted before spawning so `total` is known, and reported via
-    // `on_progress`, before the first probe starts.
+    // `on_event`, before the first probe starts.
     let total = probe_count(targets);
-    on_progress(0, total);
+    on_event(ScanEvent::Progress {
+        completed: 0,
+        total,
+    });
 
     let limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_PROBES));
     let mut probes = JoinSet::new();
@@ -325,10 +341,14 @@ pub(crate) async fn scan(
     let mut hosts = Vec::new();
     while let Some(result) = probes.join_next().await {
         if let Ok(Some(host)) = result {
+            on_event(ScanEvent::Found(&host));
             hosts.push(host);
         }
         done += 1;
-        on_progress(done, total);
+        on_event(ScanEvent::Progress {
+            completed: done,
+            total,
+        });
     }
     // Overlapping explicit --subnet values may find one address twice.
     hosts.sort_by_key(|host| u32::from(host.address));
@@ -342,8 +362,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DiscoveredHost, InterfaceAddress, ScanTarget, SkipReason, SkippedInterface, Subnet,
-        describe_skipped, detect_networks, explicit_scan_targets, probe_count, scan,
+        DiscoveredHost, InterfaceAddress, ScanEvent, ScanTarget, SkipReason, SkippedInterface,
+        Subnet, describe_skipped, detect_networks, explicit_scan_targets, probe_count, scan,
     };
 
     #[test]
@@ -665,7 +685,7 @@ mod tests {
             std::slice::from_ref(&target),
             port,
             Duration::from_secs(1),
-            |_, _| {},
+            |_| {},
         )
         .await;
         assert_eq!(
@@ -678,8 +698,46 @@ mod tests {
         );
 
         drop(listener);
-        let hosts = scan(&[target], port, Duration::from_secs(1), |_, _| {}).await;
+        let hosts = scan(&[target], port, Duration::from_secs(1), |_| {}).await;
         assert!(hosts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scan_reports_a_found_event_for_a_listening_host_as_it_is_discovered() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("an ephemeral loopback port should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener should report its address")
+            .port();
+        let target = ScanTarget {
+            subnet: Subnet::parse("127.0.0.1/32").expect("a valid CIDR should parse"),
+            interface: Some("lo".to_owned()),
+            excluded: Vec::new(),
+        };
+
+        let mut found = Vec::new();
+        scan(
+            std::slice::from_ref(&target),
+            port,
+            Duration::from_secs(1),
+            |event| {
+                if let ScanEvent::Found(host) = event {
+                    found.push(host.clone());
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            found,
+            vec![DiscoveredHost {
+                address: Ipv4Addr::new(127, 0, 0, 1),
+                port,
+                interface: Some("lo".to_owned()),
+            }],
+            "a Found event should carry the discovered host as soon as it answers"
+        );
     }
 
     #[tokio::test]
@@ -697,7 +755,7 @@ mod tests {
         };
 
         assert!(
-            scan(&[target], port, Duration::from_secs(1), |_, _| {})
+            scan(&[target], port, Duration::from_secs(1), |_| {})
                 .await
                 .is_empty()
         );
@@ -722,8 +780,10 @@ mod tests {
         let targets = vec![target.clone(), target];
 
         let mut calls = Vec::new();
-        let hosts = scan(&targets, port, Duration::from_secs(1), |done, total| {
-            calls.push((done, total));
+        let hosts = scan(&targets, port, Duration::from_secs(1), |event| {
+            if let ScanEvent::Progress { completed, total } = event {
+                calls.push((completed, total));
+            }
         })
         .await;
 

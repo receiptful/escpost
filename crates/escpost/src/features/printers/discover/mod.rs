@@ -11,7 +11,7 @@ use crate::discovery::{
 };
 
 use super::inventory::{
-    NusbInventory, UsbEnumerationFailure, UsbInventory, UsbPrinter, classify_usb_printers,
+    UsbEnumeration, UsbEnumerationFailure, UsbInventory, UsbPrinter, classify_usb_printers,
     sort_by_usb_location,
 };
 
@@ -97,6 +97,18 @@ pub(crate) enum DiscoveryEvent<'a> {
         scan_targets: &'a [ScanTarget],
         skipped: &'a [SkippedInterface],
     },
+    // The CLI deliberately ignores these three payloads today (it still
+    // renders from the final `Response` once discovery finishes) and no
+    // other in-crate consumer reads them yet — that consumer is the
+    // browser-facing endpoint this operation layer exists to support, added
+    // in later work. `#[allow(dead_code)]` says so explicitly rather than
+    // letting the fields quietly vanish to satisfy the lint.
+    #[allow(dead_code)]
+    UsbPrinter(&'a UsbDiscovery),
+    #[allow(dead_code)]
+    UsbFailure(&'a UsbEnumerationFailure),
+    #[allow(dead_code)]
+    NetworkPrinter(&'a NetworkDiscovery),
     NetworkScanProgress {
         completed: u64,
         total: u64,
@@ -182,9 +194,14 @@ fn empty_targets_error(
     Some(ApplicationError::NoDiscoverableSubnets(detail))
 }
 
-pub(crate) async fn execute(
+// `pub(in crate::features::printers)` rather than `pub(crate)`: the
+// `UsbInventory` bound below is itself only nameable within
+// `features::printers` (see `inventory.rs`), and both real callers —
+// `discover::cli` and `add::cli` — already live inside that subtree.
+pub(in crate::features::printers) async fn execute(
     prepared: PreparedDiscovery,
     mut observer: impl FnMut(DiscoveryEvent<'_>),
+    inventory: &mut impl UsbInventory,
 ) -> application::Result<Response> {
     observer(DiscoveryEvent::Prepared {
         config_path: &prepared.config_path,
@@ -192,41 +209,14 @@ pub(crate) async fn execute(
         scan_targets: &prepared.scan_targets,
         skipped: prepared.skipped(),
     });
-    let hosts = if let Some(scan) = prepared.scope.network_scan() {
-        discovery::scan(
-            &prepared.scan_targets,
-            scan.port(),
-            scan.timeout(),
-            |completed, total| {
-                observer(DiscoveryEvent::NetworkScanProgress { completed, total });
-            },
-        )
-        .await
-    } else {
-        Vec::new()
-    };
-    response_from_prepared(prepared, &mut NusbInventory, hosts)
-}
 
-#[cfg(test)]
-fn build_response(
-    config: Option<PathBuf>,
-    scope: DiscoveryScope,
-    inventory: &mut impl UsbInventory,
-    hosts: Vec<DiscoveredHost>,
-) -> application::Result<Response> {
-    response_from_prepared(prepare(config, scope)?, inventory, hosts)
-}
-
-fn response_from_prepared(
-    prepared: PreparedDiscovery,
-    inventory: &mut impl UsbInventory,
-    hosts: Vec<DiscoveredHost>,
-) -> application::Result<Response> {
+    // USB is enumerated, and its events emitted, before the network sweep
+    // starts: a caller watching for results sees USB printers immediately
+    // rather than waiting behind a sweep that may take seconds.
     let enumeration = if prepared.scope.includes_usb() {
         inventory.list_tolerant()?
     } else {
-        super::inventory::UsbEnumeration {
+        UsbEnumeration {
             printers: Vec::new(),
             failures: Vec::new(),
         }
@@ -247,31 +237,44 @@ fn response_from_prepared(
             }
         })
         .collect::<Vec<_>>();
-    let network_printers = if prepared.scope.network_scan().is_none() {
-        Vec::new()
-    } else {
-        hosts
-            .into_iter()
-            .map(|host| {
-                let configured_names = configured_names(&prepared.configuration, &host);
-                let configured_profile = prepared
-                    .configuration
-                    .network_printers()
-                    .iter()
-                    .find(|printer| {
-                        printer.port == host.port && printer.host == host.address.to_string()
-                    })
-                    .and_then(|printer| printer.profile.clone());
-                NetworkDiscovery {
-                    configured_names,
-                    configured_profile,
-                    host: host.address.to_string(),
-                    port: host.port,
-                    interface: host.interface,
+    for printer in &usb_printers {
+        observer(DiscoveryEvent::UsbPrinter(printer));
+    }
+    for failure in &enumeration.failures {
+        observer(DiscoveryEvent::UsbFailure(failure));
+    }
+
+    // `discovery::scan` reports each host as it answers via `Found`, ahead
+    // of its own return value, so a live caller can render results while
+    // the sweep is still running. The final `network_printers` list below
+    // is still built from the returned, deduplicated hosts (a host can be
+    // probed twice when explicit --subnet values overlap; see `scan`'s own
+    // doc comment) so the assembled `Response` matches what a non-streaming
+    // caller would have produced.
+    let hosts = if let Some(scan) = prepared.scope.network_scan() {
+        discovery::scan(
+            &prepared.scan_targets,
+            scan.port(),
+            scan.timeout(),
+            |event| match event {
+                discovery::ScanEvent::Progress { completed, total } => {
+                    observer(DiscoveryEvent::NetworkScanProgress { completed, total });
                 }
-            })
-            .collect::<Vec<_>>()
+                discovery::ScanEvent::Found(host) => {
+                    let printer = classify_network_host(&prepared.configuration, host);
+                    observer(DiscoveryEvent::NetworkPrinter(&printer));
+                }
+            },
+        )
+        .await
+    } else {
+        Vec::new()
     };
+    let network_printers = hosts
+        .iter()
+        .map(|host| classify_network_host(&prepared.configuration, host))
+        .collect::<Vec<_>>();
+
     let registration = RegistrationAvailability {
         usb: usb_printers
             .iter()
@@ -288,6 +291,34 @@ fn response_from_prepared(
         usb_failures: enumeration.failures,
         registration,
     })
+}
+
+/// One network host's classification, shared by the live `Found` event and
+/// the final `Response` assembly in `execute` so the two never drift apart.
+fn classify_network_host(
+    configuration: &PrinterConfiguration,
+    host: &DiscoveredHost,
+) -> NetworkDiscovery {
+    NetworkDiscovery {
+        configured_names: configured_names(configuration, host),
+        configured_profile: configuration
+            .network_printers()
+            .iter()
+            .find(|printer| printer.port == host.port && printer.host == host.address.to_string())
+            .and_then(|printer| printer.profile.clone()),
+        host: host.address.to_string(),
+        port: host.port,
+        interface: host.interface.clone(),
+    }
+}
+
+#[cfg(test)]
+async fn build_response(
+    config: Option<PathBuf>,
+    scope: DiscoveryScope,
+    inventory: &mut impl UsbInventory,
+) -> application::Result<Response> {
+    execute(prepare(config, scope)?, |_| {}, inventory).await
 }
 
 /// Targets for the given subnets, or for every automatically detected one
@@ -329,14 +360,14 @@ fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{DiscoveredHost, ScanTarget, SkipReason, Subnet};
+    use crate::discovery::{ScanTarget, SkipReason, Subnet};
     use crate::features::printers::inventory::{
         UsbEnumeration, UsbEnumerationFailure, UsbFailureStage,
     };
     use crate::features::printers::test_support::{
-        TolerantInventory, discovered, netum_usb_printer, temporary_configuration,
+        TolerantInventory, netum_usb_printer, temporary_configuration,
     };
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, TcpListener};
     use std::time::Duration;
 
     fn explicit_network_scan() -> NetworkScan {
@@ -346,6 +377,117 @@ mod tests {
             Duration::from_millis(50),
         )
         .expect("the explicit network scan should be valid")
+    }
+
+    /// Bind a real loopback listener that stands in for a network printer,
+    /// and hand back the ephemeral port it bound. 127.0.0.1 is this
+    /// machine's own address and gets self-excluded by
+    /// `explicit_scan_targets`, so tests that need a real discovered host
+    /// use a different loopback address instead — the same trick
+    /// `features::printers::add::cli`'s own discovery test relies on.
+    fn loopback_listener(address: [u8; 4]) -> (TcpListener, u16) {
+        let listener = TcpListener::bind((Ipv4Addr::from(address), 0))
+            .expect("an ephemeral loopback port should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener should report its address")
+            .port();
+        (listener, port)
+    }
+
+    /// A `NetworkScan` naming exactly one CIDR, with a timeout generous
+    /// enough for a loopback connection but still short enough to keep the
+    /// tests fast when nothing answers.
+    fn network_scan_for(subnet: &str, port: u16) -> NetworkScan {
+        NetworkScan::new(
+            port,
+            vec![Subnet::parse(subnet).expect("valid subnet")],
+            Duration::from_millis(200),
+        )
+        .expect("the network scan should be valid")
+    }
+
+    #[tokio::test]
+    async fn execution_emits_usb_printers_before_network_progress() {
+        let configuration = temporary_configuration("discover-events", "");
+        let prepared = prepare(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::Network(explicit_network_scan()),
+        )
+        .expect("network discovery should prepare");
+        let mut order = Vec::new();
+        // A network-only scope never calls the inventory, so an empty
+        // fixture is enough to stand in for it here.
+        let mut inventory = TolerantInventory { enumeration: None };
+
+        let response = execute(
+            prepared,
+            |event| match event {
+                DiscoveryEvent::Prepared { .. } => order.push("prepared"),
+                DiscoveryEvent::UsbPrinter(_) => order.push("usb"),
+                DiscoveryEvent::UsbFailure(_) => order.push("usb-failure"),
+                DiscoveryEvent::NetworkPrinter(_) => order.push("network"),
+                DiscoveryEvent::NetworkScanProgress { .. } => order.push("progress"),
+            },
+            &mut inventory,
+        )
+        .await
+        .expect("the scan should finish");
+
+        assert_eq!(order.first().copied(), Some("prepared"));
+        assert!(order.contains(&"progress"));
+        assert!(response.network_printers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn streamed_usb_and_network_printers_carry_the_same_data_as_the_final_response() {
+        let configuration = temporary_configuration("discover-emitted-printers", "");
+        let (_listener, port) = loopback_listener([127, 0, 0, 2]);
+        let prepared = prepare(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::All(network_scan_for("127.0.0.2/32", port)),
+        )
+        .expect("combined discovery should prepare");
+        let mut inventory = TolerantInventory {
+            enumeration: Some(UsbEnumeration {
+                printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
+                failures: vec![UsbEnumerationFailure {
+                    stage: UsbFailureStage::OpenDevice,
+                    vendor_id: 0x0416,
+                    product_id: 0x5012,
+                    reason: "denied".to_owned(),
+                    permission_denied: true,
+                }],
+            }),
+        };
+        let mut emitted_usb = Vec::new();
+        let mut emitted_usb_failures = Vec::new();
+        let mut emitted_network = Vec::new();
+
+        let response = execute(
+            prepared,
+            |event| match event {
+                DiscoveryEvent::UsbPrinter(printer) => emitted_usb.push(printer.clone()),
+                DiscoveryEvent::UsbFailure(failure) => emitted_usb_failures.push(failure.clone()),
+                DiscoveryEvent::NetworkPrinter(printer) => emitted_network.push(printer.clone()),
+                DiscoveryEvent::Prepared { .. } | DiscoveryEvent::NetworkScanProgress { .. } => {}
+            },
+            &mut inventory,
+        )
+        .await
+        .expect("combined discovery should finish");
+
+        // A caller streaming these events (a browser showing results as they
+        // arrive) must see exactly what the final `Response` reports —
+        // otherwise a live view and a completed one would disagree.
+        assert_eq!(emitted_usb, response.usb_printers);
+        assert_eq!(emitted_usb_failures, response.usb_failures);
+        assert_eq!(emitted_network, response.network_printers);
+        assert_eq!(
+            emitted_network.len(),
+            1,
+            "the loopback listener should be found"
+        );
     }
 
     #[test]
@@ -430,11 +572,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn usb_scope_enumerates_usb_without_accepting_network_results() {
+    #[tokio::test]
+    async fn usb_scope_enumerates_usb_without_accepting_network_results() {
         let configuration = temporary_configuration("discover-usb-scope", "");
-        let prepared = prepare(Some(configuration.path().to_owned()), DiscoveryScope::Usb)
-            .expect("USB discovery should prepare");
         let mut inventory = TolerantInventory {
             enumeration: Some(UsbEnumeration {
                 printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
@@ -442,11 +582,12 @@ mod tests {
             }),
         };
 
-        let response = response_from_prepared(
-            prepared,
+        let response = build_response(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::Usb,
             &mut inventory,
-            vec![discovered([10, 42, 0, 71], 9100)],
         )
+        .await
         .expect("USB discovery should build its response");
 
         assert_eq!(response.usb_printers.len(), 1);
@@ -454,21 +595,18 @@ mod tests {
         assert!(response.scan_targets.is_empty());
     }
 
-    #[test]
-    fn network_scope_scans_network_without_enumerating_usb() {
+    #[tokio::test]
+    async fn network_scope_scans_network_without_enumerating_usb() {
         let configuration = temporary_configuration("discover-network-scope", "");
-        let prepared = prepare(
-            Some(configuration.path().to_owned()),
-            DiscoveryScope::Network(explicit_network_scan()),
-        )
-        .expect("network discovery should prepare");
+        let (_listener, port) = loopback_listener([127, 0, 0, 2]);
         let mut inventory = TolerantInventory { enumeration: None };
 
-        let response = response_from_prepared(
-            prepared,
+        let response = build_response(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::Network(network_scan_for("127.0.0.2/32", port)),
             &mut inventory,
-            vec![discovered([10, 42, 0, 71], 9100)],
         )
+        .await
         .expect("network discovery should build its response");
 
         assert!(response.usb_printers.is_empty());
@@ -476,14 +614,10 @@ mod tests {
         assert_eq!(response.scan_targets.len(), 1);
     }
 
-    #[test]
-    fn all_scope_combines_usb_and_network_results() {
+    #[tokio::test]
+    async fn all_scope_combines_usb_and_network_results() {
         let configuration = temporary_configuration("discover-all-scope", "");
-        let prepared = prepare(
-            Some(configuration.path().to_owned()),
-            DiscoveryScope::All(explicit_network_scan()),
-        )
-        .expect("combined discovery should prepare");
+        let (_listener, port) = loopback_listener([127, 0, 0, 2]);
         let mut inventory = TolerantInventory {
             enumeration: Some(UsbEnumeration {
                 printers: vec![netum_usb_printer(vec![0x01], vec![0x81])],
@@ -491,11 +625,12 @@ mod tests {
             }),
         };
 
-        let response = response_from_prepared(
-            prepared,
+        let response = build_response(
+            Some(configuration.path().to_owned()),
+            DiscoveryScope::All(network_scan_for("127.0.0.2/32", port)),
             &mut inventory,
-            vec![discovered([10, 42, 0, 71], 9100)],
         )
+        .await
         .expect("combined discovery should build its response");
 
         assert_eq!(response.usb_printers.len(), 1);
@@ -503,8 +638,8 @@ mod tests {
         assert_eq!(response.scan_targets.len(), 1);
     }
 
-    #[test]
-    fn discover_returns_structured_results_and_tolerant_usb_failure_facts_without_output() {
+    #[tokio::test]
+    async fn discover_returns_structured_results_and_tolerant_usb_failure_facts_without_output() {
         let configuration = temporary_configuration("typed-discover", "");
         let mut inventory = TolerantInventory {
             enumeration: Some(UsbEnumeration {
@@ -518,23 +653,19 @@ mod tests {
                 }],
             }),
         };
+        let (_listener, port) = loopback_listener([127, 0, 0, 2]);
         let targets = vec![ScanTarget {
-            subnet: Subnet::parse("10.42.0.0/24").expect("valid subnet"),
+            subnet: Subnet::parse("127.0.0.2/32").expect("valid subnet"),
             interface: None,
             excluded: Vec::new(),
-        }];
-        let hosts = vec![DiscoveredHost {
-            address: Ipv4Addr::new(10, 42, 0, 71),
-            port: 9100,
-            interface: Some("enx0".to_owned()),
         }];
 
         let response = build_response(
             Some(configuration.path().to_owned()),
-            DiscoveryScope::All(explicit_network_scan()),
+            DiscoveryScope::All(network_scan_for("127.0.0.2/32", port)),
             &mut inventory,
-            hosts,
         )
+        .await
         .expect("partial USB failure should not abort discovery");
 
         assert_eq!(response.scan_targets, targets);
@@ -545,15 +676,24 @@ mod tests {
         assert_eq!(response.usb_failures[0].reason, "denied");
         assert!(response.usb_failures[0].permission_denied);
         assert_eq!(response.network_printers.len(), 1);
-        assert_eq!(response.network_printers[0].host, "10.42.0.71");
+        assert_eq!(response.network_printers[0].host, "127.0.0.2");
         assert!(response.registration.network);
     }
 
-    #[test]
-    fn discover_transforms_configured_and_new_usb_and_network_results() {
+    #[tokio::test]
+    async fn discover_transforms_configured_and_new_usb_and_network_results() {
+        // Two loopback addresses sharing one port: `discovery::scan` probes
+        // every target host on a single shared port, so two distinct
+        // "printers" need two addresses rather than two ports. 127.0.0.1 is
+        // this machine's own address and would be self-excluded, hence
+        // starting at .2 (see `loopback_listener`).
+        let (_configured_listener, port) = loopback_listener([127, 0, 0, 2]);
+        let _unconfigured_listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 3), port))
+            .expect("the same port should also bind on a second loopback address");
         let configuration = temporary_configuration(
             "discover-transformation",
-            r#"
+            &format!(
+                r#"
 [counter]
 transport = "usb"
 vendor_id = "0x0416"
@@ -565,15 +705,16 @@ profile = "NT-5890K"
 
 [kitchen]
 transport = "network"
-host = "10.42.0.71"
-port = 9100
+host = "127.0.0.2"
+port = {port}
 profile = "TM-T88V"
 
 [kitchen-alias]
 transport = "network"
-host = "10.42.0.71"
-port = 9100
-"#,
+host = "127.0.0.2"
+port = {port}
+"#
+            ),
         );
         let configured_usb = netum_usb_printer(vec![0x01], vec![0x81]);
         let mut new_usb = netum_usb_printer(vec![0x02], vec![0x82]);
@@ -588,17 +729,13 @@ port = 9100
                 failures: Vec::new(),
             }),
         };
-        let hosts = vec![
-            discovered([10, 42, 0, 71], 9100),
-            discovered([10, 42, 0, 72], 9100),
-        ];
 
         let response = build_response(
             Some(configuration.path().to_owned()),
-            DiscoveryScope::All(explicit_network_scan()),
+            DiscoveryScope::All(network_scan_for("127.0.0.2/31", port)),
             &mut inventory,
-            hosts,
         )
+        .await
         .expect("the typed discovery response should be built");
 
         assert_eq!(response.usb_printers.len(), 2);
@@ -631,18 +768,18 @@ port = 9100
         assert!(response.registration.network);
     }
 
-    #[test]
-    fn discover_transport_filters_skip_the_other_transport() {
+    #[tokio::test]
+    async fn discover_transport_filters_skip_the_other_transport() {
         let configuration = temporary_configuration("discover-transport-filter", "");
-        let hosts = vec![discovered([10, 42, 0, 71], 9100)];
+        let (_listener, port) = loopback_listener([127, 0, 0, 2]);
         let mut network_inventory = TolerantInventory { enumeration: None };
 
         let network = build_response(
             Some(configuration.path().to_owned()),
-            DiscoveryScope::Network(explicit_network_scan()),
+            DiscoveryScope::Network(network_scan_for("127.0.0.2/32", port)),
             &mut network_inventory,
-            hosts.clone(),
         )
+        .await
         .expect("network-only discovery should not enumerate USB");
         assert!(network.usb_printers.is_empty());
         assert_eq!(network.network_printers.len(), 1);
@@ -657,8 +794,8 @@ port = 9100
             Some(configuration.path().to_owned()),
             DiscoveryScope::Usb,
             &mut usb_inventory,
-            hosts,
         )
+        .await
         .expect("USB-only discovery should ignore network hosts");
         assert_eq!(usb.usb_printers.len(), 1);
         assert!(usb.network_printers.is_empty());

@@ -12,7 +12,7 @@ use super::super::cli::output::{
 };
 use super::super::cli::scan_announcement;
 use super::super::cli::{DiscoverPrintersArgs, InventoryTransport};
-use super::super::inventory::{UsbEnumerationFailure, UsbFailureStage};
+use super::super::inventory::{NusbInventory, UsbEnumerationFailure, UsbFailureStage};
 use super::{DiscoveryEvent, DiscoveryScope, NetworkScan, Response, execute, prepare};
 use crate::error::CliError;
 
@@ -57,37 +57,47 @@ pub(crate) async fn run_discover(
     );
     bar.set_message("Scanning for network printers");
     let mut length_set = false;
-    let response = execute(prepared, |event| match event {
-        DiscoveryEvent::Prepared {
-            config_path,
-            scope,
-            scan_targets,
-            skipped,
-        } => {
-            eprintln!("Reading configuration from {}", config_path.display());
-            if let Some(scan) = scope.network_scan() {
-                // Printed whenever an adapter was skipped, even if nothing is
-                // left to scan: a combined USB+network discovery still has USB
-                // work to do, and the omission must be reported either way.
-                for adapter in skipped {
-                    eprintln!("Skipped {}", adapter.describe());
-                }
-                if !scan_targets.is_empty() {
-                    eprintln!("{}", scan_announcement(scan_targets, scan.port()));
-                    if scan.uses_automatic_subnets() {
-                        eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+    let response = execute(
+        prepared,
+        |event| match event {
+            DiscoveryEvent::Prepared {
+                config_path,
+                scope,
+                scan_targets,
+                skipped,
+            } => {
+                eprintln!("Reading configuration from {}", config_path.display());
+                if let Some(scan) = scope.network_scan() {
+                    // Printed whenever an adapter was skipped, even if nothing is
+                    // left to scan: a combined USB+network discovery still has USB
+                    // work to do, and the omission must be reported either way.
+                    for adapter in skipped {
+                        eprintln!("Skipped {}", adapter.describe());
+                    }
+                    if !scan_targets.is_empty() {
+                        eprintln!("{}", scan_announcement(scan_targets, scan.port()));
+                        if scan.uses_automatic_subnets() {
+                            eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+                        }
                     }
                 }
             }
-        }
-        DiscoveryEvent::NetworkScanProgress { completed, total } => {
-            if !length_set {
-                bar.set_length(total);
-                length_set = true;
+            // The CLI still renders from the final `Response` once discovery
+            // finishes, so a live result here needs no immediate handling —
+            // only the progress bar reacts as the sweep runs.
+            DiscoveryEvent::UsbPrinter(_)
+            | DiscoveryEvent::UsbFailure(_)
+            | DiscoveryEvent::NetworkPrinter(_) => {}
+            DiscoveryEvent::NetworkScanProgress { completed, total } => {
+                if !length_set {
+                    bar.set_length(total);
+                    length_set = true;
+                }
+                bar.set_position(completed);
             }
-            bar.set_position(completed);
-        }
-    })
+        },
+        &mut NusbInventory,
+    )
     .await;
     bar.finish_and_clear();
     let response = response?;

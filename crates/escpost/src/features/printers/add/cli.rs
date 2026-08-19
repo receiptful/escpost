@@ -19,7 +19,7 @@ use super::super::discover::{
     DiscoveryEvent, DiscoveryScope, NetworkDiscovery, NetworkScan, execute as execute_discovery,
     prepare as prepare_discovery,
 };
-use super::super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
+use super::super::inventory::{NusbInventory, UsbInventory, UsbPrinter, configuration_matches};
 use super::{Connection, Request, Response, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -519,28 +519,37 @@ async fn discover_printer_for_add(
     );
     bar.set_message("Scanning for network printers");
     let mut length_set = false;
-    let response = execute_discovery(prepared, |event| match event {
-        DiscoveryEvent::Prepared {
-            scope,
-            scan_targets,
-            ..
-        } => {
-            let scan = scope
-                .network_scan()
-                .expect("add discovery always prepares a network scope");
-            eprintln!("{}", scan_announcement(scan_targets, scan.port()));
-            if scan.uses_automatic_subnets() {
-                eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+    let response = execute_discovery(
+        prepared,
+        |event| match event {
+            DiscoveryEvent::Prepared {
+                scope,
+                scan_targets,
+                ..
+            } => {
+                let scan = scope
+                    .network_scan()
+                    .expect("add discovery always prepares a network scope");
+                eprintln!("{}", scan_announcement(scan_targets, scan.port()));
+                if scan.uses_automatic_subnets() {
+                    eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+                }
             }
-        }
-        DiscoveryEvent::NetworkScanProgress { completed, total } => {
-            if !length_set {
-                bar.set_length(total);
-                length_set = true;
+            // Discovery for `add` is always network-only, so USB events
+            // never fire here; the final `Response` is what selection reads.
+            DiscoveryEvent::UsbPrinter(_)
+            | DiscoveryEvent::UsbFailure(_)
+            | DiscoveryEvent::NetworkPrinter(_) => {}
+            DiscoveryEvent::NetworkScanProgress { completed, total } => {
+                if !length_set {
+                    bar.set_length(total);
+                    length_set = true;
+                }
+                bar.set_position(completed);
             }
-            bar.set_position(completed);
-        }
-    })
+        },
+        &mut NusbInventory,
+    )
     .await;
     bar.finish_and_clear();
     let response = response?;
