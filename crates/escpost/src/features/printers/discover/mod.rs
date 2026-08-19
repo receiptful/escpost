@@ -263,7 +263,7 @@ pub(crate) fn discovery_targets(subnets: &[Subnet]) -> application::Result<Vec<S
         .map(|subnet| ScanTarget {
             subnet: *subnet,
             interface: None,
-            excluded: None,
+            excluded: Vec::new(),
         })
         .collect())
 }
@@ -390,7 +390,7 @@ mod tests {
         let targets = vec![ScanTarget {
             subnet: Subnet::parse("10.42.0.0/24").expect("valid subnet"),
             interface: None,
-            excluded: None,
+            excluded: Vec::new(),
         }];
         let hosts = vec![DiscoveredHost {
             address: Ipv4Addr::new(10, 42, 0, 71),

@@ -55,6 +55,15 @@ impl Subnet {
         self.prefix
     }
 
+    /// Whether this subnet covers an address, used to exclude the scanning
+    /// host's own addresses from any target that contains them.
+    // Not yet called outside tests: the caller that filters explicit scan
+    // targets down to their containing subnet lands in the next change.
+    #[allow(dead_code)]
+    pub(crate) fn contains(&self, address: Ipv4Addr) -> bool {
+        u32::from(address) & prefix_mask(self.prefix) == u32::from(self.network)
+    }
+
     /// Probe candidates. Ordinary subnets exclude the network and broadcast
     /// addresses; /31 and /32 have neither (RFC 3021), so every address is a
     /// host — the integration tests rely on /32 working.
@@ -92,13 +101,14 @@ pub(crate) struct InterfaceAddress {
     pub(crate) netmask: Ipv4Addr,
 }
 
-/// One subnet to sweep. `excluded` is the scanning host's own address, which
-/// automatic mode never probes.
+/// One subnet to sweep. `excluded` holds the scanning host's own addresses
+/// inside this subnet, which no scan ever probes: the workbench is not a
+/// printer, and its own `serve` listener must never be discovered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ScanTarget {
     pub(crate) subnet: Subnet,
     pub(crate) interface: Option<String>,
-    pub(crate) excluded: Option<Ipv4Addr>,
+    pub(crate) excluded: Vec<Ipv4Addr>,
 }
 
 /// The connected subnets an automatic scan sweeps: non-loopback, contiguous
@@ -115,16 +125,34 @@ pub(crate) fn auto_scan_targets(addresses: Vec<InterfaceAddress>) -> Vec<ScanTar
         if subnet.prefix() < AUTO_SCAN_MINIMUM_PREFIX {
             continue;
         }
-        if targets.iter().any(|target| target.subnet == subnet) {
-            continue;
+        match targets.iter_mut().find(|target| target.subnet == subnet) {
+            // A second address on a known subnet adds an exclusion rather than
+            // a duplicate target; the first interface still names the target.
+            Some(target) => target.excluded.push(interface.address),
+            None => targets.push(ScanTarget {
+                subnet,
+                interface: Some(interface.name),
+                excluded: vec![interface.address],
+            }),
         }
-        targets.push(ScanTarget {
-            subnet,
-            interface: Some(interface.name),
-            excluded: Some(interface.address),
-        });
     }
     targets
+}
+
+/// How many addresses a scan of these targets will probe. Both the progress
+/// bar and the pre-scan announcements are sized from this.
+pub(crate) fn probe_count(targets: &[ScanTarget]) -> u64 {
+    targets
+        .iter()
+        .map(|target| {
+            target
+                .subnet
+                .hosts()
+                .into_iter()
+                .filter(|address| !target.excluded.contains(address))
+                .count() as u64
+        })
+        .sum()
 }
 
 pub(crate) fn local_scan_targets() -> application::Result<Vec<ScanTarget>> {
@@ -175,28 +203,15 @@ pub(crate) async fn scan(
     mut on_progress: impl FnMut(u64, u64),
 ) -> Vec<DiscoveredHost> {
     // Counted before spawning so `total` is known, and reported via
-    // `on_progress`, before the first probe starts. Counted per target
-    // (each target's transient `hosts()` Vec is dropped before the next) so
-    // this never holds every target's candidates in memory at once — that
-    // matters for large explicit --subnet stacks.
-    let total: u64 = targets
-        .iter()
-        .map(|target| {
-            target
-                .subnet
-                .hosts()
-                .into_iter()
-                .filter(|address| target.excluded != Some(*address))
-                .count() as u64
-        })
-        .sum();
+    // `on_progress`, before the first probe starts.
+    let total = probe_count(targets);
     on_progress(0, total);
 
     let limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_PROBES));
     let mut probes = JoinSet::new();
     for target in targets {
         for address in target.subnet.hosts() {
-            if target.excluded == Some(address) {
+            if target.excluded.contains(&address) {
                 continue;
             }
             let interface = target.interface.clone();
@@ -238,7 +253,9 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use super::{DiscoveredHost, InterfaceAddress, ScanTarget, Subnet, auto_scan_targets, scan};
+    use super::{
+        DiscoveredHost, InterfaceAddress, ScanTarget, Subnet, auto_scan_targets, probe_count, scan,
+    };
 
     #[test]
     fn parse_normalizes_host_bits_to_the_network_address() {
@@ -302,6 +319,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_subnet_contains_only_its_own_addresses() {
+        let subnet = Subnet::parse("10.42.0.0/24").expect("a valid CIDR should parse");
+
+        assert!(subnet.contains(Ipv4Addr::new(10, 42, 0, 71)));
+        assert!(!subnet.contains(Ipv4Addr::new(10, 43, 0, 71)));
+    }
+
     fn interface(name: &str, address: [u8; 4], netmask: [u8; 4]) -> InterfaceAddress {
         InterfaceAddress {
             name: name.to_owned(),
@@ -320,7 +345,7 @@ mod tests {
             vec![ScanTarget {
                 subnet: Subnet::parse("10.42.0.0/24").expect("a valid CIDR should parse"),
                 interface: Some("enx0".to_owned()),
-                excluded: Some(Ipv4Addr::new(10, 42, 0, 1)),
+                excluded: vec![Ipv4Addr::new(10, 42, 0, 1)],
             }]
         );
     }
@@ -346,6 +371,39 @@ mod tests {
         assert_eq!(targets[0].interface.as_deref(), Some("eth0"));
     }
 
+    #[test]
+    fn automatic_targets_exclude_every_local_address_of_one_subnet() {
+        let targets = auto_scan_targets(vec![
+            InterfaceAddress {
+                name: "enx0".to_owned(),
+                address: Ipv4Addr::new(10, 42, 0, 71),
+                netmask: Ipv4Addr::new(255, 255, 255, 0),
+            },
+            InterfaceAddress {
+                name: "enx0:1".to_owned(),
+                address: Ipv4Addr::new(10, 42, 0, 72),
+                netmask: Ipv4Addr::new(255, 255, 255, 0),
+            },
+        ]);
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            targets[0].excluded,
+            vec![Ipv4Addr::new(10, 42, 0, 71), Ipv4Addr::new(10, 42, 0, 72)]
+        );
+    }
+
+    #[test]
+    fn the_probe_count_subtracts_every_excluded_address() {
+        let targets = vec![ScanTarget {
+            subnet: Subnet::parse("10.42.0.0/24").expect("a valid CIDR should parse"),
+            interface: None,
+            excluded: vec![Ipv4Addr::new(10, 42, 0, 71), Ipv4Addr::new(10, 42, 0, 72)],
+        }];
+
+        assert_eq!(probe_count(&targets), 252);
+    }
+
     #[tokio::test]
     async fn scan_reports_a_listening_host_and_ignores_closed_ports() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
@@ -357,7 +415,7 @@ mod tests {
         let target = ScanTarget {
             subnet: Subnet::parse("127.0.0.1/32").expect("a valid CIDR should parse"),
             interface: Some("lo".to_owned()),
-            excluded: None,
+            excluded: Vec::new(),
         };
 
         let hosts = scan(
@@ -392,7 +450,7 @@ mod tests {
         let target = ScanTarget {
             subnet: Subnet::parse("127.0.0.1/32").expect("a valid CIDR should parse"),
             interface: None,
-            excluded: Some(Ipv4Addr::new(127, 0, 0, 1)),
+            excluded: vec![Ipv4Addr::new(127, 0, 0, 1)],
         };
 
         assert!(
@@ -413,7 +471,7 @@ mod tests {
         let target = ScanTarget {
             subnet: Subnet::parse("127.0.0.1/32").expect("a valid CIDR should parse"),
             interface: None,
-            excluded: None,
+            excluded: Vec::new(),
         };
         // Two targets probing the same address spawn two independent probes
         // (the final results are what dedup, not the probe count), giving a

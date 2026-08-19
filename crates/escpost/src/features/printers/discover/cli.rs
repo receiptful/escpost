@@ -487,12 +487,12 @@ Fix USB permissions with: sudo escpost printers grant-usb-permissions
             ScanTarget {
                 subnet: Subnet::parse("10.42.0.0/24").expect("valid subnet"),
                 interface: Some("enx0".to_owned()),
-                excluded: Some(Ipv4Addr::new(10, 42, 0, 9)),
+                excluded: vec![Ipv4Addr::new(10, 42, 0, 9)],
             },
             ScanTarget {
                 subnet: Subnet::parse("192.168.50.0/24").expect("valid subnet"),
                 interface: None,
-                excluded: None,
+                excluded: Vec::new(),
             },
         ];
 
@@ -507,7 +507,7 @@ Fix USB permissions with: sudo escpost printers grant-usb-permissions
         let targets = vec![ScanTarget {
             subnet: Subnet::parse("10.42.0.0/24").expect("valid subnet"),
             interface: None,
-            excluded: None,
+            excluded: Vec::new(),
         }];
 
         assert_eq!(
