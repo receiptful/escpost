@@ -3,6 +3,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+#[derive(Debug)]
 pub(crate) struct ApiError {
     status: StatusCode,
     code: &'static str,
@@ -50,6 +51,18 @@ impl ApiError {
             StatusCode::INTERNAL_SERVER_ERROR,
             "network_detection_unavailable",
             "The machine's network interfaces could not be read.",
+        )
+    }
+
+    /// Discovery could not even be prepared — the configuration is unreadable
+    /// or the requested scope leaves nothing to scan. Raised before the stream
+    /// opens, so the browser gets a plain JSON error rather than an event
+    /// stream whose first event is a failure.
+    pub(crate) fn discovery_failure() -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "discovery_unavailable",
+            "Printer discovery could not be started.",
         )
     }
 

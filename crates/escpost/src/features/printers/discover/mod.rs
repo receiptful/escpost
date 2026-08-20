@@ -98,22 +98,13 @@ pub(crate) enum DiscoveryEvent<'a> {
         scan_targets: &'a [ScanTarget],
         skipped: &'a [SkippedInterface],
     },
-    // The CLI deliberately ignores these three payloads today (it still
-    // renders from the final `Response` once discovery finishes) and no
-    // other in-crate consumer reads them yet — that consumer is the
-    // browser-facing endpoint this operation layer exists to support, added
-    // in later work. `#[allow(dead_code)]` says so explicitly rather than
-    // letting the fields quietly vanish to satisfy the lint.
-    #[allow(dead_code)]
     UsbPrinter(&'a UsbDiscovery),
-    #[allow(dead_code)]
     UsbFailure(&'a UsbEnumerationFailure),
     /// One classified network host, fired as `discovery::scan` finds it.
     /// `discovery::ScanEvent::Found` fires at most once per address even
     /// when scan targets overlap (see its own doc comment), so this fires
     /// at most once per host too: the set of hosts announced this way
     /// equals the set in the final `Response.network_printers`.
-    #[allow(dead_code)]
     NetworkPrinter(&'a NetworkDiscovery),
     NetworkScanProgress {
         completed: u64,

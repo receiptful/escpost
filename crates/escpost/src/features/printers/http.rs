@@ -87,9 +87,12 @@ struct PrinterResponse {
     connection: ConnectionResponse,
 }
 
+/// The one connection shape the printers API speaks, shared by the listing
+/// here and by the discovery stream's `printer` events so a client parses a
+/// printer's connection the same way wherever it arrives.
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ConnectionResponse {
+pub(super) enum ConnectionResponse {
     Usb {
         vendor_id: u16,
         product_id: u16,

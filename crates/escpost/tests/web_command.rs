@@ -269,6 +269,78 @@ fn discovery_networks_lists_detected_and_skipped_adapters() {
 }
 
 #[test]
+fn discovery_streams_prepared_progress_and_completion() {
+    let configuration_directory = temporary_directory("discovery-stream");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    // A /30 with a 1 ms timeout is two probes that both give up immediately,
+    // so the stream reaches `completed` and closes without the suite waiting
+    // on a real sweep. TEST-NET-1 (RFC 5737) is never a machine's own subnet,
+    // so no local address is excluded from it and the probe count is exactly
+    // two wherever this runs.
+    let stream = http_get_event_stream(
+        port,
+        "/api/printers/discover?transport=network&subnet=192.0.2.0/30&timeout=1",
+    );
+    let unparsable_subnet = http_get_bytes(
+        port,
+        "/api/printers/discover?transport=network&subnet=192.0.2.0",
+    );
+    // A listener on a loopback address that is not this machine's own
+    // 127.0.0.1 stands in for a network printer: `explicit_scan_targets`
+    // excludes the scanning host's addresses, and 127.0.0.2 is not one.
+    let printer = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 2), 0))
+        .expect("a stand-in network printer should bind");
+    let printer_port = printer
+        .local_addr()
+        .expect("the stand-in printer should report its address")
+        .port();
+    let found = http_get_event_stream(
+        port,
+        &format!(
+            "/api/printers/discover?transport=network&subnet=127.0.0.2/32&port={printer_port}&timeout=500"
+        ),
+    );
+    let undeclared_parameter = http_get_bytes(port, "/api/printers/discover?scan=1");
+    let network_option_for_usb =
+        http_get_bytes(port, "/api/printers/discover?transport=usb&timeout=1");
+    stop(&mut child);
+    drop(printer);
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert!(stream.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(stream.contains("content-type: text/event-stream"));
+    assert!(stream.contains("event: prepared"));
+    assert!(stream.contains("event: progress"));
+    assert!(stream.contains("event: completed"));
+    assert!(stream.contains("\"total_probes\":2"));
+    assert!(stream.contains("\"completed\":2,\"total\":2"));
+
+    assert!(found.contains("event: printer"));
+    assert!(found.contains("\"transport\":\"network\""));
+    assert!(found.contains(&format!(
+        "\"connection\":{{\"type\":\"network\",\"host\":\"127.0.0.2\",\"port\":{printer_port}}}"
+    )));
+    assert!(found.contains("\"configured_names\":[]"));
+    assert!(found.contains("event: completed"));
+
+    for response in [
+        &unparsable_subnet,
+        &undeclared_parameter,
+        &network_option_for_usb,
+    ] {
+        assert_eq!(response_status(response), "HTTP/1.1 400 Bad Request");
+        let body: serde_json::Value = serde_json::from_slice(response_body(response))
+            .expect("the rejected discovery query should answer with JSON");
+        assert_eq!(body["error"]["code"], "invalid_query");
+    }
+}
+
+#[test]
 fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
@@ -277,6 +349,7 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let paths = [
         "/api/status",
         "/api/printers/list",
+        "/api/printers/discover",
         "/api/printers/discover/networks",
         "/api/profiles/list",
         "/api/jobs/current",
@@ -1015,6 +1088,33 @@ fn wait_until_listening(child: &mut Child, port: u16) {
 
 fn http_get(port: u16, path: &str) -> String {
     String::from_utf8(http_get_bytes(port, path)).expect("the HTTP response should be UTF-8")
+}
+
+/// Read an event-stream response until the server closes it. `http_get`
+/// blocks until end of stream, which would hang the suite forever if the
+/// stream never terminated, so this gives up after a generous patience and
+/// returns whatever arrived — an assertion failure names the missing event
+/// instead of the run timing out with no clue.
+fn http_get_event_stream(port: u16, path: &str) -> String {
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("the event stream socket should accept a read timeout");
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .expect("the HTTP request should be writable");
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+        }
+    }
+    String::from_utf8(response).expect("the event stream should be UTF-8")
 }
 
 fn http_get_bytes(port: u16, path: &str) -> Vec<u8> {

@@ -21,6 +21,7 @@ clap.workspace = true
 directories.workspace = true
 escpost-render = { version = "0.1.0", path = "../escpost-render" }
 escpost-profiles = { version = "0.1.0", path = "../escpost-profiles" }
+futures-core.workspace = true
 if-addrs.workspace = true
 indicatif.workspace = true
 inquire.workspace = true
