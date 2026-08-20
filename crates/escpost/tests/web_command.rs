@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1263,12 +1265,39 @@ fn start_file_web(input_path: &Path, port: u16, watch: bool) -> Child {
         .expect("the escpost command should start")
 }
 
+/// An ephemeral port no other test in this process has been handed.
+///
+/// Binding port 0 and dropping the listener returns the port to the pool
+/// immediately, so two tests starting at once could be handed the same one:
+/// the second child then fails to bind while the first is still starting, and
+/// whichever test connects first gets a refusal or the wrong server. These
+/// tests run in parallel threads, so that race is ordinary, not exotic.
+/// Remembering every port already issued removes it within the process, which
+/// is where all 31 callers live.
 fn unused_loopback_port() -> u16 {
-    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-        .expect("an ephemeral loopback port should be available")
-        .local_addr()
-        .expect("the listener should have a local address")
-        .port()
+    static ISSUED: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
+    let mut issued = ISSUED.lock().expect("the issued-port set should be usable");
+    let issued = issued.get_or_insert_with(HashSet::new);
+    // The OS hands out a different port while the previous candidate's
+    // listener is still open, so a collision resolves on the next turn rather
+    // than spinning. The bound is only here to fail loudly instead of hanging
+    // if the ephemeral range is somehow exhausted.
+    let mut held = Vec::new();
+    for _ in 0..64 {
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("an ephemeral loopback port should be available");
+        let port = listener
+            .local_addr()
+            .expect("the listener should have a local address")
+            .port();
+        if issued.insert(port) {
+            return port;
+        }
+        // Keep the duplicate bound so the next attempt cannot be handed it
+        // again; every listener drops when this function returns.
+        held.push(listener);
+    }
+    panic!("no unissued ephemeral loopback port was available after 64 attempts");
 }
 
 fn wait_until_listening(child: &mut Child, port: u16) {
