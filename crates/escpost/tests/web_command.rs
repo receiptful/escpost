@@ -347,7 +347,7 @@ fn discovery_streams_prepared_progress_and_completion() {
 }
 
 #[test]
-fn adding_a_network_printer_rejects_a_duplicate_name() {
+fn adding_a_printer_rejects_a_blank_name() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
 
