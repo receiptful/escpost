@@ -1,4 +1,13 @@
-import type { ApiErrorEnvelope, CurrentJobResponse, PrintersResponse, ProfilesResponse, StatusResponse } from "./types";
+import type {
+  AddPrinterBody,
+  AddPrinterResponse,
+  ApiErrorEnvelope,
+  CurrentJobResponse,
+  DiscoveryNetworksResponse,
+  PrintersResponse,
+  ProfilesResponse,
+  StatusResponse,
+} from "./types";
 
 export class ApiRequestError extends Error {
   readonly kind = "api";
@@ -37,16 +46,16 @@ function isErrorEnvelope(value: unknown): value is ApiErrorEnvelope {
   );
 }
 
-export async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+// Shared by every verb: fetch, translate a rejected/aborted fetch into
+// `NetworkRequestError`, then decode the JSON envelope the same way whether
+// the request was a GET or a POST. `requestJson` and `postJson` differ only
+// in the `RequestInit` they build.
+async function request<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-      signal,
-    });
+    response = await fetch(path, init);
   } catch (error) {
-    if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+    if (init.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
       throw error;
     }
     throw new NetworkRequestError();
@@ -78,6 +87,24 @@ export async function requestJson<T>(path: string, signal?: AbortSignal): Promis
   return body as T;
 }
 
+export function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal,
+  });
+}
+
+function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
 export function getStatus(signal?: AbortSignal) {
   return requestJson<StatusResponse>("/api/status", signal);
 }
@@ -93,4 +120,12 @@ export function getProfiles(signal?: AbortSignal) {
 
 export function getCurrentJob(signal?: AbortSignal) {
   return requestJson<CurrentJobResponse>("/api/jobs/current", signal);
+}
+
+export function getDiscoveryNetworks(signal?: AbortSignal) {
+  return requestJson<DiscoveryNetworksResponse>("/api/printers/discover/networks", signal);
+}
+
+export function addPrinter(body: AddPrinterBody, signal?: AbortSignal) {
+  return postJson<AddPrinterResponse>("/api/printers/add", body, signal);
 }
