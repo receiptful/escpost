@@ -665,6 +665,20 @@ fn api_status_has_no_virtual_printer_for_render_web_mode() {
 }
 
 #[test]
+fn api_status_reports_the_resolved_configuration_path() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/status");
+    stop(&mut child);
+
+    let body = String::from_utf8_lossy(response_body(&response));
+    assert!(body.contains("\"config_path\":"));
+    assert!(body.contains("printers.toml"));
+}
+
+#[test]
 fn web_mode_exposes_ordered_sheet_metadata_and_png_bytes() {
     let port = unused_loopback_port();
     let case = "multi-sheet";

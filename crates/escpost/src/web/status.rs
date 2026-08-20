@@ -11,6 +11,7 @@ use super::WebState;
 pub(super) struct StatusResponse {
     virtual_printer: Option<VirtualPrinterStatus>,
     jobs_processed: u64,
+    config_path: String,
 }
 
 #[derive(Serialize)]
@@ -37,11 +38,21 @@ pub(super) async fn status(
             address: address.to_string(),
         });
 
+    // Every printer command prints the file it writes to; the browser is
+    // about to start writing printers to that same file, so it needs to see
+    // which one. Status must never fail because configuration could not be
+    // resolved, so a resolution error degrades to an empty string instead of
+    // taking down the endpoint that reports server health.
+    let config_path = crate::configuration::resolved_path(None)
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+
     (
         [(header::CACHE_CONTROL, "no-store")],
         Json(StatusResponse {
             virtual_printer,
             jobs_processed: runtime.jobs_processed,
+            config_path,
         }),
     )
 }
