@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, cleanup, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import type { DiscoveryQuery } from "../api/discovery-stream";
 import { AppDataProvider, useAppData } from "./data";
 
 const readyStatus = { virtual_printer: null, jobs_processed: 3 };
@@ -22,6 +23,49 @@ function FlashProbe() {
   return <span data-testid="flashes">{JSON.stringify(printerFlashes)}</span>;
 }
 
+const scanQuery: DiscoveryQuery = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
+
+function ScanProbe() {
+  const { startScan } = useAppData();
+  return <button type="button" onClick={() => startScan(scanQuery)}>Scan</button>;
+}
+
+// Neither Bun's runtime nor the happy-dom registrator used by the test setup
+// provides a global `EventSource`, so `startScan` (which calls the real
+// `openDiscoveryStream`) is exercised against a small stand-in, the same way
+// `discovery-stream.test.ts` stands in for it. Each instance stamps its own
+// construction and closure with a shared monotonic counter, so a test can
+// assert not just that a stream eventually closed but that it closed before
+// the next one was constructed — the actual ordering guarantee that matters,
+// since closing the `EventSource` is the only way a scan is cancelled
+// server-side.
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  private static sequence = 0;
+  readonly url: string;
+  readonly constructedAt: number;
+  closed = false;
+  closedAt: number | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    this.constructedAt = FakeEventSource.sequence++;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener() {
+    // No events are emitted in this test; startScan only needs a stream it
+    // can open and close.
+  }
+
+  close() {
+    this.closed = true;
+    this.closedAt = FakeEventSource.sequence++;
+  }
+}
+
+const originalEventSource = globalThis.EventSource;
+
 // Steps `bun:test`'s fake clock forward and flushes the microtask queue, so
 // a `.then`/`.finally` chain a timer kicked off has settled before the next
 // assertion runs.
@@ -39,6 +83,7 @@ async function advanceTimers(milliseconds: number) {
 afterEach(() => {
   cleanup();
   jest.useRealTimers();
+  globalThis.EventSource = originalEventSource;
 });
 
 describe("AppDataProvider", () => {
@@ -300,5 +345,32 @@ describe("AppDataProvider", () => {
 
     await act(async () => { await advanceTimers(10_000); });
     expect(screen.getByTestId("flashes").textContent).toBe("{}");
+  });
+
+  test("startScan closes the previous scan stream before opening the next one", async () => {
+    FakeEventSource.instances = [];
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    globalThis.fetch = ((input: RequestInfo | URL) => (String(input) === "/api/status"
+      ? Promise.resolve(json(readyStatus))
+      : Promise.resolve(json(printerInventory)))) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><ScanProbe /></AppDataProvider>);
+    const button = screen.getByRole("button", { name: "Scan" });
+
+    await act(async () => { fireEvent.click(button); });
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0]?.closed).toBe(false);
+
+    await act(async () => { fireEvent.click(button); });
+    expect(FakeEventSource.instances).toHaveLength(2);
+
+    const [first, second] = FakeEventSource.instances;
+    expect(first?.closed).toBe(true);
+    // The property that matters is ordering, not just eventual closure: the
+    // first stream must be closed before the second is even constructed, or
+    // the previous scan keeps running to completion on the server (closing
+    // the EventSource is the only cancellation mechanism it has).
+    expect(first?.closedAt).not.toBeNull();
+    expect(first?.closedAt as number).toBeLessThan(second?.constructedAt as number);
   });
 });
