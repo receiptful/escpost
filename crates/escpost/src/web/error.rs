@@ -8,6 +8,10 @@ pub(crate) struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    /// The `Allow` header value for a 405, e.g. `"GET, HEAD"`. Only ever set
+    /// by `method_not_allowed`, which is the only constructor that produces
+    /// `StatusCode::METHOD_NOT_ALLOWED`.
+    allow: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -85,12 +89,20 @@ impl ApiError {
         )
     }
 
-    pub(crate) fn method_not_allowed() -> Self {
-        Self::new(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "method_not_allowed",
-            "This API endpoint only accepts GET and HEAD requests.",
-        )
+    /// `methods` are the methods the route's own handlers actually accept
+    /// (e.g. `&["GET", "HEAD"]` or `&["POST"]`), so the message and the
+    /// `Allow` header stay truthful per route instead of a single sentence
+    /// that was only ever true back when every route was a GET.
+    pub(crate) fn method_not_allowed(methods: &[&str]) -> Self {
+        Self {
+            status: StatusCode::METHOD_NOT_ALLOWED,
+            code: "method_not_allowed",
+            message: format!(
+                "This API endpoint only accepts {} requests.",
+                describe_methods(methods)
+            ),
+            allow: Some(methods.join(", ")),
+        }
     }
 
     pub(crate) fn job_not_found() -> Self {
@@ -106,6 +118,7 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            allow: None,
         }
     }
 
@@ -155,12 +168,26 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response();
-        if status == StatusCode::METHOD_NOT_ALLOWED {
-            response
-                .headers_mut()
-                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+        if status == StatusCode::METHOD_NOT_ALLOWED
+            && let Some(allow) = &self.allow
+        {
+            response.headers_mut().insert(
+                header::ALLOW,
+                HeaderValue::from_str(allow)
+                    .expect("method names are valid header value characters"),
+            );
         }
         response
+    }
+}
+
+/// English-join method names for the 405 message, e.g. `["POST"] ->
+/// "POST"` and `["GET", "HEAD"] -> "GET and HEAD"`.
+fn describe_methods(methods: &[&str]) -> String {
+    match methods {
+        [] => String::new(),
+        [only] => (*only).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -168,6 +195,15 @@ pub(crate) async fn not_found() -> ApiError {
     ApiError::not_found()
 }
 
+/// Fallback for every route whose only handlers are GET (with axum's
+/// implicit HEAD).
 pub(crate) async fn method_not_allowed() -> ApiError {
-    ApiError::method_not_allowed()
+    ApiError::method_not_allowed(&["GET", "HEAD"])
+}
+
+/// Fallback for `POST /api/printers/add`, the one write route: it has no
+/// GET handler, so the shared GET/HEAD message would lie about what this
+/// route accepts.
+pub(crate) async fn method_not_allowed_post() -> ApiError {
+    ApiError::method_not_allowed(&["POST"])
 }

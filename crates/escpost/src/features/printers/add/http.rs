@@ -23,7 +23,7 @@ use super::AMBIGUOUS_USB_WARNING;
 pub(crate) fn router() -> Router<WebState> {
     Router::new().route(
         "/api/printers/add",
-        post(add_printer).fallback(crate::web::error::method_not_allowed),
+        post(add_printer).fallback(crate::web::error::method_not_allowed_post),
     )
 }
 

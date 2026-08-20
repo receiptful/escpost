@@ -515,6 +515,16 @@ fn getting_the_add_printer_route_is_not_allowed() {
         response_header(&response, "cache-control"),
         Some("no-store")
     );
+    // This route only ever registers a POST handler, so unlike the other
+    // (GET/HEAD) routes, its 405 must not claim GET is accepted.
+    assert_eq!(response_header(&response, "allow"), Some("POST"));
+    let response: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("method failures should be JSON");
+    assert_eq!(response["error"]["code"], "method_not_allowed");
+    assert_eq!(
+        response["error"]["message"],
+        "This API endpoint only accepts POST requests."
+    );
 }
 
 #[test]
