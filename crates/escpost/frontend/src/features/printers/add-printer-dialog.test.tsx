@@ -1,0 +1,285 @@
+import { afterEach, describe, expect, jest, test } from "bun:test";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
+import { AppDataProvider } from "../../app/data";
+import { AddPrinterDialog } from "./add-printer-dialog";
+
+const status = { virtual_printer: null, jobs_processed: 0, config_path: "/home/dev/.config/escpost/printers.toml" };
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function configured(name: string) {
+  return {
+    name,
+    transport: "network",
+    availability: "connected",
+    profile: null,
+    connection: { type: "network", host: "10.42.0.71", port: 9100 },
+  };
+}
+
+function catalogued(id: string) {
+  return {
+    id,
+    vendor: "Epson",
+    model: id,
+    source: "calibrated",
+    paper_width_mm: 80,
+    printable_width_mm: 72,
+    printable_width_dots: 576,
+    dpi_x: 203,
+    dpi_y: 203,
+    full_cut: true,
+    partial_cut: true,
+    barcode_function_a: true,
+    barcode_function_b: true,
+    qr_code: true,
+  };
+}
+
+function usbPrinter(overrides: Partial<UsbConnection> = {}): DiscoveredPrinter {
+  return {
+    transport: "usb",
+    configured_names: [],
+    configured_profile: null,
+    connection: {
+      type: "usb",
+      vendor_id: 0x0416,
+      product_id: 0x5011,
+      bus: "003",
+      address: 7,
+      manufacturer: null,
+      product: "POS-58 Printer",
+      serial_number: "X9",
+      interface_number: 0,
+      out_endpoints: [0x01],
+      in_endpoints: [],
+      ...overrides,
+    },
+  };
+}
+
+function networkPrinter(): DiscoveredPrinter {
+  return {
+    transport: "network",
+    configured_names: [],
+    configured_profile: null,
+    interface: "enx0",
+    connection: { type: "network", host: "10.42.0.90", port: 9100 },
+  };
+}
+
+// Renders the dialog inside the application data provider it reads the
+// configured names and the profile catalog from, and records what it posts.
+// `add` overrides the registration response, which otherwise echoes the
+// posted name back the way the endpoint does.
+function renderDialog(printer: DiscoveredPrinter | null, options: {
+  printers?: string[];
+  profiles?: string[];
+  add?: (body: AddPrinterBody) => Response;
+} = {}) {
+  const posted: AddPrinterBody[] = [];
+  const onClose = jest.fn();
+  const onAdded = jest.fn();
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path === "/api/status") {
+      return Promise.resolve(json(status));
+    }
+    if (path === "/api/profiles/list") {
+      return Promise.resolve(json({ profiles: (options.profiles ?? []).map(catalogued) }));
+    }
+    if (path.startsWith("/api/printers/list")) {
+      return Promise.resolve(json({ printers: (options.printers ?? []).map(configured) }));
+    }
+    if (path === "/api/printers/add") {
+      const body = JSON.parse(String(init?.body)) as AddPrinterBody;
+      posted.push(body);
+      return Promise.resolve(options.add
+        ? options.add(body)
+        : json({ name: body.name, transport: body.connection.type, profile: body.profile, warnings: [] }, 201));
+    }
+    return Promise.reject(new Error(`unexpected request to ${path}`));
+  }) as typeof globalThis.fetch;
+  const view = render(
+    <AppDataProvider>
+      <AddPrinterDialog printer={printer} onClose={onClose} onAdded={onAdded} />
+    </AppDataProvider>,
+  );
+  return { view, posted, onClose, onAdded };
+}
+
+function addButton() {
+  return screen.getByRole("button", { name: "Add printer" });
+}
+
+afterEach(cleanup);
+
+describe("AddPrinterDialog", () => {
+  test("refuses a name the configuration already holds, in the CLI's own words", async () => {
+    const { posted } = renderDialog(null, { printers: ["kitchen"] });
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "kitchen" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+
+    expect(await screen.findByText('printer "kitchen" is already configured')).toBeTruthy();
+    expect(addButton().hasAttribute("disabled")).toBe(true);
+    expect(posted).toHaveLength(0);
+  });
+
+  // `configuration::add_network_printer` refuses a colliding name with
+  // `document.contains_key(name)` — an exact match on the TOML key — so
+  // `escpost printers add Kitchen` succeeds on a machine that already has
+  // `kitchen`. Folding case here would refuse a name the terminal accepts,
+  // which is the one thing the two interfaces may never do.
+  test("accepts a name that differs only in case, because the configuration does", async () => {
+    const { posted, onAdded } = renderDialog(null, { printers: ["kitchen"] });
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "kitchen" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    // Waiting on the refusal is also what proves the inventory has arrived,
+    // so the acceptance below is a decision rather than an unloaded list.
+    await screen.findByText('printer "kitchen" is already configured');
+
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Kitchen" } });
+    expect(screen.queryByText(/already configured/)).toBeNull();
+    fireEvent.click(addButton());
+
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith("Kitchen"));
+    expect(posted[0]).toEqual({
+      name: "Kitchen",
+      profile: null,
+      connection: { type: "network", host: "10.0.5.20", port: 9100 },
+    });
+  });
+
+  test("the manual dialog is network-only, defaults to port 9100, and refuses a port the shared layer cannot take", async () => {
+    const { view, posted, onClose } = renderDialog(null, { printers: [] });
+
+    expect(screen.getByRole("heading", { name: "Add network printer" })).toBeTruthy();
+    expect(screen.queryByLabelText("OUT endpoint")).toBeNull();
+    expect(view.container.textContent).not.toContain("USB");
+    expect((screen.getByLabelText("Port") as HTMLInputElement).value).toBe("9100");
+
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    fireEvent.input(screen.getByLabelText("Port"), { target: { value: "0" } });
+    expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
+    expect(addButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.input(screen.getByLabelText("Port"), { target: { value: "9101" } });
+    fireEvent.click(addButton());
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toEqual({
+      name: "warehouse",
+      profile: null,
+      connection: { type: "network", host: "10.0.5.20", port: 9101 },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  test("a USB device offering one route shows both endpoint selects disabled rather than hiding them", async () => {
+    renderDialog(usbPrinter({ out_endpoints: [0x01], in_endpoints: [] }), { printers: [] });
+
+    const out = screen.getByLabelText("OUT endpoint") as HTMLSelectElement;
+    const inbound = screen.getByLabelText("IN endpoint") as HTMLSelectElement;
+    expect(out.disabled).toBe(true);
+    expect(out.value).toBe("0x01");
+    expect(inbound.disabled).toBe(true);
+    expect(inbound.value).toBe("");
+  });
+
+  // The endpoint defaults are the ones `usb_add_targets` resolves for the
+  // terminal: every bulk OUT endpoint is an explicit choice, and an IN
+  // endpoint is only assumed when the device exposes exactly one.
+  test("a USB device offering several routes lets the browser choose the one the terminal would ask for", async () => {
+    const { posted } = renderDialog(
+      usbPrinter({ out_endpoints: [0x01, 0x02], in_endpoints: [0x81] }),
+      { printers: [], profiles: ["TM-T88V"] },
+    );
+
+    const out = screen.getByLabelText("OUT endpoint") as HTMLSelectElement;
+    const inbound = screen.getByLabelText("IN endpoint") as HTMLSelectElement;
+    expect(out.disabled).toBe(false);
+    expect(inbound.disabled).toBe(false);
+    expect(inbound.value).toBe("0x81");
+
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
+    fireEvent.change(out, { target: { value: "0x02" } });
+    fireEvent.change(inbound, { target: { value: "" } });
+    await screen.findByRole("option", { name: "TM-T88V" });
+    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "TM-T88V" } });
+    fireEvent.click(addButton());
+
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toEqual({
+      name: "counter",
+      profile: "TM-T88V",
+      connection: {
+        type: "usb",
+        vendor_id: 0x0416,
+        product_id: 0x5011,
+        serial_number: "X9",
+        interface_number: 0,
+        out_endpoint: 0x02,
+        in_endpoint: null,
+      },
+    });
+  });
+
+  // Advisory, not a refusal: the CLI registers the same device and prints
+  // the same sentence afterwards.
+  test("a USB device without a serial number carries the shared ambiguity warning", async () => {
+    renderDialog(usbPrinter({ serial_number: null }), { printers: [] });
+
+    expect(screen.getByText(
+      "This printer reports no serial number. Printing will be ambiguous while another device with the same USB identity is connected.",
+    )).toBeTruthy();
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "pos-58" } });
+    expect(addButton().hasAttribute("disabled")).toBe(false);
+  });
+
+  test("a discovered network printer registers the endpoint it answered on, read-only", async () => {
+    const { posted } = renderDialog(networkPrinter(), { printers: [] });
+
+    expect(screen.queryByLabelText("Host")).toBeNull();
+    expect(screen.getByText(/10\.42\.0\.90:9100/)).toBeTruthy();
+
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "back-office" } });
+    fireEvent.click(addButton());
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toEqual({
+      name: "back-office",
+      profile: null,
+      connection: { type: "network", host: "10.42.0.90", port: 9100 },
+    });
+  });
+
+  // The inline check is a convenience, never the authority: another tab can
+  // register the name between the keystroke and the click, and the server
+  // still answers 409. The dialog has to survive that with the name still on
+  // screen to edit.
+  test("keeps the dialog open on a collision the inventory did not know about", async () => {
+    const { onAdded, onClose } = renderDialog(null, {
+      printers: [],
+      add: () => json(
+        { error: { code: "printer_already_configured", message: 'printer "kitchen" is already configured' } },
+        409,
+      ),
+    });
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "kitchen" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    fireEvent.click(addButton());
+
+    expect((await screen.findByRole("alert")).textContent).toBe('printer "kitchen" is already configured');
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("kitchen");
+    expect(addButton().hasAttribute("disabled")).toBe(false);
+    expect(onAdded).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
