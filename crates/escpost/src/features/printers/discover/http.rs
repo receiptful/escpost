@@ -18,8 +18,9 @@ use std::task::{Context, Poll};
 
 use axum::extract::Query;
 use axum::extract::rejection::QueryRejection;
-use axum::http::header;
-use axum::response::sse::{Event, KeepAlive, KeepAliveStream, Sse};
+use axum::http::{HeaderValue, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use futures_core::Stream;
@@ -30,6 +31,7 @@ use super::super::http::ConnectionResponse;
 use super::super::inventory::{NusbInventory, UsbEnumerationFailure, UsbFailureStage};
 use super::super::list::{ConnectionFacts, NetworkConnectionFacts, UsbConnectionFacts};
 use super::{DiscoveryEvent, DiscoveryScope, NetworkDiscovery, UsbDiscovery};
+use crate::application::ApplicationError;
 use crate::discovery::{self, SkipReason, SkippedInterface, Subnet};
 use crate::web::WebState;
 use crate::web::error::ApiError;
@@ -140,11 +142,18 @@ struct DiscoveryStream {
 impl Stream for DiscoveryStream {
     type Item = Result<Event, Infallible>;
 
-    /// Drive the scan, then hand back one event it queued. The scan's
-    /// observer is synchronous and can queue several events within a single
-    /// poll, so events are drained one per poll: returning `Ready` here
-    /// means the consumer polls again immediately, and the queue empties
-    /// without the scan making progress in between.
+    /// Drive the scan, then hand back one event it queued. The observer is
+    /// synchronous and can queue several events within a single poll of the
+    /// scan, so the queue is drained one event per poll — returning `Ready`
+    /// means the consumer polls again, and the scan is simply polled again
+    /// too on its way to the next queued event.
+    ///
+    /// A wakeup cannot be lost. Every push happens synchronously inside the
+    /// scan future while this call has it polled, so the queue can only be
+    /// found empty when the scan itself returned `Pending`, having already
+    /// registered `context`'s waker with whatever it is waiting on. There is
+    /// no window in which an event is queued by something this poll did not
+    /// drive.
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
         if !this.scan_done && this.scan.as_mut().poll(context).is_ready() {
@@ -158,8 +167,6 @@ impl Stream for DiscoveryStream {
         match next {
             Some(event) => Poll::Ready(Some(Ok(event))),
             None if this.scan_done => Poll::Ready(None),
-            // The scan future registered the waker while it was polled
-            // above, so an idle queue is woken by the next probe result.
             None => Poll::Pending,
         }
     }
@@ -167,10 +174,10 @@ impl Stream for DiscoveryStream {
 
 async fn discover(
     query: Result<Query<Vec<(String, String)>>, QueryRejection>,
-) -> Result<Sse<KeepAliveStream<DiscoveryStream>>, ApiError> {
+) -> Result<Response, ApiError> {
     let Query(parameters) = query.map_err(|_| ApiError::invalid_query())?;
     let scope = scope(&parameters)?;
-    let prepared = super::prepare(None, scope).map_err(|_| ApiError::discovery_failure())?;
+    let prepared = super::prepare(None, scope).map_err(rejected_discovery)?;
 
     let queue: Queue = Arc::new(Mutex::new(VecDeque::new()));
     let sink = Arc::clone(&queue);
@@ -179,16 +186,20 @@ async fn discover(
         let outcome = super::execute(
             prepared,
             |event| {
+                // Encoded before the lock is taken: a panic while
+                // serializing would otherwise poison the queue and take the
+                // stream down with it.
+                let message = encode(event);
                 sink.lock()
                     .expect("the discovery queue is never poisoned")
-                    .push_back(encode(event));
+                    .push_back(message);
             },
             &mut inventory,
         )
         .await;
-        // The final `Response` adds nothing the stream has not already
-        // reported — every printer arrived as its own event — so the
-        // closing event is a bare end-of-stream marker.
+        // The operation's final `super::Response` adds nothing the stream
+        // has not already reported — every printer arrived as its own
+        // event — so the closing event is a bare end-of-stream marker.
         let closing = match outcome {
             Ok(_) => Event::default().event("completed").data("{}"),
             Err(error) => Event::default()
@@ -200,12 +211,32 @@ async fn discover(
             .push_back(closing);
     });
 
-    Ok(Sse::new(DiscoveryStream {
+    let mut response = Sse::new(DiscoveryStream {
         queue,
         scan,
         scan_done: false,
     })
-    .keep_alive(KeepAlive::default()))
+    .keep_alive(KeepAlive::default())
+    .into_response();
+    // `Sse` sets `cache-control: no-cache`; every other response in this API
+    // says `no-store`, and each route's test asserts it. Inserted on the
+    // finished response rather than returned as a header tuple, which would
+    // append a second value instead of replacing the first.
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// Why `prepare` refused, in HTTP terms. A subnet too large to scan is the
+/// caller's mistake and the caller can fix it, so it is a bad request; an
+/// unreadable configuration or an unenumerable interface list is the
+/// server's problem.
+fn rejected_discovery(error: ApplicationError) -> ApiError {
+    match error {
+        ApplicationError::SubnetTooLargeToScan(_) => ApiError::invalid_query(),
+        _ => ApiError::discovery_failure(),
+    }
 }
 
 /// The requested scope, built by handing the query parameters to the CLI's

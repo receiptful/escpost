@@ -91,6 +91,14 @@ pub(crate) enum ApplicationError {
     )]
     NoDiscoverableSubnets(String),
 
+    /// A named subnet larger than `discovery::EXPLICIT_SCAN_MINIMUM_PREFIX`
+    /// allows. Refused rather than clamped: the caller named a range, and
+    /// quietly sweeping a different one would be worse than saying no. The
+    /// limit is spelled out here for the same reason `NoDiscoverableSubnets`
+    /// spells out /24 — the message must read without the constant to hand.
+    #[error("subnet {0} is too large to scan (at most /16)")]
+    SubnetTooLargeToScan(String),
+
     #[error("no USB device matches vendor {vendor_id:#06x} and product {product_id:#06x}")]
     UsbDeviceNotFound { vendor_id: u16, product_id: u16 },
 

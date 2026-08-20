@@ -1190,6 +1190,40 @@ fn printers_discover_validates_zero_port_before_reading_configuration() {
 
 #[cfg(unix)]
 #[test]
+fn printers_discover_refuses_a_subnet_too_large_to_scan() {
+    let directory = temporary_directory("discover-unbounded-subnet");
+    let config = directory.join("printers.toml");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["--non-interactive", "printers", "--config"])
+        .arg(&config)
+        .args([
+            "discover",
+            "--transport",
+            "network",
+            "--subnet",
+            "0.0.0.0/0",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(
+        !output.status.success(),
+        "a subnet of four billion addresses must fail"
+    );
+    // The same refusal, in the same words, that the HTTP endpoint turns into
+    // a 400: the limit lives in the shared discovery layer so the terminal
+    // and the browser can never disagree about what is scannable.
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: subnet 0.0.0.0/0 is too large to scan (at most /16)\n",
+        "the refusal must arrive before any scan announcement"
+    );
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[cfg(unix)]
+#[test]
 fn printers_add_discover_registers_the_single_discovered_printer() {
     // 127.0.0.2 rather than 127.0.0.1: the whole 127.0.0.0/8 block routes to
     // loopback, but only 127.0.0.1 is this machine's own address, so an

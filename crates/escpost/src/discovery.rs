@@ -15,6 +15,18 @@ use crate::application::{self, ApplicationError};
 /// probes per interface; anything larger must be requested with --subnet.
 pub(crate) const AUTO_SCAN_MINIMUM_PREFIX: u8 = 24;
 
+/// The longest network an explicitly named subnet may cover. Asking for a
+/// subnet is a deliberate act, so this is far more permissive than the
+/// automatic limit — but it is not unbounded. A /16 is already 65,534 probes
+/// and minutes of sweeping; larger is a mistake or an attack, not a request.
+///
+/// The bound also protects the scan's own cancellation: `Subnet::hosts`
+/// materializes every candidate address, and neither that allocation nor the
+/// loop that spawns the probes contains an await point. Once a sweep of a /0
+/// starts, nothing can interrupt it — not a disconnected browser, not a
+/// dropped `JoinSet` — so it must never be allowed to start.
+pub(crate) const EXPLICIT_SCAN_MINIMUM_PREFIX: u8 = 16;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Subnet {
     network: Ipv4Addr,
@@ -241,22 +253,29 @@ pub(crate) fn local_interface_addresses() -> application::Result<Vec<InterfaceAd
 /// Targets for subnets the developer named. A named subnet the machine sits on
 /// is treated exactly like an automatically detected one: same interface label,
 /// same self-exclusion. A subnet elsewhere gets neither.
+///
+/// This is the one place explicit subnets become scannable work, so it is also
+/// where `EXPLICIT_SCAN_MINIMUM_PREFIX` is enforced — every caller, terminal
+/// or browser, inherits the same refusal with the same wording.
 pub(crate) fn explicit_scan_targets(
     subnets: &[Subnet],
     addresses: &[InterfaceAddress],
-) -> Vec<ScanTarget> {
+) -> application::Result<Vec<ScanTarget>> {
     subnets
         .iter()
         .map(|subnet| {
+            if subnet.prefix() < EXPLICIT_SCAN_MINIMUM_PREFIX {
+                return Err(ApplicationError::SubnetTooLargeToScan(subnet.to_string()));
+            }
             let local = addresses
                 .iter()
                 .filter(|interface| subnet.contains(interface.address))
                 .collect::<Vec<_>>();
-            ScanTarget {
+            Ok(ScanTarget {
                 subnet: *subnet,
                 interface: local.first().map(|interface| interface.name.clone()),
                 excluded: local.iter().map(|interface| interface.address).collect(),
-            }
+            })
         })
         .collect()
 }
@@ -378,8 +397,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DiscoveredHost, InterfaceAddress, ScanEvent, ScanTarget, SkipReason, SkippedInterface,
-        Subnet, describe_skipped, detect_networks, explicit_scan_targets, probe_count, scan,
+        ApplicationError, DiscoveredHost, EXPLICIT_SCAN_MINIMUM_PREFIX, InterfaceAddress,
+        ScanEvent, ScanTarget, SkipReason, SkippedInterface, Subnet, describe_skipped,
+        detect_networks, explicit_scan_targets, probe_count, scan,
     };
 
     #[test]
@@ -648,7 +668,8 @@ mod tests {
         }];
         let subnets = vec![Subnet::parse("10.42.0.0/24").expect("a valid CIDR should parse")];
 
-        let targets = explicit_scan_targets(&subnets, &addresses);
+        let targets = explicit_scan_targets(&subnets, &addresses)
+            .expect("a /24 is well within the explicit scan limit");
 
         assert_eq!(targets[0].interface.as_deref(), Some("enx0"));
         assert_eq!(targets[0].excluded, vec![Ipv4Addr::new(10, 42, 0, 71)]);
@@ -663,7 +684,8 @@ mod tests {
         }];
         let subnets = vec![Subnet::parse("10.9.0.0/24").expect("a valid CIDR should parse")];
 
-        let targets = explicit_scan_targets(&subnets, &addresses);
+        let targets = explicit_scan_targets(&subnets, &addresses)
+            .expect("a /24 is well within the explicit scan limit");
 
         assert_eq!(targets[0].interface, None);
         assert!(targets[0].excluded.is_empty());
@@ -678,9 +700,34 @@ mod tests {
         }];
         let subnets = vec![Subnet::parse("127.0.0.0/24").expect("a valid CIDR should parse")];
 
-        let targets = explicit_scan_targets(&subnets, &addresses);
+        let targets = explicit_scan_targets(&subnets, &addresses)
+            .expect("a /24 is well within the explicit scan limit");
 
         assert_eq!(targets[0].excluded, vec![Ipv4Addr::new(127, 0, 0, 1)]);
+    }
+
+    #[test]
+    fn an_explicit_subnet_larger_than_the_limit_is_refused_rather_than_swept() {
+        let subnets = vec![Subnet::parse("0.0.0.0/0").expect("a valid CIDR should parse")];
+
+        let error = explicit_scan_targets(&subnets, &[])
+            .expect_err("a /0 is four billion probes and must be refused");
+
+        assert!(matches!(error, ApplicationError::SubnetTooLargeToScan(_)));
+        assert_eq!(
+            error.to_string(),
+            "subnet 0.0.0.0/0 is too large to scan (at most /16)"
+        );
+    }
+
+    #[test]
+    fn an_explicit_subnet_at_the_limit_is_accepted() {
+        let subnets = vec![Subnet::parse("10.0.0.0/16").expect("a valid CIDR should parse")];
+
+        let targets = explicit_scan_targets(&subnets, &[])
+            .expect("a /16 is the largest explicitly scannable subnet");
+
+        assert_eq!(targets[0].subnet.prefix(), EXPLICIT_SCAN_MINIMUM_PREFIX);
     }
 
     #[tokio::test]

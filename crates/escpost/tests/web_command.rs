@@ -307,6 +307,10 @@ fn discovery_streams_prepared_progress_and_completion() {
     let undeclared_parameter = http_get_bytes(port, "/api/printers/discover?scan=1");
     let network_option_for_usb =
         http_get_bytes(port, "/api/printers/discover?transport=usb&timeout=1");
+    // Answered, not swept: a /0 would allocate its four billion candidate
+    // addresses before the first probe, in a stretch of code with no await
+    // point for a disconnecting client to cancel.
+    let unbounded_subnet = http_get_bytes(port, "/api/printers/discover?subnet=0.0.0.0/0");
     stop(&mut child);
     drop(printer);
     fs::remove_dir_all(&configuration_directory)
@@ -314,6 +318,7 @@ fn discovery_streams_prepared_progress_and_completion() {
 
     assert!(stream.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(stream.contains("content-type: text/event-stream"));
+    assert!(stream.contains("cache-control: no-store"));
     assert!(stream.contains("event: prepared"));
     assert!(stream.contains("event: progress"));
     assert!(stream.contains("event: completed"));
@@ -332,6 +337,7 @@ fn discovery_streams_prepared_progress_and_completion() {
         &unparsable_subnet,
         &undeclared_parameter,
         &network_option_for_usb,
+        &unbounded_subnet,
     ] {
         assert_eq!(response_status(response), "HTTP/1.1 400 Bad Request");
         let body: serde_json::Value = serde_json::from_slice(response_body(response))
@@ -1090,28 +1096,42 @@ fn http_get(port: u16, path: &str) -> String {
     String::from_utf8(http_get_bytes(port, path)).expect("the HTTP response should be UTF-8")
 }
 
-/// Read an event-stream response until the server closes it. `http_get`
-/// blocks until end of stream, which would hang the suite forever if the
-/// stream never terminated, so this gives up after a generous patience and
-/// returns whatever arrived — an assertion failure names the missing event
-/// instead of the run timing out with no clue.
+/// How long an event stream has to reach its end before the test declares
+/// the stream broken. Generous next to the milliseconds a /30 scan needs.
+const EVENT_STREAM_PATIENCE: Duration = Duration::from_secs(20);
+
+/// Read an event-stream response until the server closes it. Success is end
+/// of stream and nothing else: a per-read timeout alone would not do, because
+/// the endpoint's 15-second keep-alive comments make every read succeed, so a
+/// stream that stayed open forever would spin here rather than fail. The
+/// deadline is absolute, and tripping it panics — a stream that never ends is
+/// exactly the regression this helper exists to catch, not something to
+/// return partial output for.
 fn http_get_event_stream(port: u16, path: &str) -> String {
     let mut stream =
         TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(20)))
-        .expect("the event stream socket should accept a read timeout");
     write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
     )
     .expect("the HTTP request should be writable");
+    let deadline = Instant::now() + EVENT_STREAM_PATIENCE;
     let mut response = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .unwrap_or_else(|| {
+                panic!("the event stream for {path} did not end within {EVENT_STREAM_PATIENCE:?}")
+            });
+        stream
+            .set_read_timeout(Some(remaining))
+            .expect("the event stream socket should accept a read timeout");
         match stream.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error) => panic!("the event stream for {path} stalled: {error}"),
         }
     }
     String::from_utf8(response).expect("the event stream should be UTF-8")

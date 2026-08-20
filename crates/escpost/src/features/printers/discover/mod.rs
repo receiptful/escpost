@@ -326,23 +326,25 @@ pub(crate) fn resolve_targets(
     subnets: &[Subnet],
 ) -> application::Result<(Vec<ScanTarget>, Vec<SkippedInterface>)> {
     let addresses = discovery::local_interface_addresses()?;
-    Ok(resolve_targets_from(subnets, addresses))
+    resolve_targets_from(subnets, addresses)
 }
 
 /// The pure half of `resolve_targets`, split out so automatic detection can
 /// be tested against a chosen `InterfaceAddress` list instead of this
-/// machine's real interfaces.
+/// machine's real interfaces. Fails only for a named subnet too large to
+/// scan; automatic detection reports its omissions through `skipped` and
+/// never errors here.
 fn resolve_targets_from(
     subnets: &[Subnet],
     addresses: Vec<InterfaceAddress>,
-) -> (Vec<ScanTarget>, Vec<SkippedInterface>) {
+) -> application::Result<(Vec<ScanTarget>, Vec<SkippedInterface>)> {
     if subnets.is_empty() {
-        return discovery::detect_networks(addresses);
+        return Ok(discovery::detect_networks(addresses));
     }
-    (
-        discovery::explicit_scan_targets(subnets, &addresses),
+    Ok((
+        discovery::explicit_scan_targets(subnets, &addresses)?,
         Vec::new(),
-    )
+    ))
 }
 
 fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost) -> Vec<String> {
@@ -569,7 +571,8 @@ mod tests {
         // list, which a unit test cannot pin down; `resolve_targets_from`
         // is the pure half that does the actual filtering, exercised here
         // with a chosen interface list instead of this machine's real one.
-        let (targets, skipped) = resolve_targets_from(&[], vec![office_network_interface()]);
+        let (targets, skipped) = resolve_targets_from(&[], vec![office_network_interface()])
+            .expect("automatic detection never fails on the subnet limit");
 
         assert!(targets.is_empty());
         assert_eq!(skipped.len(), 1);
