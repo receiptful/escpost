@@ -67,13 +67,13 @@ describe("PrintersPage", () => {
 
     expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
     await act(async () => {
-      jest.advanceTimersByTime(5_000);
+      jest.advanceTimersByTime(10_000);
       await Promise.resolve();
     });
     expect(await screen.findAllByText("Bar")).toHaveLength(2);
 
     await act(async () => {
-      jest.advanceTimersByTime(5_000);
+      jest.advanceTimersByTime(10_000);
       await Promise.resolve();
     });
     expect(await screen.findByText("Showing cached printer data. Printer inventory is unavailable.")).toBeTruthy();

@@ -1,10 +1,32 @@
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 import { NetworkRequestError, getPrinters, getProfiles, getStatus } from "../api/client";
-import type { PrintersResponse, ProfilesResponse, StatusResponse } from "../api/types";
+import { openDiscoveryStream } from "../api/discovery-stream";
+import type { DiscoveryQuery, UsbDiscoveryFailure } from "../api/discovery-stream";
+import type { DiscoveredPrinter, PrintersResponse, ProfilesResponse, StatusResponse } from "../api/types";
 
 type ConnectionState = "loading" | "ready" | "disconnected";
 type ResourcePhase = "loading" | "ready" | "refreshing" | "error";
+type ScanPhase = "idle" | "running" | "done" | "error";
+
+// Owns the discovery scan across page navigation: a scan started from the
+// Discover page keeps running (and this state keeps updating) even after the
+// user leaves the page, because it lives here rather than in a route
+// component.
+export type ScanState = {
+  phase: ScanPhase;
+  completed: number;
+  total: number;
+  printers: DiscoveredPrinter[];
+  failures: UsbDiscoveryFailure[];
+  finishedAt: number | null;
+  error: string | null;
+};
+
+// A printer that transitioned availability since the previous printers
+// response, or that a scan just proved reachable. Each entry is transient:
+// consumers clear it after showing a brief flash.
+export type PrinterFlashes = Record<string, "found" | "lost">;
 
 export type PrinterResource = {
   data: PrintersResponse | null;
@@ -27,10 +49,15 @@ type AppData = {
   profiles: ProfileResource;
   ensureProfiles: () => Promise<void>;
   refreshProfiles: () => Promise<void>;
+  scan: ScanState;
+  startScan: (query: DiscoveryQuery) => void;
+  cancelScan: () => void;
+  printerFlashes: PrinterFlashes;
 };
 
 const AppDataContext = createContext<AppData | null>(null);
-const PRINTER_POLL_INTERVAL = 5_000;
+const PRINTER_POLL_INTERVAL = 10_000;
+const FLASH_DURATION = 1_200;
 
 const initialPrinters: PrinterResource = {
   data: null,
@@ -44,12 +71,24 @@ const initialProfiles: ProfileResource = {
   phase: "loading",
 };
 
+const initialScan: ScanState = {
+  phase: "idle",
+  completed: 0,
+  total: 0,
+  printers: [],
+  failures: [],
+  finishedAt: null,
+  error: null,
+};
+
 export function AppDataProvider({ children }: { children: preact.ComponentChildren }) {
   const [connection, setConnection] = useState<ConnectionState>("loading");
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [statusError, setStatusError] = useState<Error | null>(null);
   const [printers, setPrinters] = useState<PrinterResource>(initialPrinters);
   const [profiles, setProfiles] = useState<ProfileResource>(initialProfiles);
+  const [scan, setScan] = useState<ScanState>(initialScan);
+  const [printerFlashes, setPrinterFlashes] = useState<PrinterFlashes>({});
   const printerData = useRef<PrintersResponse | null>(null);
   const printerRequest = useRef<Promise<void> | null>(null);
   const printerAbort = useRef<AbortController | null>(null);
@@ -57,6 +96,127 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   const profileData = useRef<ProfilesResponse | null>(null);
   const profileRequest = useRef<Promise<void> | null>(null);
   const profileAbort = useRef<AbortController | null>(null);
+  const scanCloser = useRef<(() => void) | null>(null);
+  const flashTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Flags `name` as newly "found" or "lost" and clears it again after a
+  // short window, so a consumer rendering `printerFlashes` sees a single
+  // pulse per transition rather than a state that lingers. A second flash of
+  // the same kind for the same name restarts the window instead of stacking
+  // timeouts.
+  const flashPrinter = useCallback((name: string, kind: "found" | "lost") => {
+    setPrinterFlashes((current) => ({ ...current, [name]: kind }));
+    const pending = flashTimeouts.current.get(name);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+    }
+    const timeout = setTimeout(() => {
+      flashTimeouts.current.delete(name);
+      setPrinterFlashes((current) => {
+        if (current[name] !== kind) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[name];
+        return next;
+      });
+    }, FLASH_DURATION);
+    flashTimeouts.current.set(name, timeout);
+  }, []);
+
+  // Compares a freshly fetched printers response against the previously
+  // cached one and flashes only the printers whose availability actually
+  // changed, so a poll that repeats the same state is silent.
+  const diffAvailability = useCallback((previous: PrintersResponse | null, next: PrintersResponse) => {
+    if (!previous) {
+      return;
+    }
+    const previousAvailability = new Map(previous.printers.map((printer) => [printer.name, printer.availability]));
+    for (const printer of next.printers) {
+      const before = previousAvailability.get(printer.name);
+      if (before === "connected" && printer.availability === "unavailable") {
+        flashPrinter(printer.name, "lost");
+      } else if (before === "unavailable" && printer.availability === "connected") {
+        flashPrinter(printer.name, "found");
+      }
+    }
+  }, [flashPrinter]);
+
+  // A `printer` event whose `configured_names` is non-empty means the scan
+  // just proved that printer reachable directly, rather than through the
+  // next poll. Flash those names and fold the evidence into the cached
+  // printers response immediately instead of waiting up to
+  // `PRINTER_POLL_INTERVAL` for the poll to catch up.
+  const handleDiscoveredPrinter = useCallback((printer: DiscoveredPrinter) => {
+    setScan((current) => ({ ...current, printers: [...current.printers, printer] }));
+    if (printer.configured_names.length === 0) {
+      return;
+    }
+    for (const name of printer.configured_names) {
+      flashPrinter(name, "found");
+    }
+    const cached = printerData.current;
+    if (!cached) {
+      return;
+    }
+    const names = new Set(printer.configured_names);
+    const data: PrintersResponse = {
+      printers: cached.printers.map((entry) => (names.has(entry.name) ? { ...entry, availability: "connected" as const } : entry)),
+    };
+    printerData.current = data;
+    setPrinters((state) => ({ ...state, data }));
+  }, [flashPrinter]);
+
+  // Closes whatever scan stream is currently open, if any. Used both by
+  // `cancelScan` and by `startScan` itself: a rescan must close the previous
+  // stream before opening a new one, or the old scan keeps running on the
+  // server.
+  const closeScan = useCallback(() => {
+    if (scanCloser.current) {
+      scanCloser.current();
+      scanCloser.current = null;
+    }
+  }, []);
+
+  const startScan = useCallback((query: DiscoveryQuery) => {
+    closeScan();
+    setScan({ ...initialScan, phase: "running" });
+    scanCloser.current = openDiscoveryStream(query, {
+      onPrepared: (prepared) => {
+        setScan((current) => ({ ...current, total: prepared.total_probes }));
+      },
+      onPrinter: handleDiscoveredPrinter,
+      onProgress: (progress) => {
+        setScan((current) => ({ ...current, completed: progress.completed, total: progress.total }));
+      },
+      onUsbFailure: (failure) => {
+        setScan((current) => ({ ...current, failures: [...current.failures, failure] }));
+      },
+      onCompleted: () => {
+        scanCloser.current = null;
+        setScan((current) => ({ ...current, phase: "done", finishedAt: Date.now() }));
+      },
+      onError: (message) => {
+        scanCloser.current = null;
+        setScan((current) => ({ ...current, phase: "error", error: message, finishedAt: Date.now() }));
+      },
+    });
+  }, [closeScan, handleDiscoveredPrinter]);
+
+  const cancelScan = useCallback(() => {
+    closeScan();
+    setScan(initialScan);
+  }, [closeScan]);
+
+  useEffect(() => {
+    return () => {
+      closeScan();
+      for (const timeout of flashTimeouts.current.values()) {
+        clearTimeout(timeout);
+      }
+      flashTimeouts.current.clear();
+    };
+  }, [closeScan]);
 
   const refreshPrinters = useCallback(async () => {
     if (printerRequest.current) {
@@ -72,6 +232,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
     }));
     const request = getPrinters(undefined, controller.signal)
       .then((data) => {
+        diffAvailability(printerData.current, data);
         printerData.current = data;
         setPrinters({ data, error: null, phase: "ready" });
       })
@@ -97,7 +258,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       });
     printerRequest.current = request;
     return request;
-  }, []);
+  }, [diffAvailability]);
 
   const refreshProfiles = useCallback(async () => {
     if (profileRequest.current) {
@@ -187,14 +348,43 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
         });
     };
 
+    // A poll against a dead printer can take several seconds now that the
+    // backend retries before confirming it unreachable, so the settle-then-
+    // rearm shape matters: a `setInterval` could stack a second request on
+    // top of one still in flight. Re-arming is also gated on the tab being
+    // visible, so a background tab stops polling instead of doing pointless
+    // work no one can see.
     const pollPrinters = () => {
       void refreshPrinters().finally(() => {
-        if (active) {
+        if (active && document.visibilityState === "visible") {
           printerTimeout = setTimeout(pollPrinters, PRINTER_POLL_INTERVAL);
         }
       });
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (printerTimeout !== undefined) {
+          clearTimeout(printerTimeout);
+          printerTimeout = undefined;
+        }
+        return;
+      }
+      if (printerTimeout !== undefined) {
+        clearTimeout(printerTimeout);
+        printerTimeout = undefined;
+      }
+      // Only kick off an immediate poll if nothing is already in flight. A
+      // request already in flight will re-arm on its own once it settles,
+      // since visibility is checked at settle time — starting a second one
+      // here would just be deduped by `refreshPrinters`, but would still
+      // leave two `finally` callbacks racing to schedule the next timeout.
+      if (!printerRequest.current) {
+        pollPrinters();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     pollPrinters();
     poll();
     return () => {
@@ -205,6 +395,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       if (printerTimeout !== undefined) {
         clearTimeout(printerTimeout);
       }
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       statusAbort?.abort();
       printerAbort.current?.abort();
       printerRecoveryPending.current = false;
@@ -213,7 +404,22 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   }, [refreshPrinters, refreshProfiles]);
 
   return (
-    <AppDataContext.Provider value={{ connection, status, statusError, printers, refreshPrinters, profiles, ensureProfiles, refreshProfiles }}>
+    <AppDataContext.Provider
+      value={{
+        connection,
+        status,
+        statusError,
+        printers,
+        refreshPrinters,
+        profiles,
+        ensureProfiles,
+        refreshProfiles,
+        scan,
+        startScan,
+        cancelScan,
+        printerFlashes,
+      }}
+    >
       {children}
     </AppDataContext.Provider>
   );

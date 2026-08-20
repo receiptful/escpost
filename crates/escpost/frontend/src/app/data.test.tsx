@@ -17,13 +17,32 @@ function Probe() {
   return <p>{`${connection}:${printers.phase}:${statusError?.message ?? "none"}`}</p>;
 }
 
+function FlashProbe() {
+  const { printerFlashes } = useAppData();
+  return <span data-testid="flashes">{JSON.stringify(printerFlashes)}</span>;
+}
+
+// Steps `bun:test`'s fake clock forward and flushes the microtask queue, so
+// a `.then`/`.finally` chain a timer kicked off has settled before the next
+// assertion runs.
+async function advanceTimers(milliseconds: number) {
+  jest.advanceTimersByTime(milliseconds);
+  // The fetch mock's promise chain (fetch -> response.json() -> refreshPrinters's
+  // .then -> .finally) takes several microtask turns to settle; one
+  // `await Promise.resolve()` is not enough to drain it, as the other tests
+  // in this file (see the repeated awaits below) already demonstrate.
+  for (let i = 0; i < 6; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 afterEach(() => {
   cleanup();
   jest.useRealTimers();
 });
 
 describe("AppDataProvider", () => {
-  test("polls printer inventory five seconds after each completed response", async () => {
+  test("polls printer inventory ten seconds after each completed response", async () => {
     jest.useFakeTimers();
     let printerRequests = 0;
     let resolveInitialInventory!: (response: Response) => void;
@@ -54,7 +73,7 @@ describe("AppDataProvider", () => {
       await Promise.resolve();
     });
 
-    await act(async () => { jest.advanceTimersByTime(4_999); });
+    await act(async () => { jest.advanceTimersByTime(9_999); });
     expect(printerRequests).toBe(1);
     await act(async () => {
       jest.advanceTimersByTime(1);
@@ -224,5 +243,62 @@ describe("AppDataProvider", () => {
       await Promise.resolve();
     });
     expect(screen.getByText("ready:ready:Status is unavailable.")).toBeTruthy();
+  });
+
+  test("polling stops while the document is hidden and resumes when it is visible", async () => {
+    jest.useFakeTimers();
+    let calls = 0;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      if (String(input) === "/api/printers/list") {
+        calls += 1;
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><FlashProbe /></AppDataProvider>);
+    await act(async () => { await advanceTimers(0); });
+    const initial = calls;
+
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => { await advanceTimers(20_000); });
+    expect(calls).toBe(initial);
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => {});
+    expect(calls).toBe(initial + 1);
+  });
+
+  test("a printer that becomes unavailable is flagged as lost exactly once", async () => {
+    jest.useFakeTimers();
+    const availabilities = ["connected", "unavailable", "unavailable"];
+    let poll = 0;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      if (String(input) !== "/api/printers/list") {
+        return Promise.resolve(json({ virtual_printer: null, jobs_processed: 0, config_path: "/tmp/printers.toml" }));
+      }
+      const availability = availabilities[Math.min(poll, availabilities.length - 1)];
+      poll += 1;
+      return Promise.resolve(json({
+        printers: [{
+          name: "kitchen",
+          transport: "network",
+          availability,
+          profile: null,
+          connection: { type: "network", host: "10.42.0.71", port: 9100 },
+        }],
+      }));
+    }) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><FlashProbe /></AppDataProvider>);
+    await act(async () => { await advanceTimers(0); });
+    expect(screen.getByTestId("flashes").textContent).toBe("{}");
+
+    await act(async () => { await advanceTimers(10_000); });
+    expect(screen.getByTestId("flashes").textContent).toBe("{\"kitchen\":\"lost\"}");
+
+    await act(async () => { await advanceTimers(10_000); });
+    expect(screen.getByTestId("flashes").textContent).toBe("{}");
   });
 });
