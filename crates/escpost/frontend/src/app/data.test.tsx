@@ -25,6 +25,13 @@ function FlashProbe() {
 
 const scanQuery: DiscoveryQuery = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
 
+// The product ids of every USB failure the scan has reported, in the order
+// the provider is holding them.
+function ScanFailureProbe() {
+  const { scan } = useAppData();
+  return <span data-testid="failures">{scan.failures.map((failure) => failure.product_id).join(",")}</span>;
+}
+
 function ScanProbe() {
   const { startScan } = useAppData();
   return <button type="button" onClick={() => startScan(scanQuery)}>Scan</button>;
@@ -46,6 +53,7 @@ class FakeEventSource {
   readonly constructedAt: number;
   closed = false;
   closedAt: number | null = null;
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>();
 
   constructor(url: string) {
     this.url = url;
@@ -53,9 +61,18 @@ class FakeEventSource {
     FakeEventSource.instances.push(this);
   }
 
-  addEventListener() {
-    // No events are emitted in this test; startScan only needs a stream it
-    // can open and close.
+  addEventListener(name: string, handler: (event: Event) => void) {
+    const existing = this.listeners.get(name) ?? [];
+    existing.push(handler);
+    this.listeners.set(name, existing);
+  }
+
+  // Dispatches one named stream event, so a test can drive the provider the
+  // way the server drives it.
+  emit(name: string, payload: unknown) {
+    for (const handler of this.listeners.get(name) ?? []) {
+      handler(new MessageEvent(name, { data: JSON.stringify(payload) }));
+    }
   }
 
   close() {
@@ -372,5 +389,37 @@ describe("AppDataProvider", () => {
     // the EventSource is the only cancellation mechanism it has).
     expect(first?.closedAt).not.toBeNull();
     expect(first?.closedAt as number).toBeLessThan(second?.constructedAt as number);
+  });
+
+  // A USB failure is tolerated rather than fatal, so a scan can report
+  // several — one per device it could not open. They have to accumulate, and
+  // in arrival order: the panel lists them positionally, because
+  // `UsbEnumerationFailure` carries no bus or address and two of the same
+  // model refused at two addresses are otherwise indistinguishable.
+  test("usb_failure events accumulate in arrival order", async () => {
+    FakeEventSource.instances = [];
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    globalThis.fetch = ((input: RequestInfo | URL) => (String(input) === "/api/status"
+      ? Promise.resolve(json(readyStatus))
+      : Promise.resolve(json(printerInventory)))) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><ScanProbe /><ScanFailureProbe /></AppDataProvider>);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+    const source = FakeEventSource.instances[0]!;
+
+    const failure = (productId: number) => ({
+      vendor_id: 0x0416,
+      product_id: productId,
+      stage: "open_device",
+      reason: "permission denied (errno 13)",
+      permission_denied: true,
+      can_grant_usb_permissions: true,
+    });
+
+    await act(async () => { source.emit("usb_failure", failure(2)); });
+    expect(screen.getByTestId("failures").textContent).toBe("2");
+
+    await act(async () => { source.emit("usb_failure", failure(3)); });
+    expect(screen.getByTestId("failures").textContent).toBe("2,3");
   });
 });

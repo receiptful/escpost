@@ -470,6 +470,11 @@ mod tests {
         assert_eq!(subnets, ["10.42.0.0/24", "10.43.0.0/24"]);
     }
 
+    #[cfg(target_os = "linux")]
+    const GRANTABLE_ON_THIS_PLATFORM: bool = true;
+    #[cfg(not(target_os = "linux"))]
+    const GRANTABLE_ON_THIS_PLATFORM: bool = false;
+
     fn open_failure() -> UsbEnumerationFailure {
         UsbEnumerationFailure {
             stage: UsbFailureStage::OpenDevice,
@@ -501,7 +506,12 @@ mod tests {
                 // it on a macOS host would send the reader to a command that
                 // is unrecognized there, while the CLI on that same host says
                 // nothing at all.
-                "can_grant_usb_permissions": cfg!(target_os = "linux"),
+                //
+                // Stated as a literal per platform rather than as the same
+                // `cfg!` the source uses: an assertion that recomputes the
+                // expression it is checking would accept a hardcoded `true`,
+                // which is exactly the bug this field exists to prevent.
+                "can_grant_usb_permissions": GRANTABLE_ON_THIS_PLATFORM,
             })
         );
     }
