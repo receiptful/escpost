@@ -39,6 +39,45 @@ function endpointNumber(hex: string) {
   return hex === "" ? null : Number(hex);
 }
 
+// The route the terminal's menu would start from: every bulk OUT endpoint is
+// a separate choice, so the first one is offered and the rest are one select
+// away, while an IN endpoint is only assumed when the device exposes exactly
+// one — `usb_add_targets` refuses to reduce several to a guess, and so does
+// this.
+function defaultOutEndpoint(usb: UsbConnection | null) {
+  return usb && usb.out_endpoints.length > 0 ? endpointHex(usb.out_endpoints[0]!) : "";
+}
+
+function defaultInEndpoint(usb: UsbConnection | null) {
+  return usb && usb.in_endpoints.length === 1 ? endpointHex(usb.in_endpoints[0]!) : "";
+}
+
+// Which device the open dialog is registering, by the facts that make it that
+// device rather than by object identity: an owner re-rendering with an equal
+// but freshly built printer must not wipe a route the reader chose, while an
+// owner swapping in a different printer must not leave the previous device's
+// route behind. The endpoint lists are part of it because they are what the
+// selects offer.
+function deviceIdentity(printer: DiscoveredPrinter | null) {
+  const connection = printer?.connection;
+  if (!connection) {
+    return "manual";
+  }
+  return connection.type === "network"
+    ? `network:${connection.host}:${connection.port}`
+    : [
+      "usb",
+      connection.vendor_id,
+      connection.product_id,
+      connection.serial_number ?? "",
+      connection.bus ?? "",
+      connection.address ?? "",
+      connection.interface_number,
+      connection.out_endpoints.join("+"),
+      connection.in_endpoints.join("+"),
+    ].join(":");
+}
+
 /**
  * Registration, in the two shapes the printers page needs: a discovered
  * printer whose connection arrives pre-filled and read-only, and — with
@@ -46,9 +85,10 @@ function endpointNumber(hex: string) {
  *
  * Only what the CLI also asks for is editable: a name, an optional profile,
  * and for a USB device the route to print over, which is precisely the
- * choice `printers add` refuses to make without a terminal. The owner mounts
- * one dialog per registration, so the initial route is read from `printer`
- * once.
+ * choice `printers add` refuses to make without a terminal.
+ *
+ * `onClose` must unmount the dialog — nothing here renders a closed one, and
+ * the native element is closed in the unmount cleanup.
  */
 export function AddPrinterDialog({ printer, onClose, onAdded }: {
   printer: DiscoveredPrinter | null;
@@ -68,17 +108,35 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
   const [profile, setProfile] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState(String(DEFAULT_RAW_PORT));
-  // Every bulk OUT endpoint is a separate choice and an IN endpoint is only
-  // assumed when the device exposes exactly one — the same defaults
-  // `usb_add_targets` resolves for the terminal's menu.
-  const [outEndpoint, setOutEndpoint] = useState(usb && usb.out_endpoints.length > 0 ? endpointHex(usb.out_endpoints[0]!) : "");
-  const [inEndpoint, setInEndpoint] = useState(usb && usb.in_endpoints.length === 1 ? endpointHex(usb.in_endpoints[0]!) : "");
+  const [outEndpoint, setOutEndpoint] = useState(defaultOutEndpoint(usb));
+  const [inEndpoint, setInEndpoint] = useState(defaultInEndpoint(usb));
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     dismiss.current = onClose;
   }, [onClose]);
+
+  // The connection facts are read from the prop on every render while the
+  // route is held in state, so a dialog handed a different device would
+  // otherwise show one printer and submit another's endpoint — a route the
+  // new device does not expose, inside `0x01..=0x0f` and therefore saved
+  // without complaint by every layer, printing nothing forever after. The
+  // route is re-seeded with the device instead, which also covers the mirror
+  // case where a manual dialog becomes a USB one and would otherwise have no
+  // route at all and no way to say so. A stale failure belongs to the
+  // previous device and goes with it.
+  //
+  // The owner is still expected to mount one dialog per registration; this is
+  // what makes the other usage safe rather than silently wrong.
+  const identity = deviceIdentity(printer);
+  useEffect(() => {
+    setOutEndpoint(defaultOutEndpoint(usb));
+    setInEndpoint(defaultInEndpoint(usb));
+    setFailure(null);
+    // `usb` is re-derived on every render and would re-seed the route on
+    // every keystroke; `identity` is the fact that actually changed.
+  }, [identity]);
 
   useEffect(() => {
     void ensureProfiles();
@@ -203,6 +261,12 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
             <label class="text-xs font-medium uppercase tracking-wide text-base-content/60" for="add-printer-profile">Profile</label>
             <span class="text-xs text-base-content/60">optional</span>
           </div>
+          {/* The catalog's ids and nothing else, where `printers add
+              --profile` takes free text. It is the one input where the
+              browser accepts strictly less than the terminal, which the spec
+              and the study both call for: a profile is chosen from the
+              catalog here, and an id that is in neither would only fail later
+              as `UnknownProfile` at print time. */}
           <select
             id="add-printer-profile"
             class="select select-sm w-full"

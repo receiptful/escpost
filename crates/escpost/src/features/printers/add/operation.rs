@@ -11,6 +11,13 @@ use crate::configuration::{self, UsbPrinterRegistration};
 /// cannot drift between the two.
 pub(crate) const AMBIGUOUS_USB_WARNING: &str = "This printer reports no serial number. Printing will be ambiguous while another device with the same USB identity is connected.";
 
+/// The RAW TCP port a registration falls back to when none is given: the
+/// interactive prompt's default and the non-interactive fallback are the same
+/// number, and the workbench's manual dialog starts from it too. The
+/// workbench cannot import it, so `add::tests` checks its copy against this
+/// one — see the test for why that drift is worth catching.
+pub(crate) const DEFAULT_RAW_PORT: u16 = 9100;
+
 /// Desired transport coordinates for a printer being registered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Connection {

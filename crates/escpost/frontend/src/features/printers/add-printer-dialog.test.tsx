@@ -111,7 +111,14 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
       <AddPrinterDialog printer={printer} onClose={onClose} onAdded={onAdded} />
     </AppDataProvider>,
   );
-  return { view, posted, onClose, onAdded };
+  // Hands the open dialog another device, which is the usage the owner is not
+  // supposed to have but which must not silently register the wrong route.
+  const hand = (next: DiscoveredPrinter | null) => view.rerender(
+    <AppDataProvider>
+      <AddPrinterDialog printer={next} onClose={onClose} onAdded={onAdded} />
+    </AppDataProvider>,
+  );
+  return { view, hand, posted, onClose, onAdded };
 }
 
 function addButton() {
@@ -167,6 +174,13 @@ describe("AddPrinterDialog", () => {
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
     fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
     fireEvent.input(screen.getByLabelText("Port"), { target: { value: "0" } });
+    expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
+    expect(addButton().hasAttribute("disabled")).toBe(true);
+
+    // `max` binds the spinner, not typed or pasted text, so the upper bound
+    // has to be the panel's own — otherwise the value reaches serde, which
+    // answers with a generic body rejection instead of this sentence.
+    fireEvent.input(screen.getByLabelText("Port"), { target: { value: "70000" } });
     expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
     expect(addButton().hasAttribute("disabled")).toBe(true);
 
@@ -230,6 +244,75 @@ describe("AddPrinterDialog", () => {
         in_endpoint: null,
       },
     });
+  });
+
+  // `usb_add_targets` assumes an IN endpoint only when the device exposes
+  // exactly one, because "several IN endpoints must not be reduced to an
+  // arbitrary guess". Pre-selecting one here would make the browser guess
+  // where the terminal offers None.
+  test("leaves the IN endpoint unchosen when the device exposes several", async () => {
+    renderDialog(usbPrinter({ out_endpoints: [0x01], in_endpoints: [0x81, 0x82] }), { printers: [] });
+
+    const inbound = screen.getByLabelText("IN endpoint") as HTMLSelectElement;
+    expect(inbound.value).toBe("");
+    expect(inbound.disabled).toBe(false);
+  });
+
+  // The connection facts come from the prop and the route from state, so a
+  // dialog handed another device must re-seed the route rather than submit
+  // the previous device's — an endpoint inside `0x01..=0x0f` that the new
+  // device does not expose is saved by every layer without complaint and
+  // simply never prints.
+  test("re-seeds the route when it is handed a different device", async () => {
+    const { hand, posted } = renderDialog(null, { printers: [] });
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+
+    // Manual to USB: without a re-seed there is no route at all, and Add
+    // stays disabled with nothing on screen to explain it.
+    hand(usbPrinter({ out_endpoints: [0x01, 0x02], in_endpoints: [0x81] }));
+    const out = screen.getByLabelText("OUT endpoint") as HTMLSelectElement;
+    expect(out.value).toBe("0x01");
+    expect(addButton().hasAttribute("disabled")).toBe(false);
+    fireEvent.change(out, { target: { value: "0x02" } });
+
+    // USB to a USB device that does not expose the chosen route.
+    hand(usbPrinter({ serial_number: "Z1", out_endpoints: [0x01], in_endpoints: [] }));
+    expect((screen.getByLabelText("OUT endpoint") as HTMLSelectElement).value).toBe("0x01");
+    expect((screen.getByLabelText("IN endpoint") as HTMLSelectElement).value).toBe("");
+
+    fireEvent.click(addButton());
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]?.connection).toEqual({
+      type: "usb",
+      vendor_id: 0x0416,
+      product_id: 0x5011,
+      serial_number: "Z1",
+      interface_number: 0,
+      out_endpoint: 0x01,
+      in_endpoint: null,
+    });
+  });
+
+  // `Request::new` refuses only a name that is nothing but whitespace, and
+  // `contains_key` looks the raw string up, so `printers add "kitchen "` is a
+  // distinct printer. Trimming here would register a different one than the
+  // terminal does.
+  test("posts the name exactly as typed and refuses one that is only whitespace", async () => {
+    const { posted } = renderDialog(null, { printers: [] });
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "   " } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    expect(addButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "kitchen " } });
+    expect(addButton().hasAttribute("disabled")).toBe(false);
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "  " } });
+    expect(addButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    fireEvent.click(addButton());
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]?.name).toBe("kitchen ");
   });
 
   // Advisory, not a refusal: the CLI registers the same device and prints

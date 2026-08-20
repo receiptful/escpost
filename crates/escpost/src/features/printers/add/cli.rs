@@ -20,7 +20,7 @@ use super::super::discover::{
     prepare as prepare_discovery,
 };
 use super::super::inventory::{NusbInventory, UsbInventory, UsbPrinter, configuration_matches};
-use super::{AMBIGUOUS_USB_WARNING, Connection, Request, Response, execute};
+use super::{AMBIGUOUS_USB_WARNING, Connection, DEFAULT_RAW_PORT, Request, Response, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UsbAddTarget {
@@ -235,7 +235,7 @@ fn resolve_add(
             let port = match port {
                 Some(port) => port,
                 None if can_prompt => prompter.port()?,
-                None => 9100,
+                None => DEFAULT_RAW_PORT,
             };
             if port == 0 {
                 return Err(ApplicationError::InvalidPrinterPort.into());
@@ -393,7 +393,7 @@ impl AddPrompter for InquireAddPrompter {
 
     fn port(&mut self) -> Result<u16, CliError> {
         CustomType::<u16>::new("Network port")
-            .with_default(9100)
+            .with_default(DEFAULT_RAW_PORT)
             .with_error_message("Enter a port between 1 and 65535")
             .with_validator(|port: &u16| {
                 Ok(if *port == 0 {
