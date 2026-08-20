@@ -193,8 +193,26 @@ describe("ScanOptions", () => {
 
     fireEvent.input(timeout, { target: { value: "0" } });
     expect(screen.queryByText("Enter a timeout as a whole number of milliseconds.")).toBeNull();
+    // The field's own constraint has to agree, or the browser paints it
+    // out of range while the panel accepts it.
+    expect(timeout.getAttribute("min")).toBe("0");
     fireEvent.click(startButton());
     expect(onStart).toHaveBeenCalledWith({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 0 });
+  });
+
+  // Start only vets the port and timeout while Network is checked, so an
+  // unchecked Network can reach `onStart` with whatever text the disabled
+  // fields hold. `DiscoveryQuery` says those are numbers, and that has to be
+  // true where the query is built — not because the reader discards them.
+  test("substitutes the server's defaults rather than emitting a port or timeout that is not a number", async () => {
+    const { onStart } = renderOptions(twoNetworks);
+    fireEvent.input(await screen.findByLabelText("RAW TCP port"), { target: { value: "" } });
+    fireEvent.input(screen.getByLabelText("Timeout per host"), { target: { value: "" } });
+    expect(startButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("Network"));
+    fireEvent.click(startButton());
+    expect(onStart).toHaveBeenCalledWith({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // The reason is the shared layer's; the remedy is this panel's. The

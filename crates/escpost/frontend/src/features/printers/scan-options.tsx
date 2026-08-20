@@ -146,11 +146,13 @@ export function ScanOptions({ onStart, onClose }: {
   // the same networks back to the server would reach the operation layer as a
   // different request than the one the terminal makes.
   //
-  // With no known network at all this is vacuously true, which would send an
-  // automatic scan the server has nothing to resolve. It stays unreachable
-  // because `networkSelected` below already requires a checked network, and
-  // gates Start — so anything loosening that must revisit this.
-  const automatic = !customActive && checked.length === known.length;
+  // Only ever consulted on the branch below where the custom field is empty,
+  // so it does not restate that. With no known network at all it is vacuously
+  // true, which would send an automatic scan the server has nothing to
+  // resolve; that stays unreachable because `networkSelected` below already
+  // requires a checked network, and gates Start — so anything loosening
+  // either of those must revisit this.
+  const automatic = checked.length === known.length;
   const selected = customActive ? customEntries : automatic ? [] : checked.map((entry) => entry.subnet);
   // The footer only ever states this while `networkSelected` holds, which for
   // a custom field means every entry passed `customIssue` — so no refused
@@ -200,12 +202,19 @@ export function ScanOptions({ onStart, onClose }: {
     // fields keep their values while disabled; `discoveryQueryString` drops
     // them from a USB-only scan, which is where the shared layer's refusal to
     // accept them lives.
+    //
+    // `startable` vets those fields only while Network is checked — refusing
+    // a USB scan over a value that scan does not use would be its own
+    // contradiction — so an unvetted field falls back to the server's own
+    // default here. `DiscoveryQuery` promises numbers, and it should be true
+    // where the query is built rather than because whoever reads it happens
+    // to discard the field.
     onStart({
       usb,
       network,
       subnets: network ? selected : [],
-      port: Number(portText),
-      timeoutMs: Number(timeoutText),
+      port: portValid ? Number(portText) : data.default_port,
+      timeoutMs: timeoutValid ? Number(timeoutText) : data.default_timeout_ms,
     });
   };
 
@@ -314,10 +323,13 @@ export function ScanOptions({ onStart, onClose }: {
             <div class="flex-1 space-y-1">
               <label class="text-xs text-base-content/70" for="scan-timeout">Timeout per host</label>
               <div class="flex items-center gap-2">
+                {/* `min` follows `timeoutValid`: zero is what `--timeout 0`
+                    accepts, so neither the spinner nor `:out-of-range` may
+                    say the panel rejects it. */}
                 <input
                   id="scan-timeout"
                   type="number"
-                  min="1"
+                  min="0"
                   class="input input-sm w-full"
                   value={timeoutText}
                   disabled={!network}
