@@ -53,6 +53,7 @@ type AppData = {
   startScan: (query: DiscoveryQuery) => void;
   cancelScan: () => void;
   printerFlashes: PrinterFlashes;
+  flashPrinter: (name: string, kind: "found" | "lost") => void;
 };
 
 const AppDataContext = createContext<AppData | null>(null);
@@ -418,6 +419,12 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
         startScan,
         cancelScan,
         printerFlashes,
+        // Exposed because a *newly added* printer has no availability
+        // transition to diff against: it is simply absent from the previous
+        // inventory and present in the next one. Registering it is the third
+        // event the flash treatment marks, and only the caller that
+        // registered it knows it happened.
+        flashPrinter,
       }}
     >
       {children}

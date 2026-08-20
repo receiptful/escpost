@@ -92,6 +92,19 @@ describe("OverviewPage", () => {
     expect((await screen.findByText("1 connected")).parentElement?.getAttribute("class")).toContain("justify-center");
   });
 
+  test("names the configuration file the workbench writes to", async () => {
+    globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/status"
+      ? Promise.resolve(json({ virtual_printer: null, jobs_processed: 0, config_path: "/home/dev/.config/escpost/printers.toml" }))
+      : Promise.resolve(json({ printers: [] }))) as unknown as typeof globalThis.fetch;
+
+    render(<AppDataProvider><OverviewPage /></AppDataProvider>);
+    const path = await screen.findByText("/home/dev/.config/escpost/printers.toml");
+
+    // Beneath the grid rather than a fourth card, and informative only.
+    expect(path.closest("section[aria-label]")).toBeNull();
+    expect(path.closest("a")).toBeNull();
+  });
+
   test("renders Not running when no virtual printer is configured", async () => {
     globalThis.fetch = ((input: RequestInfo | URL) => String(input) === "/api/profiles/list"
       ? Promise.resolve(json({ profiles: [] }))

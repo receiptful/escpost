@@ -1,6 +1,16 @@
 import type { Printer, UsbConnection } from "../../api/types";
+import type { PrinterFlashes } from "../../app/data";
 import { useAppData } from "../../app/data";
 import { usbHex } from "./usb";
+
+// The highlight a printer is currently carrying, or no class at all. Both
+// layouts render the same printer, so both get the same treatment: the class
+// goes on the `<tr>` and on the mobile `<article>`, which are the elements
+// that own the row's background in each.
+function flashClass(flashes: PrinterFlashes, name: string) {
+  const flash = flashes[name];
+  return flash === undefined ? "" : `printer-row-${flash}`;
+}
 
 function titleCase(value: string) {
   return `${value[0]?.toUpperCase()}${value.slice(1)}`;
@@ -19,7 +29,7 @@ function connectionFacts(printer: Printer) {
 }
 
 export function PrinterList() {
-  const { printers, refreshPrinters } = useAppData();
+  const { printers, refreshPrinters, printerFlashes } = useAppData();
   const printerData = printers.data?.printers;
 
   if (!printerData) {
@@ -47,7 +57,7 @@ export function PrinterList() {
         <div class="hidden overflow-x-auto rounded-box bg-base-100 shadow-sm lg:block">
           <table class="table">
             <thead><tr><th>Name</th><th>Status</th><th>Transport</th><th>Profile</th><th>Connection</th></tr></thead>
-            <tbody>{printerData.map((printer) => <tr key={printer.name}>
+            <tbody>{printerData.map((printer) => <tr key={printer.name} class={flashClass(printerFlashes, printer.name)}>
               <td>{printer.name}</td>
               <td>{titleCase(printer.availability)}</td>
               <td>{titleCase(printer.transport)}</td>
@@ -58,7 +68,7 @@ export function PrinterList() {
         </div>
         <div class="space-y-3 lg:hidden">
           {printerData.map((printer) => (
-            <article key={printer.name} class="rounded-box bg-base-100 p-5 shadow-sm">
+            <article key={printer.name} class={`rounded-box bg-base-100 p-5 shadow-sm ${flashClass(printerFlashes, printer.name)}`}>
               <dl class="grid grid-cols-2 gap-3 text-sm">
                 <dt class="font-medium text-base-content/70">Name</dt><dd>{printer.name}</dd>
                 <dt class="font-medium text-base-content/70">Status</dt><dd>{titleCase(printer.availability)}</dd>
