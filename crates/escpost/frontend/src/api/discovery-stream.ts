@@ -26,12 +26,18 @@ export type DiscoveryProgress = {
   total: number;
 };
 
+// One tolerated USB enumeration failure. `can_grant_usb_permissions` is a
+// fact about the server's platform, not a remedy: `printers
+// grant-usb-permissions` is a Linux-only subcommand, and only the server
+// knows what it runs on. The browser still words its own remedy, and stays
+// silent about a command the host would not recognize.
 export type UsbDiscoveryFailure = {
   vendor_id: number;
   product_id: number;
   stage: "open_device" | "inspect_configuration";
   reason: string;
   permission_denied: boolean;
+  can_grant_usb_permissions: boolean;
 };
 
 export type DiscoveryHandlers = {

@@ -1,12 +1,9 @@
 import type { Printer, UsbConnection } from "../../api/types";
 import { useAppData } from "../../app/data";
+import { usbHex } from "./usb";
 
 function titleCase(value: string) {
   return `${value[0]?.toUpperCase()}${value.slice(1)}`;
-}
-
-function usbHex(value: number) {
-  return value.toString(16).padStart(4, "0");
 }
 
 function usbConnection(connection: UsbConnection) {

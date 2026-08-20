@@ -54,6 +54,7 @@ function usbFailure(overrides: Partial<UsbDiscoveryFailure> = {}): UsbDiscoveryF
     stage: "open_device",
     reason: "permission denied (errno 13)",
     permission_denied: true,
+    can_grant_usb_permissions: true,
     ...overrides,
   };
 }
@@ -90,6 +91,12 @@ describe("DiscoveryPanel", () => {
     expect(screen.queryByText("kitchen")).toBeNull();
     expect(view.container.textContent).not.toContain("10.42.0.71");
     expect(screen.getByText("1 new · 1 already configured")).toBeTruthy();
+    // Returning to the page has to say when these results were observed:
+    // they are a snapshot of the world, not live state.
+    expect(screen.getByText(/^Completed /)).toBeTruthy();
+    // Cancelling a finished scan would throw the results away — the provider
+    // resets the whole scan — so a finished scan offers no Cancel at all.
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 
   // USB enumeration finishes long before the sweep does, so the panel has to
@@ -134,6 +141,9 @@ describe("DiscoveryPanel", () => {
     expect(screen.getByText("Could not inspect the active configuration of USB device 04b8:0203: device disconnected.")).toBeTruthy();
     // One remedy for the whole banner, however many devices were refused.
     expect(screen.getAllByText(/sudo escpost printers grant-usb-permissions/)).toHaveLength(1);
+    // The server may be a machine across the room, so "run this" has to say
+    // where — a distinction the terminal never has to make.
+    expect(screen.getByRole("alert").textContent).toContain("on the machine running");
 
     // A failure that is not a permission problem gets no command to run.
     rerender({
@@ -143,6 +153,67 @@ describe("DiscoveryPanel", () => {
       finishedAt: Date.now(),
     });
     expect(view.container.textContent).not.toContain("grant-usb-permissions");
+  });
+
+  // `printers grant-usb-permissions` is a Linux-only subcommand: on a macOS
+  // server it is unrecognized, and the CLI on that same host stays silent
+  // about it. Only the server knows what it runs on, so it says.
+  test("stays silent about the fix command on a host that does not have it", () => {
+    const { view } = renderPanel({
+      phase: "done",
+      printers: [],
+      failures: [usbFailure({ can_grant_usb_permissions: false })],
+      finishedAt: Date.now(),
+    });
+
+    expect(screen.getByText("Could not open USB device 04b8:0202: permission denied (errno 13).")).toBeTruthy();
+    expect(view.container.textContent).not.toContain("grant-usb-permissions");
+  });
+
+  // A USB failure is tolerated, not fatal: the sweep underneath keeps going,
+  // and a panel that drops its progress bar and its Cancel button the moment
+  // a device is refused would look finished while probing 500 more hosts.
+  test("keeps a running scan running through USB failures", () => {
+    renderPanel({
+      phase: "running",
+      completed: 100,
+      total: 508,
+      printers: [usbPrinter()],
+      failures: [usbFailure(), usbFailure({ product_id: 0x0203 })],
+    });
+
+    expect(screen.getByText("Could not open USB device 04b8:0202: permission denied (errno 13).")).toBeTruthy();
+    expect(screen.getByText("Could not open USB device 04b8:0203: permission denied (errno 13).")).toBeTruthy();
+    expect((screen.getByRole("progressbar") as HTMLProgressElement).value).toBe(100);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  // Two of the same model refused at two addresses report identical facts,
+  // since the failure carries no bus or address. Both still have to be
+  // listed, and listing them must not collide on a key.
+  test("lists both refusals when the same model fails twice", () => {
+    const { rerender } = renderPanel({
+      phase: "done",
+      printers: [],
+      failures: [usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }), usbFailure({ vendor_id: 0x0416, product_id: 0x5011 })],
+      finishedAt: Date.now(),
+    });
+
+    expect(screen.getAllByText("Could not open USB device 0416:5011: permission denied (errno 13).")).toHaveLength(2);
+
+    // A third refusal of the same model arrives mid-scan: the list grows by
+    // one rather than the diff reusing a node it cannot tell apart.
+    rerender({
+      phase: "done",
+      printers: [],
+      failures: [
+        usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }),
+        usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }),
+        usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }),
+      ],
+      finishedAt: Date.now(),
+    });
+    expect(screen.getAllByText("Could not open USB device 0416:5011: permission denied (errno 13).")).toHaveLength(3);
   });
 
   // A scan tolerates USB failures rather than ending on them, so a completed

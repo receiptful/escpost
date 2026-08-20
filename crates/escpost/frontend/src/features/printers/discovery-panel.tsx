@@ -2,20 +2,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { UsbDiscoveryFailure } from "../../api/discovery-stream";
 import type { DiscoveredPrinter, UsbConnection } from "../../api/types";
 import type { ScanState } from "../../app/data";
+import { endpointHex, usbHex } from "./usb";
 
-// How long an arriving row keeps the flash class. The animation itself is
-// shorter (see `.printer-row-found` in `styles.css`); this only has to
-// outlast it, and matches the window `AppDataProvider` uses for the
-// inventory's own flashes so both surfaces settle together.
+// How long an arriving row keeps the flash class. The one thing this number
+// owes anything to is the animation in `styles.css`, which it has to outlast:
+// removing the class mid-animation would cut the fade off. Nothing couples it
+// to the window the inventory's own flashes use.
 const FLASH_DURATION = 1_200;
-
-function usbHex(value: number) {
-  return value.toString(16).padStart(4, "0");
-}
-
-function endpointHex(value: number) {
-  return `0x${value.toString(16).padStart(2, "0")}`;
-}
 
 // The facts the add dialog will show read-only, stated the way `printers
 // discover` states them, so the same device reads the same in both
@@ -94,7 +87,10 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
   // that arrived while it was unmounted, since in-app navigation leaves the
   // scan running.
   const seen = useRef<Set<string> | null>(null);
-  const timeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // Keyed by the batch that scheduled it, so a settled batch drops its handle
+  // instead of the map growing for every arrival of a long scan.
+  const timeouts = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const batches = useRef(0);
   const [flashing, setFlashing] = useState<string[]>([]);
   const discovered = scan.printers;
 
@@ -112,19 +108,21 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
       return;
     }
     setFlashing((current) => [...current, ...arrivals]);
+    const batch = batches.current++;
     const timeout = setTimeout(() => {
+      timeouts.current.delete(batch);
       setFlashing((current) => current.filter((key) => !arrivals.includes(key)));
     }, FLASH_DURATION);
-    timeouts.current.push(timeout);
+    timeouts.current.set(batch, timeout);
   }, [discovered]);
 
   useEffect(() => {
     const pending = timeouts.current;
     return () => {
-      for (const timeout of pending) {
+      for (const timeout of pending.values()) {
         clearTimeout(timeout);
       }
-      pending.length = 0;
+      pending.clear();
     };
   }, []);
 
@@ -143,6 +141,7 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
   ];
 
   const running = scan.phase === "running";
+  const grantable = scan.failures.some((failure) => failure.permission_denied && failure.can_grant_usb_permissions);
   const finished = completedAt(scan.finishedAt);
   const summary = running
     ? `${unconfigured.length} new so far`
@@ -160,13 +159,16 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
     <section aria-labelledby="discovery-heading" class="space-y-2">
       <header class="flex items-center justify-between gap-3">
         <h2 id="discovery-heading" class="font-medium">{running ? "Discovering printers" : "Discovered"}</h2>
-        <span class="text-sm text-base-content/70">{summary}</span>
+        {/* The live region is the count rather than the rows: a printer
+            arriving is announced once, as one more result, instead of a
+            screen reader narrating every fact of every row that lands. */}
+        <span aria-live="polite" class="text-sm text-base-content/70">{summary}</span>
       </header>
 
       <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
         <div class="space-y-2 px-4 py-3 text-sm">
           <div class="flex items-center justify-between gap-3">
-            <span aria-live="polite">{scanLine}</span>
+            <span>{scanLine}</span>
             <span class="text-base-content/70">
               {running
                 ? scan.total > 0 && `${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts`
@@ -195,17 +197,25 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
           // several can arrive and the scan carries on regardless.
           <div role="alert" class="alert alert-warning alert-soft block rounded-none text-sm">
             <ul class="space-y-1">
-              {scan.failures.map((failure) => (
-                <li key={`${failure.vendor_id}:${failure.product_id}:${failure.stage}`}>{failureSentence(failure)}</li>
+              {/* Two of the same model refused at two addresses are two
+                  failures reporting identical facts — `UsbEnumerationFailure`
+                  carries no bus or address — so only the position tells them
+                  apart. The list is append-only and never reordered. */}
+              {scan.failures.map((failure, index) => (
+                <li key={index}>{failureSentence(failure)}</li>
               ))}
             </ul>
             {/* The one place the browser names a terminal command: USB
                 permissions cannot be fixed from a web page, so there is no
                 in-app remedy to point at instead. One line for the whole
-                banner, as the CLI also prints it once. */}
-            {scan.failures.some((failure) => failure.permission_denied) && (
+                banner, as the CLI also prints it once — and only where the
+                command exists, which the server reports, since `printers
+                grant-usb-permissions` is Linux-only and the browser may be
+                talking to a machine across the room rather than this one. */}
+            {grantable && (
               <p class="mt-2">
-                Fix USB permissions with: <code class="font-mono">sudo escpost printers grant-usb-permissions</code>
+                Fix USB permissions on the machine running <code class="font-mono">escpost serve</code>, with:{" "}
+                <code class="font-mono">sudo escpost printers grant-usb-permissions</code>
               </p>
             )}
           </div>

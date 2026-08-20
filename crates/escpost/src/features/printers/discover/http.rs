@@ -372,6 +372,10 @@ struct UsbFailureEvent {
     stage: &'static str,
     reason: String,
     permission_denied: bool,
+    /// Whether this host has `printers grant-usb-permissions` at all — the
+    /// subcommand is Linux-only, and only the server knows what it runs on.
+    /// A platform fact, not a remedy: the browser still words its own.
+    can_grant_usb_permissions: bool,
 }
 
 fn usb_printer_event(discovered: &UsbDiscovery) -> PrinterEvent {
@@ -419,6 +423,7 @@ fn usb_failure_event(failure: &UsbEnumerationFailure) -> UsbFailureEvent {
         },
         reason: failure.reason.clone(),
         permission_denied: failure.permission_denied,
+        can_grant_usb_permissions: cfg!(target_os = "linux"),
     }
 }
 
@@ -463,5 +468,59 @@ mod tests {
             .map(Subnet::to_string)
             .collect::<Vec<_>>();
         assert_eq!(subnets, ["10.42.0.0/24", "10.43.0.0/24"]);
+    }
+
+    fn open_failure() -> UsbEnumerationFailure {
+        UsbEnumerationFailure {
+            stage: UsbFailureStage::OpenDevice,
+            vendor_id: 0x04b8,
+            product_id: 0x0202,
+            reason: "permission denied (errno 13)".to_owned(),
+            permission_denied: true,
+        }
+    }
+
+    /// The browser words its own remedy for a refused device, so the event has
+    /// to carry every fact that remedy depends on — including whether this
+    /// host has the command to suggest at all.
+    #[test]
+    fn a_usb_failure_event_carries_the_facts_a_remedy_is_worded_from() {
+        let payload = serde_json::to_value(usb_failure_event(&open_failure()))
+            .expect("the failure event should serialize");
+
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "vendor_id": 0x04b8,
+                "product_id": 0x0202,
+                "stage": "open_device",
+                "reason": "permission denied (errno 13)",
+                "permission_denied": true,
+                // `printers grant-usb-permissions` is a Linux-only subcommand
+                // and the browser cannot know what the server runs on. Naming
+                // it on a macOS host would send the reader to a command that
+                // is unrecognized there, while the CLI on that same host says
+                // nothing at all.
+                "can_grant_usb_permissions": cfg!(target_os = "linux"),
+            })
+        );
+    }
+
+    /// A failure that is not a permission problem stays one: nothing about the
+    /// stage may leak into the permission flag, or the browser suggests a
+    /// remedy for a disconnected device.
+    #[test]
+    fn an_inspection_failure_reports_its_own_stage_without_claiming_permission() {
+        let payload = serde_json::to_value(usb_failure_event(&UsbEnumerationFailure {
+            stage: UsbFailureStage::InspectConfiguration,
+            permission_denied: false,
+            reason: "device disconnected".to_owned(),
+            ..open_failure()
+        }))
+        .expect("the failure event should serialize");
+
+        assert_eq!(payload["stage"], "inspect_configuration");
+        assert_eq!(payload["permission_denied"], false);
+        assert_eq!(payload["reason"], "device disconnected");
     }
 }

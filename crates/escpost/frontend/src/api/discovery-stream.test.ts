@@ -123,7 +123,7 @@ describe("openDiscoveryStream", () => {
     source.emit("progress", progress);
     expect(callbacks.onProgress).toHaveBeenCalledWith(progress);
 
-    const failure = { vendor_id: 1, product_id: 2, stage: "open_device", reason: "denied", permission_denied: true };
+    const failure = { vendor_id: 1, product_id: 2, stage: "open_device", reason: "denied", permission_denied: true, can_grant_usb_permissions: true };
     source.emit("usb_failure", failure);
     expect(callbacks.onUsbFailure).toHaveBeenCalledWith(failure);
   });
