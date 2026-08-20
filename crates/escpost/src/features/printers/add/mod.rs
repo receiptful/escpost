@@ -1,9 +1,10 @@
 //! Persist a fully resolved printer registration request.
 
 pub(crate) mod cli;
+pub(crate) mod http;
 mod operation;
 
-pub(crate) use operation::{Connection, Request, Response, execute};
+pub(crate) use operation::{AMBIGUOUS_USB_WARNING, Connection, Request, Response, execute};
 
 #[cfg(test)]
 mod tests {

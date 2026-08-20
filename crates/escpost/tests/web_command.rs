@@ -347,6 +347,177 @@ fn discovery_streams_prepared_progress_and_completion() {
 }
 
 #[test]
+fn adding_a_network_printer_rejects_a_duplicate_name() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let body = "{\"name\":\"\",\"connection\":{\"type\":\"network\",\"host\":\"10.42.0.71\",\"port\":9100}}";
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 400 Bad Request");
+    let payload = String::from_utf8_lossy(response_body(&response));
+    assert!(payload.contains("\"code\":\"blank_printer_name\""));
+}
+
+#[test]
+fn adding_a_network_printer_persists_it_and_returns_saved_facts() {
+    // An isolated config directory: this test writes a real printer
+    // registration, and must never touch a developer's own printer list.
+    let configuration_directory = temporary_directory("add-network");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    let body = r#"{"name":"kitchen","profile":"REFERENCE","connection":{"type":"network","host":"10.42.0.71","port":9100}}"#;
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+    let saved = fs::read_to_string(configuration_directory.join("printers.toml"))
+        .expect("the printer registration should have been written");
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert_eq!(response_status(&response), "HTTP/1.1 201 Created");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the add response should be JSON");
+    assert_eq!(payload["name"], "kitchen");
+    assert_eq!(payload["transport"], "network");
+    assert_eq!(payload["profile"], "REFERENCE");
+    assert_eq!(payload["warnings"].as_array().map(Vec::len), Some(0));
+
+    assert!(saved.contains("[kitchen]"));
+    assert!(saved.contains("host = \"10.42.0.71\""));
+    assert!(saved.contains("port = 9100"));
+}
+
+#[test]
+fn adding_a_usb_printer_without_a_serial_number_carries_the_ambiguity_warning() {
+    let configuration_directory = temporary_directory("add-usb-ambiguous");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    // 1046/20497 is 0x0416/0x5011, the vendor/product pair used by the
+    // NT-5890K fixtures elsewhere in this suite; JSON has no hex literals.
+    let body = r#"{"name":"counter","connection":{"type":"usb","vendor_id":1046,"product_id":20497,"interface_number":0,"out_endpoint":1}}"#;
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert_eq!(response_status(&response), "HTTP/1.1 201 Created");
+    let payload: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the add response should be JSON");
+    assert_eq!(payload["transport"], "usb");
+    let warnings = payload["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0]
+            .as_str()
+            .expect("the warning should be a string")
+            .contains("ambiguous while another device with the same USB identity is connected")
+    );
+}
+
+#[test]
+fn adding_a_printer_whose_name_is_already_configured_is_a_conflict() {
+    let configuration_directory = temporary_directory("add-conflict");
+    fs::write(
+        configuration_directory.join("printers.toml"),
+        "[kitchen]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = 9100\n",
+    )
+    .expect("the printer fixture should be writable");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    let body =
+        r#"{"name":"kitchen","connection":{"type":"network","host":"10.42.0.99","port":9100}}"#;
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert_eq!(response_status(&response), "HTTP/1.1 409 Conflict");
+    let payload: serde_json::Value = serde_json::from_slice(response_body(&response))
+        .expect("the conflict response should be JSON");
+    assert_eq!(payload["error"]["code"], "printer_already_configured");
+}
+
+#[test]
+fn adding_a_printer_rejects_invalid_facts_and_malformed_requests() {
+    // None of these requests reach a valid, writable registration, so a
+    // plain unconfigured directory is fine here: nothing should be written.
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let invalid_port = http_post_json(
+        port,
+        "/api/printers/add",
+        r#"{"name":"kitchen","connection":{"type":"network","host":"10.42.0.71","port":0}}"#,
+    );
+    let invalid_out_endpoint = http_post_json(
+        port,
+        "/api/printers/add",
+        r#"{"name":"counter","connection":{"type":"usb","vendor_id":1046,"product_id":20497,"serial_number":"B1","interface_number":0,"out_endpoint":129}}"#,
+    );
+    let malformed_json = http_post_json(port, "/api/printers/add", "not json");
+    stop(&mut child);
+
+    assert_eq!(response_status(&invalid_port), "HTTP/1.1 400 Bad Request");
+    let invalid_port: serde_json::Value = serde_json::from_slice(response_body(&invalid_port))
+        .expect("the invalid port response should be JSON");
+    assert_eq!(invalid_port["error"]["code"], "invalid_printer_port");
+
+    assert_eq!(
+        response_status(&invalid_out_endpoint),
+        "HTTP/1.1 400 Bad Request"
+    );
+    let invalid_out_endpoint: serde_json::Value =
+        serde_json::from_slice(response_body(&invalid_out_endpoint))
+            .expect("the invalid endpoint response should be JSON");
+    assert_eq!(
+        invalid_out_endpoint["error"]["code"],
+        "invalid_usb_out_endpoint"
+    );
+
+    assert_eq!(response_status(&malformed_json), "HTTP/1.1 400 Bad Request");
+    let malformed_json: serde_json::Value = serde_json::from_slice(response_body(&malformed_json))
+        .expect("the malformed body response should be JSON");
+    assert_eq!(malformed_json["error"]["code"], "invalid_request_body");
+}
+
+#[test]
+fn getting_the_add_printer_route_is_not_allowed() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/printers/add");
+    stop(&mut child);
+
+    assert_eq!(
+        response_status(&response),
+        "HTTP/1.1 405 Method Not Allowed"
+    );
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+}
+
+#[test]
 fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
@@ -1143,6 +1314,26 @@ fn http_get_bytes(port: u16, path: &str) -> Vec<u8> {
 
 fn http_post_bytes(port: u16, path: &str) -> Vec<u8> {
     http_request_bytes(port, "POST", path)
+}
+
+/// Send a JSON body over a raw connection, the same way the SPA's `fetch`
+/// call will: `Content-Type: application/json` and an exact `Content-Length`,
+/// since `Connection: close` alone does not tell the server how many body
+/// bytes to expect before it starts reading a request.
+fn http_post_json(port: u16, path: &str, body: &str) -> Vec<u8> {
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
+    write!(
+        stream,
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("the HTTP request should be writable");
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .expect("the HTTP response should be readable");
+    response
 }
 
 fn http_request_bytes(port: u16, method: &str, path: &str) -> Vec<u8> {

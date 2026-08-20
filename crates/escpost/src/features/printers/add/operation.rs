@@ -3,6 +3,14 @@ use std::path::PathBuf;
 use crate::application::{self, ApplicationError};
 use crate::configuration::{self, UsbPrinterRegistration};
 
+/// Advisory shown when a USB printer is registered without a serial number:
+/// the vendor/product descriptor alone cannot tell it apart from another
+/// unit of the same make and model, so printing may reach the wrong
+/// physical device while both are connected. Shared by the CLI and HTTP
+/// adapters, which each decide *when* to show it, so the wording itself
+/// cannot drift between the two.
+pub(crate) const AMBIGUOUS_USB_WARNING: &str = "This printer reports no serial number. Printing will be ambiguous while another device with the same USB identity is connected.";
+
 /// Desired transport coordinates for a printer being registered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Connection {

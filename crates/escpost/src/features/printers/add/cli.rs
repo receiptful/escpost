@@ -20,7 +20,7 @@ use super::super::discover::{
     prepare as prepare_discovery,
 };
 use super::super::inventory::{NusbInventory, UsbInventory, UsbPrinter, configuration_matches};
-use super::{Connection, Request, Response, execute};
+use super::{AMBIGUOUS_USB_WARNING, Connection, Request, Response, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UsbAddTarget {
@@ -161,9 +161,7 @@ fn save_and_report_printer(
         response.config_path.display()
     );
     if ambiguous_without_serial {
-        eprintln!(
-            "Warning: this USB printer has no serial number; printing will be ambiguous while another device with the same USB identity is connected."
-        );
+        eprintln!("Warning: {AMBIGUOUS_USB_WARNING}");
     }
     Ok(response.printer_name)
 }

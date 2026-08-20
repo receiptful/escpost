@@ -30,6 +30,17 @@ impl ApiError {
         )
     }
 
+    /// The request body was not JSON, or did not match the expected shape.
+    /// Raised in place of axum's built-in `JsonRejection` response, which
+    /// speaks `text/plain` rather than this API's error envelope.
+    pub(crate) fn invalid_request_body() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_body",
+            "The request body is invalid.",
+        )
+    }
+
     pub(crate) fn printer_inventory_failure() -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -96,6 +107,37 @@ impl ApiError {
             code,
             message: message.into(),
         }
+    }
+
+    /// Translate a failure from `add::Request::new` or `add::execute` into
+    /// its own stable code, one `ApplicationError` variant at a time, so the
+    /// browser can tell a name collision (409) from a bad endpoint (400)
+    /// instead of parsing prose out of a single generic 400.
+    pub(crate) fn from_application(error: crate::application::ApplicationError) -> Self {
+        use crate::application::ApplicationError as Application;
+        let (status, code) = match error {
+            Application::BlankPrinterName => (StatusCode::BAD_REQUEST, "blank_printer_name"),
+            Application::BlankPrinterHost => (StatusCode::BAD_REQUEST, "blank_printer_host"),
+            Application::BlankPrinterProfile => (StatusCode::BAD_REQUEST, "blank_printer_profile"),
+            Application::BlankUsbSerialNumber => {
+                (StatusCode::BAD_REQUEST, "blank_usb_serial_number")
+            }
+            Application::InvalidPrinterPort => (StatusCode::BAD_REQUEST, "invalid_printer_port"),
+            Application::InvalidUsbOutEndpoint(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_usb_out_endpoint")
+            }
+            Application::InvalidUsbInEndpoint(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_usb_in_endpoint")
+            }
+            Application::PrinterAlreadyConfigured(_) => {
+                (StatusCode::CONFLICT, "printer_already_configured")
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "printer_registration_failed",
+            ),
+        };
+        Self::new(status, code, error.to_string())
     }
 }
 

@@ -18,6 +18,7 @@ pub(crate) fn router() -> Router<WebState> {
             get(list_printers).fallback(crate::web::error::method_not_allowed),
         )
         .merge(super::discover::http::router())
+        .merge(super::add::http::router())
 }
 
 #[derive(Deserialize)]
