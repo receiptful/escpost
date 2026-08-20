@@ -1,0 +1,250 @@
+import { useEffect, useRef, useState } from "preact/hooks";
+import type { UsbDiscoveryFailure } from "../../api/discovery-stream";
+import type { DiscoveredPrinter, UsbConnection } from "../../api/types";
+import type { ScanState } from "../../app/data";
+
+// How long an arriving row keeps the flash class. The animation itself is
+// shorter (see `.printer-row-found` in `styles.css`); this only has to
+// outlast it, and matches the window `AppDataProvider` uses for the
+// inventory's own flashes so both surfaces settle together.
+const FLASH_DURATION = 1_200;
+
+function usbHex(value: number) {
+  return value.toString(16).padStart(4, "0");
+}
+
+function endpointHex(value: number) {
+  return `0x${value.toString(16).padStart(2, "0")}`;
+}
+
+// The facts the add dialog will show read-only, stated the way `printers
+// discover` states them, so the same device reads the same in both
+// interfaces. The endpoints are here because they are the one thing about a
+// USB device the reader still has to choose between.
+function usbFacts(connection: UsbConnection) {
+  const parts = [`USB ${usbHex(connection.vendor_id)}:${usbHex(connection.product_id)}`];
+  if (connection.bus && connection.address !== null) {
+    parts.push(`bus ${connection.bus} addr ${String(connection.address).padStart(3, "0")}`);
+  }
+  parts.push(connection.serial_number ? `serial ${connection.serial_number}` : "no serial");
+  parts.push(`interface ${connection.interface_number}`);
+  if (connection.out_endpoints.length > 0) {
+    parts.push(`out ${connection.out_endpoints.map(endpointHex).join(", ")}`);
+  }
+  return parts.join(" · ");
+}
+
+// Identity of a discovered printer across the events of one scan: the facts
+// that make it the same device rather than the same row. A rescan clears the
+// list, so this never has to survive one.
+function printerKey(printer: DiscoveredPrinter) {
+  const connection = printer.connection;
+  return connection.type === "network"
+    ? `network:${connection.host}:${connection.port}`
+    : `usb:${connection.vendor_id}:${connection.product_id}:${connection.serial_number ?? ""}:${connection.bus ?? ""}:${connection.address ?? ""}:${connection.interface_number}`;
+}
+
+function printerTitle(printer: DiscoveredPrinter) {
+  const connection = printer.connection;
+  if (connection.type === "network") {
+    return `${connection.host}:${connection.port}`;
+  }
+  return connection.product ?? connection.manufacturer ?? `USB ${usbHex(connection.vendor_id)}:${usbHex(connection.product_id)}`;
+}
+
+function printerFacts(printer: DiscoveredPrinter) {
+  return printer.connection.type === "network"
+    ? printer.interface ? `Network · reachable via ${printer.interface}` : "Network"
+    : usbFacts(printer.connection);
+}
+
+// The same sentence `printers discover` writes to its warning stream, minus
+// its `Warning:` prefix, which the banner already carries visually.
+function failureSentence(failure: UsbDiscoveryFailure) {
+  const action = failure.stage === "open_device"
+    ? "Could not open"
+    : "Could not inspect the active configuration of";
+  return `${action} USB device ${usbHex(failure.vendor_id)}:${usbHex(failure.product_id)}: ${failure.reason}.`;
+}
+
+function completedAt(finishedAt: number | null) {
+  if (finishedAt === null) {
+    return null;
+  }
+  return new Date(finishedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * The discovery results, from the first streamed printer to the completed
+ * scan. It renders `ScanState` and nothing else, so it is as correct halfway
+ * through a sweep — USB results already listed, network probes still
+ * running — as it is at the end of one.
+ *
+ * Only printers that are not yet configured become rows. Already-configured
+ * hits are counted here and reported by flashing the row they already occupy
+ * in the inventory below, which the application data provider drives.
+ */
+export function DiscoveryPanel({ scan, onAdd, onCancel }: {
+  scan: ScanState;
+  onAdd: (printer: DiscoveredPrinter) => void;
+  onCancel: () => void;
+}) {
+  // Keys seen on the previous render, or `null` until the first one: a panel
+  // that mounts onto a scan already in progress must not flash every row
+  // that arrived while it was unmounted, since in-app navigation leaves the
+  // scan running.
+  const seen = useRef<Set<string> | null>(null);
+  const timeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [flashing, setFlashing] = useState<string[]>([]);
+  const discovered = scan.printers;
+
+  useEffect(() => {
+    const keys = discovered.map(printerKey);
+    const previous = seen.current;
+    seen.current = new Set(keys);
+    // A rescan empties the list, and a printer found again by the next scan
+    // is a new arrival again.
+    if (previous === null || keys.length === 0) {
+      return;
+    }
+    const arrivals = keys.filter((key) => !previous.has(key));
+    if (arrivals.length === 0) {
+      return;
+    }
+    setFlashing((current) => [...current, ...arrivals]);
+    const timeout = setTimeout(() => {
+      setFlashing((current) => current.filter((key) => !arrivals.includes(key)));
+    }, FLASH_DURATION);
+    timeouts.current.push(timeout);
+  }, [discovered]);
+
+  useEffect(() => {
+    const pending = timeouts.current;
+    return () => {
+      for (const timeout of pending) {
+        clearTimeout(timeout);
+      }
+      pending.length = 0;
+    };
+  }, []);
+
+  if (scan.phase === "idle") {
+    return null;
+  }
+
+  const unconfigured = discovered.filter((printer) => printer.configured_names.length === 0);
+  const configuredCount = discovered.length - unconfigured.length;
+  // USB first whatever the arrival order: an enumerated device is a fact
+  // about this machine, and it is the part of a scan that is already final
+  // while the sweep underneath is still guessing.
+  const rows = [
+    ...unconfigured.filter((printer) => printer.transport === "usb"),
+    ...unconfigured.filter((printer) => printer.transport !== "usb"),
+  ];
+
+  const running = scan.phase === "running";
+  const finished = completedAt(scan.finishedAt);
+  const summary = running
+    ? `${unconfigured.length} new so far`
+    : configuredCount > 0
+      ? `${unconfigured.length} new · ${configuredCount} already configured`
+      : `${unconfigured.length} new`;
+  // The scan line states probe counts, never networks or ports: the scan
+  // state carries what the stream reported, and the stream reports progress
+  // rather than the query that produced it.
+  const scanLine = running
+    ? "Scanning for printers…"
+    : scan.total > 0 ? `Scanned ${scan.total.toLocaleString()} addresses` : "Scan complete";
+
+  return (
+    <section aria-labelledby="discovery-heading" class="space-y-2">
+      <header class="flex items-center justify-between gap-3">
+        <h2 id="discovery-heading" class="font-medium">{running ? "Discovering printers" : "Discovered"}</h2>
+        <span class="text-sm text-base-content/70">{summary}</span>
+      </header>
+
+      <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
+        <div class="space-y-2 px-4 py-3 text-sm">
+          <div class="flex items-center justify-between gap-3">
+            <span aria-live="polite">{scanLine}</span>
+            <span class="text-base-content/70">
+              {running
+                ? scan.total > 0 && `${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts`
+                : finished && `Completed ${finished}`}
+            </span>
+          </div>
+          {scan.total > 0 && (
+            <progress class="progress progress-primary w-full" value={scan.completed} max={scan.total} aria-label="Scan progress" />
+          )}
+          {running && (
+            <div class="flex justify-end">
+              {/* 508 hosts at a second each is minutes of sweeping; the
+                  terminal answers that with Ctrl-C, and closing the stream is
+                  this interface's version of it. */}
+              <button type="button" class="btn btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          )}
+        </div>
+
+        {scan.error && (
+          <p role="alert" class="alert alert-error alert-soft rounded-none text-sm">{scan.error}</p>
+        )}
+
+        {scan.failures.length > 0 && (
+          // A USB enumeration failure is tolerated rather than fatal, so
+          // several can arrive and the scan carries on regardless.
+          <div role="alert" class="alert alert-warning alert-soft block rounded-none text-sm">
+            <ul class="space-y-1">
+              {scan.failures.map((failure) => (
+                <li key={`${failure.vendor_id}:${failure.product_id}:${failure.stage}`}>{failureSentence(failure)}</li>
+              ))}
+            </ul>
+            {/* The one place the browser names a terminal command: USB
+                permissions cannot be fixed from a web page, so there is no
+                in-app remedy to point at instead. One line for the whole
+                banner, as the CLI also prints it once. */}
+            {scan.failures.some((failure) => failure.permission_denied) && (
+              <p class="mt-2">
+                Fix USB permissions with: <code class="font-mono">sudo escpost printers grant-usb-permissions</code>
+              </p>
+            )}
+          </div>
+        )}
+
+        {rows.map((printer) => {
+          const key = printerKey(printer);
+          const title = printerTitle(printer);
+          return (
+            <div
+              key={key}
+              class={`flex items-center justify-between gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
+            >
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="badge badge-primary badge-sm">New</span>
+                  <h3 class="truncate font-medium">{title}</h3>
+                </div>
+                <p class="truncate font-mono text-xs text-base-content/60">{printerFacts(printer)}</p>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" aria-label={`Add ${title}`} onClick={() => onAdd(printer)}>Add</button>
+            </div>
+          );
+        })}
+
+        {/* Nothing out there and everything out there already registered are
+            different answers, and only the second one sends the reader to the
+            inventory. A failed scan claims neither. */}
+        {rows.length === 0 && scan.phase === "done" && (
+          <div class="border-t border-base-300 px-4 py-8 text-center text-sm text-base-content/70">
+            <p class="font-medium text-base-content">{configuredCount > 0 ? "No new printers" : "No printers discovered"}</p>
+            <p class="mx-auto mt-1 max-w-prose">
+              {configuredCount > 0
+                ? `All ${configuredCount} discovered printers are already configured. They are listed below with live status.`
+                : "Nothing answered this scan."}
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}

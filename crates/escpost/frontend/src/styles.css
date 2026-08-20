@@ -37,6 +37,27 @@
   image-rendering: auto;
 }
 
+/* One highlight treatment for every printer that changed: a newly discovered
+   printer arriving in the results panel, a scan re-finding one that is
+   already configured, and a printer that has just been added. The error
+   colour marks the opposite transition, a printer that has become
+   unavailable, so both directions are visible. The flash is never the only
+   signal, so dropping it under reduced motion loses nothing. */
+.printer-row-found {
+  animation: printer-row-found 650ms ease-out;
+}
+
+.printer-row-lost {
+  animation: printer-row-lost 650ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .printer-row-found,
+  .printer-row-lost {
+    animation: none;
+  }
+}
+
 .trace-group {
   --trace-color: oklch(55% 0 0);
   --trace-fill: oklch(70% 0 0 / 28%);
@@ -112,4 +133,16 @@
 @keyframes receipt-paper-flash {
   from { box-shadow: 0 0 0 0.4rem oklch(70% 0.17 160 / 45%); }
   to { box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%); }
+}
+
+/* A tint of the theme colour rather than the colour itself: the row keeps its
+   own text, which has to stay readable in both themes while it fades. */
+@keyframes printer-row-found {
+  from { background-color: color-mix(in oklch, var(--color-primary) 22%, transparent); }
+  to { background-color: transparent; }
+}
+
+@keyframes printer-row-lost {
+  from { background-color: color-mix(in oklch, var(--color-error) 22%, transparent); }
+  to { background-color: transparent; }
 }
