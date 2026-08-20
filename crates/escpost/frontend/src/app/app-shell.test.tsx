@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render, screen, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
+import { LocationProvider } from "preact-iso";
 import { locationStub } from "preact-iso/prerender";
 import { App } from "../app";
+import type { DiscoveryQuery } from "../api/discovery-stream";
+import { AppDataProvider, useAppData } from "./data";
+import { AppShell } from "./shell";
 
 const originalFetch = globalThis.fetch;
+const originalEventSource = globalThis.EventSource;
 
 beforeEach(() => {
   globalThis.fetch = ((input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
@@ -18,11 +23,64 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  globalThis.EventSource = originalEventSource;
 });
 
 function renderAt(path: string) {
   locationStub(path);
   return render(<App />);
+}
+
+// Neither Bun's runtime nor the happy-dom registrator provides a global
+// `EventSource`, so the shell's scan progress is driven through the same
+// kind of stand-in `discovery-stream.test.ts` uses: it records listeners and
+// lets a test dispatch a named event with a JSON payload.
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>();
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(name: string, handler: (event: Event) => void) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]);
+  }
+
+  close() {}
+
+  emit(name: string, data: unknown) {
+    const event = new MessageEvent(name, { data: JSON.stringify(data) });
+    for (const handler of this.listeners.get(name) ?? []) {
+      handler(event);
+    }
+  }
+}
+
+const scanQuery: DiscoveryQuery = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
+
+// The printers page does not start scans yet, so the shell is rendered
+// around a child that reaches for `startScan` the way that page eventually
+// will.
+function ScanProbe() {
+  const { startScan } = useAppData();
+  return <button type="button" onClick={() => startScan(scanQuery)}>Scan</button>;
+}
+
+async function startScanInShell(path: string) {
+  FakeEventSource.instances = [];
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  locationStub(path);
+  const view = render(
+    <AppDataProvider>
+      <LocationProvider scope="/app">
+        <AppShell><ScanProbe /></AppShell>
+      </LocationProvider>
+    </AppDataProvider>,
+  );
+  await act(async () => {});
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+  return { view, stream: FakeEventSource.instances[0]! };
 }
 
 describe("App", () => {
@@ -147,5 +205,46 @@ describe("App", () => {
     expect(
       screen.queryByText("The new web workbench is under construction."),
     ).toBeNull();
+  });
+
+  test("a running scan shows progress in both responsive status variants on any page", async () => {
+    const { stream } = await startScanInShell("/app/profiles");
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+
+    const regions = screen.getAllByRole("region", { name: "Printer discovery" });
+    expect(regions).toHaveLength(2);
+    for (const region of regions) {
+      expect(within(region).getByText("Scanning printers")).toBeTruthy();
+      expect(within(region).getByText("312 / 508")).toBeTruthy();
+      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/app/printers");
+      const bar = region.querySelector("progress");
+      expect(bar?.getAttribute("value")).toBe("312");
+      expect(bar?.getAttribute("max")).toBe("508");
+    }
+    expect(regions.find((region) => region.closest("aside"))?.getAttribute("class")).toContain("text-sm");
+    expect(regions.find((region) => region.closest("header"))?.getAttribute("class")).toContain("text-xs");
+  });
+
+  test("scan progress stays indeterminate until the probe total is known", async () => {
+    await startScanInShell("/app/printers");
+
+    for (const region of screen.getAllByRole("region", { name: "Printer discovery" })) {
+      const bar = region.querySelector("progress");
+      expect(bar?.hasAttribute("value")).toBe(false);
+      expect(within(region).queryByText("0 / 0")).toBeNull();
+      expect(within(region).getByText("Preparing…")).toBeTruthy();
+    }
+  });
+
+  test("keeps the sidebar status pair anchored to the bottom while a scan runs", async () => {
+    const { stream } = await startScanInShell("/app/jobs");
+    act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
+
+    const status = screen.getAllByRole("status", { name: "Server status" }).find((section) => section.closest("aside"));
+    const anchored = status?.parentElement;
+    expect(anchored?.getAttribute("class")).toContain("mt-auto");
+    expect(anchored?.parentElement?.tagName).toBe("ASIDE");
+    expect(anchored?.nextElementSibling).toBeNull();
+    expect(status?.previousElementSibling?.getAttribute("aria-label")).toBe("Printer discovery");
   });
 });
