@@ -38,13 +38,25 @@ function hostsIn(subnet: string) {
   return prefix >= 31 ? addresses : addresses - 2;
 }
 
-function customIssue(entries: string[]) {
+function notCidr(value: string) {
+  return `Expected CIDR notation such as 10.42.0.0/24, found \`${value}\`.`;
+}
+
+// What is wrong with the custom field's content, or `null` when it names
+// scannable subnets. A field holding nothing but separators is invalid rather
+// than empty: reading it as empty would hand the query back to the known
+// networks the user is no longer looking at, and reading it as a valid empty
+// selection would ship automatic mode under a footer promising no probes.
+function customIssue(text: string, entries: string[]) {
+  if (entries.length === 0) {
+    return notCidr(text.trim());
+  }
   for (const entry of entries) {
     if (!CIDR.test(entry)) {
-      return `Expected CIDR notation such as 10.42.0.0/24, found \`${entry}\`.`;
+      return notCidr(entry);
     }
     if (prefixOf(entry) < EXPLICIT_SCAN_MINIMUM_PREFIX) {
-      return `Subnet ${entry} is too large to scan (at most /16).`;
+      return `Subnet ${entry} is too large to scan (at most /${EXPLICIT_SCAN_MINIMUM_PREFIX}).`;
     }
   }
   return null;
@@ -111,21 +123,39 @@ export function ScanOptions({ onStart, onClose }: {
   const data = resource.data;
   const known = data?.networks ?? [];
   const checked = known.filter((entry) => !unchecked.includes(entry.subnet));
-  const customEntries = custom.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  // One definition of "the custom field has content": any non-whitespace at
+  // all. Everything downstream derives from it, so the field is never active
+  // with nothing behind it.
   const customActive = custom.trim().length > 0;
-  const customError = customActive ? customIssue(customEntries) : null;
+  const customEntries = custom.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  const customError = customActive ? customIssue(custom, customEntries) : null;
 
   const portText = port ?? (data ? String(data.default_port) : "");
   const timeoutText = timeout ?? (data ? String(data.default_timeout_ms) : "");
+  // The port is a `NonZeroU16` and the timeout a `u64` of milliseconds, so
+  // these are the shared layer's own bounds — zero milliseconds included,
+  // which `--timeout 0` also accepts. The upper bound on the timeout is not a
+  // product rule but the wire's: a JavaScript number stops being an exact
+  // decimal past `MAX_SAFE_INTEGER` and stringifies as `1e+21`, which no
+  // `u64` will parse.
   const portValid = /^\d+$/.test(portText) && Number(portText) >= 1 && Number(portText) <= 65_535;
-  const timeoutValid = /^\d+$/.test(timeoutText) && Number(timeoutText) >= 1;
+  const timeoutValid = /^\d+$/.test(timeoutText) && Number(timeoutText) <= Number.MAX_SAFE_INTEGER;
 
   // Every known network checked is the CLI's no-flag behavior, so the query
   // carries no subnet at all and the scan resolves its own targets. Naming
   // the same networks back to the server would reach the operation layer as a
   // different request than the one the terminal makes.
-  const automatic = known.length > 0 && checked.length === known.length;
-  const selected = customActive ? customEntries : checked.map((entry) => entry.subnet);
+  //
+  // With no known network at all this is vacuously true, which would send an
+  // automatic scan the server has nothing to resolve. It stays unreachable
+  // because `networkSelected` below already requires a checked network, and
+  // gates Start — so anything loosening that must revisit this.
+  const automatic = !customActive && checked.length === known.length;
+  const selected = customActive ? customEntries : automatic ? [] : checked.map((entry) => entry.subnet);
+  // The footer only ever states this while `networkSelected` holds, which for
+  // a custom field means every entry passed `customIssue` — so no refused
+  // subnet can inflate the count. The shape filter is here to keep a
+  // malformed entry's `NaN` out of the arithmetic, not to correct the total.
   const probes = customActive
     ? customEntries.filter((entry) => CIDR.test(entry)).reduce((total, entry) => total + hostsIn(entry), 0)
     : checked.reduce((total, entry) => total + entry.hosts, 0);
@@ -149,6 +179,9 @@ export function ScanOptions({ onStart, onClose }: {
       : [...current, subnet]);
   };
 
+  // Back to the panel as it opened, adapters included: a network appears or
+  // vanishes with a cable or a VPN, and Reset is the only way back from a
+  // failed detection.
   const reset = () => {
     setUsb(true);
     setNetwork(true);
@@ -156,21 +189,23 @@ export function ScanOptions({ onStart, onClose }: {
     setCustom("");
     setPort(null);
     setTimeoutMs(null);
+    setReloads((count) => count + 1);
   };
 
   const start = () => {
     if (!data) {
       return;
     }
+    // The port and timeout travel even when Network is unchecked, because the
+    // fields keep their values while disabled; `discoveryQueryString` drops
+    // them from a USB-only scan, which is where the shared layer's refusal to
+    // accept them lives.
     onStart({
       usb,
       network,
-      // An unchecked Network transport makes the port and timeout fields
-      // moot, so the query carries the server's defaults rather than whatever
-      // the disabled fields happen to hold.
-      subnets: network ? (automatic && !customActive ? [] : selected) : [],
-      port: network ? Number(portText) : data.default_port,
-      timeoutMs: network ? Number(timeoutText) : data.default_timeout_ms,
+      subnets: network ? selected : [],
+      port: Number(portText),
+      timeoutMs: Number(timeoutText),
     });
   };
 
@@ -224,11 +259,14 @@ export function ScanOptions({ onStart, onClose }: {
                   </div>
                 ))}
                 {/* A skipped adapter states the shared layer's own reason,
-                    and this panel's own remedy for it. */}
-                {data.skipped.map((entry) => (
-                  <div key={`${entry.interface} ${entry.subnet ?? ""}`} class="flex items-center gap-2 opacity-60">
-                    <input id={checkboxId(entry.interface)} type="checkbox" class="checkbox checkbox-xs" checked={false} disabled />
-                    <label for={checkboxId(entry.interface)} class="font-mono text-sm">{entry.subnet ?? entry.interface}</label>
+                    and this panel's own remedy for it. `detect_networks`
+                    reports one entry per address rather than per adapter, so
+                    two too-large addresses on one interface arrive as two
+                    rows and only the position tells them apart. */}
+                {data.skipped.map((entry, index) => (
+                  <div key={checkboxId(`skipped-${index}`)} class="flex items-center gap-2 opacity-60">
+                    <input id={checkboxId(`skipped-${index}`)} type="checkbox" class="checkbox checkbox-xs" checked={false} disabled />
+                    <label for={checkboxId(`skipped-${index}`)} class="font-mono text-sm">{entry.subnet ?? entry.interface}</label>
                     <span class="text-xs text-base-content/60">{skippedExplanation(entry)}</span>
                   </div>
                 ))}
@@ -290,7 +328,7 @@ export function ScanOptions({ onStart, onClose }: {
             </div>
           </div>
           {network && data && !portValid && <p role="alert" class="text-xs text-warning">Enter a port between 1 and 65535.</p>}
-          {network && data && !timeoutValid && <p role="alert" class="text-xs text-warning">Enter a timeout of at least 1 ms.</p>}
+          {network && data && !timeoutValid && <p role="alert" class="text-xs text-warning">Enter a timeout as a whole number of milliseconds.</p>}
         </fieldset>
       </div>
 

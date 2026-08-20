@@ -2,7 +2,9 @@ import type { DiscoveredPrinter, DiscoveryNetwork, SkippedNetwork } from "./type
 
 // Mirrors the CLI's own flags: no filter when both transports are selected
 // (matching the CLI's no-flag behavior), a repeated `subnet` per network,
-// `port`, and `timeout`. Nothing else is sent.
+// `port`, and `timeout`. Nothing else is sent. `port` and `timeoutMs` are
+// carried even for a USB-only scan, where the panel's fields are disabled
+// rather than cleared, and dropped on the wire — see `discoveryQueryString`.
 export type DiscoveryQuery = {
   usb: boolean;
   network: boolean;
@@ -45,6 +47,14 @@ export function discoveryQueryString(query: DiscoveryQuery) {
   const parameters = new URLSearchParams();
   if (query.usb !== query.network) {
     parameters.set("transport", query.usb ? "usb" : "network");
+  }
+  // A USB-only scan takes no network options at all. `printers discover
+  // --transport usb` refuses `--subnet`, `--port` and `--timeout` outright
+  // (`CliError::NetworkScanOptionForUsbDiscovery`), and the endpoint builds
+  // the very same arguments, so sending the defaults here is not a harmless
+  // restatement — it is a 400.
+  if (!query.network) {
+    return parameters.toString();
   }
   for (const subnet of query.subnets) {
     parameters.append("subnet", subnet);

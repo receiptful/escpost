@@ -63,15 +63,23 @@ describe("discoveryQueryString", () => {
   });
 
   test("sends transport only when exactly one transport is selected", () => {
-    expect(discoveryQueryString({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 })).toBe(
-      "transport=usb&port=9100&timeout=1000",
-    );
     expect(discoveryQueryString({ usb: false, network: true, subnets: [], port: 9100, timeoutMs: 1000 })).toBe(
       "transport=network&port=9100&timeout=1000",
     );
   });
 
-  test("repeats subnet once per network and always sends port and timeout", () => {
+  // `printers discover --transport usb` refuses every network flag, and the
+  // endpoint builds the same arguments, so a query that restates the defaults
+  // is rejected with 400 rather than ignored. The panel keeps its port and
+  // timeout fields filled while Network is unchecked, so the values reach
+  // this function and have to be dropped here.
+  test("drops the port and timeout from a USB-only scan, which the shared layer refuses to accept alongside them", () => {
+    expect(discoveryQueryString({ usb: true, network: false, subnets: ["10.42.0.0/24"], port: 9100, timeoutMs: 1000 })).toBe(
+      "transport=usb",
+    );
+  });
+
+  test("repeats subnet once per network and sends the port and timeout beside them", () => {
     const query = discoveryQueryString({
       usb: true,
       network: true,
@@ -89,7 +97,7 @@ describe("openDiscoveryStream", () => {
     openDiscoveryStream({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 }, handlers());
 
     expect(FakeEventSource.instances).toHaveLength(1);
-    expect(FakeEventSource.instances[0]?.url).toBe("/api/printers/discover?transport=usb&port=9100&timeout=1000");
+    expect(FakeEventSource.instances[0]?.url).toBe("/api/printers/discover?transport=usb");
   });
 
   test("dispatches each named event's parsed payload to its handler", () => {

@@ -58,9 +58,10 @@ export type DiscoveryNetwork = {
   hosts: number;
 };
 
-// A network adapter the automatic sweep left out, with the CLI's own wording
-// for why (`description`) so the browser explains the omission in the same
-// words the terminal does.
+// A network adapter the automatic sweep left out, with the shared layer's own
+// reason for why (`description`) — the reason only. What to do about it is
+// each interface's own wording: the terminal names `--subnet`, while the scan
+// options panel points at its custom-network field.
 export type SkippedNetwork = {
   interface: string;
   subnet: string | null;

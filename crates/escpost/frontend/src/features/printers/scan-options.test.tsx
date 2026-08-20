@@ -66,8 +66,12 @@ describe("ScanOptions", () => {
       timeoutMs: 500,
     });
 
+    // Reset re-detects rather than restoring a remembered list: an adapter
+    // appears or vanishes with a cable, and this is the only way back from a
+    // failed detection.
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    expect(screen.getByText("507 probes")).toBeTruthy();
+    expect(screen.getByLabelText("Detecting networks")).toBeTruthy();
+    expect(await screen.findByText("507 probes")).toBeTruthy();
     fireEvent.click(startButton());
     expect(onStart).toHaveBeenLastCalledWith({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
@@ -134,6 +138,65 @@ describe("ScanOptions", () => {
     expect(startButton().hasAttribute("disabled")).toBe(false);
   });
 
+  // A field holding only separators is content, not emptiness. Reading it as
+  // empty would hand the query back to the known networks — including ones
+  // the user unchecked — under a footer promising nothing.
+  test("a custom field holding only separators is invalid, never a silent automatic scan", async () => {
+    const { onStart } = renderOptions(twoNetworks);
+    fireEvent.input(await screen.findByLabelText("Custom network"), { target: { value: ", ," } });
+
+    expect(screen.getByText("Expected CIDR notation such as 10.42.0.0/24, found `, ,`.")).toBeTruthy();
+    expect((screen.getByLabelText("10.42.0.0/24") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText("No networks selected")).toBeTruthy();
+    expect(startButton().hasAttribute("disabled")).toBe(true);
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  // One refused entry invalidates the whole field, so the footer states no
+  // count at all rather than a total for the entries that survived. A number
+  // beside a refusal would promise work the panel is refusing to do.
+  test("states no probe count while any custom entry is refused", async () => {
+    const { view } = renderOptions(twoNetworks);
+    fireEvent.input(await screen.findByLabelText("Custom network"), { target: { value: "10.0.0.0/8, 10.0.5.0/24" } });
+
+    expect(screen.getByText("Subnet 10.0.0.0/8 is too large to scan (at most /16).")).toBeTruthy();
+    expect(screen.getByText("No networks selected")).toBeTruthy();
+    expect(view.container.textContent).not.toContain("probes");
+    expect(startButton().hasAttribute("disabled")).toBe(true);
+  });
+
+  // The port is a `NonZeroU16` and the timeout a `u64` of milliseconds in the
+  // shared layer, so the panel accepts exactly that — `--timeout 0` included,
+  // since inventing a stricter rule here is its own kind of divergence.
+  test("refuses a port or timeout the shared layer cannot take, and accepts the whole range it can", async () => {
+    const { onStart } = renderOptions(twoNetworks);
+    const port = await screen.findByLabelText("RAW TCP port");
+    const timeout = screen.getByLabelText("Timeout per host");
+
+    fireEvent.input(port, { target: { value: "0" } });
+    expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
+    expect(startButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.input(port, { target: { value: "65536" } });
+    expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
+    expect(startButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.input(port, { target: { value: "65535" } });
+    expect(screen.queryByText("Enter a port between 1 and 65535.")).toBeNull();
+    expect(startButton().hasAttribute("disabled")).toBe(false);
+
+    // Past `MAX_SAFE_INTEGER` a JavaScript number stringifies as `1e+21`,
+    // which no `u64` parses — a wire limit, not a product rule.
+    fireEvent.input(timeout, { target: { value: "999999999999999999999" } });
+    expect(screen.getByText("Enter a timeout as a whole number of milliseconds.")).toBeTruthy();
+    expect(startButton().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.input(timeout, { target: { value: "0" } });
+    expect(screen.queryByText("Enter a timeout as a whole number of milliseconds.")).toBeNull();
+    fireEvent.click(startButton());
+    expect(onStart).toHaveBeenCalledWith({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 0 });
+  });
+
   // The reason is the shared layer's; the remedy is this panel's. The
   // terminal answers the same omission with `--subnet`, which is useless
   // advice in a browser with a custom-network field two rows below.
@@ -142,15 +205,23 @@ describe("ScanOptions", () => {
       networks: [],
       skipped: [
         { interface: "enp5s0", subnet: "10.0.0.0/16", reason: "too_large", description: "enp5s0 (10.0.0.0/16): larger than /24" },
+        // `detect_networks` reports one entry per address, so a second
+        // too-large address on the same adapter arrives as a second row.
+        { interface: "enp5s0", subnet: "172.16.0.0/12", reason: "too_large", description: "enp5s0 (172.16.0.0/12): larger than /24" },
         { interface: "weird0", subnet: null, reason: "unusable_netmask", description: "weird0: its netmask does not name a scannable subnet" },
       ],
       default_port: 9100,
       default_timeout_ms: 1000,
     });
 
-    const skipped = await screen.findByLabelText("10.0.0.0/16");
-    expect((skipped as HTMLInputElement).disabled).toBe(true);
-    expect((skipped as HTMLInputElement).checked).toBe(false);
+    const skipped = await screen.findByLabelText("10.0.0.0/16") as HTMLInputElement;
+    expect(skipped.disabled).toBe(true);
+    expect(skipped.checked).toBe(false);
+    // Two rows from one adapter must not share a DOM id, or the second
+    // row's label points at the first row's checkbox.
+    const sameAdapter = screen.getByLabelText("172.16.0.0/12") as HTMLInputElement;
+    expect(sameAdapter).not.toBe(skipped);
+    expect(sameAdapter.id).not.toBe(skipped.id);
     expect(screen.getByText("enp5s0 (10.0.0.0/16): larger than /24, add it as a custom network")).toBeTruthy();
     expect(view.container.textContent).not.toContain("--subnet");
     // No subnet to retype, so no remedy is offered.

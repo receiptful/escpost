@@ -307,6 +307,10 @@ fn discovery_streams_prepared_progress_and_completion() {
     let undeclared_parameter = http_get_bytes(port, "/api/printers/discover?scan=1");
     let network_option_for_usb =
         http_get_bytes(port, "/api/printers/discover?transport=usb&timeout=1");
+    // The exact query the workbench's scan-options panel sends when Network
+    // is unchecked: a USB-only scan carries no network option at all, because
+    // restating the defaults is the rejection directly above.
+    let usb_only = http_get_event_stream(port, "/api/printers/discover?transport=usb");
     // Answered, not swept: a /0 would allocate its four billion candidate
     // addresses before the first probe, in a stretch of code with no await
     // point for a disconnecting client to cancel.
@@ -332,6 +336,13 @@ fn discovery_streams_prepared_progress_and_completion() {
     )));
     assert!(found.contains("\"configured_names\":[]"));
     assert!(found.contains("event: completed"));
+
+    assert!(usb_only.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(usb_only.contains("content-type: text/event-stream"));
+    assert!(usb_only.contains("event: prepared"));
+    // Nothing to sweep, so the stream reaches its end marker whether or not
+    // this machine has a USB printer attached.
+    assert!(usb_only.contains("event: completed"));
 
     for response in [
         &unparsable_subnet,

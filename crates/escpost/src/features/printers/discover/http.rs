@@ -68,8 +68,10 @@ struct SkippedResponse {
     interface: String,
     subnet: Option<String>,
     reason: &'static str,
-    /// The CLI's own wording for this omission, so the browser explains a
-    /// skipped adapter in the same words the terminal does.
+    /// The shared layer's reason for this omission, in the words every
+    /// interface reports it with. The remedy is not included: the terminal
+    /// names `--subnet` (`SkippedInterface::cli_hint`), while the browser
+    /// points at its own custom-network field.
     description: String,
 }
 
