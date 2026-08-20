@@ -1,3 +1,4 @@
+import type { ScanState } from "./data";
 import { useAppData } from "./data";
 
 // The shell's only global status surface: server reachability, plus the
@@ -11,7 +12,13 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   // bottom of the flex column instead of pushing the status block up.
   return (
     <div class={compact ? "space-y-2" : "mt-auto space-y-3"}>
-      {scan.phase === "running" && <ScanProgress compact={compact} />}
+      {/* Mounted at all times, unlike the progress block itself: a live
+          region inserted into the document together with its text is not
+          reliably announced, so the announcer has to outlive the scan it
+          reports. It carries the start and the end of the scan and nothing
+          in between, keeping the ticking readout out of any live region. */}
+      <p aria-live="polite" class="sr-only">{scan.phase === "running" ? "Scanning printers" : ""}</p>
+      {scan.phase === "running" && <ScanProgress compact={compact} scan={scan} />}
       <section
         aria-label="Server status"
         aria-live="polite"
@@ -27,31 +34,49 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function ScanProgress({ compact }: { compact: boolean }) {
-  const { scan } = useAppData();
-  // The probe total only arrives with the `prepared` event, which the server
-  // sends once it has resolved the scan targets. Until then the bar is
-  // indeterminate — daisyUI renders that from a missing `value` — because a
-  // bar at 0 of 0 claims a precision the scan does not have yet.
-  const preparing = scan.total === 0;
-  // Not a live region, unlike the status block beside it: a sweep reports
-  // hundreds of progress ticks, and announcing every one of them would bury
-  // everything else. The `progress` element still exposes its value to
-  // assistive technology on demand.
+// The compact header is a thin bar, so the same facts are laid out as an
+// inline pill there rather than as a second stacked card that would roughly
+// double its height. Both variants carry the label, the bar, the readout and
+// the link back to the scan.
+function ScanProgress({ compact, scan }: { compact: boolean; scan: ScanState }) {
+  // A zero probe total means either that the `prepared` event has not landed
+  // yet or that the scope resolved to no network targets at all — a USB-only
+  // scan, which never sends a `progress` event. One neutral readout covers
+  // both, where "Preparing…" would be a lie for the whole life of a USB-only
+  // scan and "0 / 0" would be meaningless in either.
+  const counted = scan.total > 0;
+  const readout = counted ? `${scan.completed} / ${scan.total}` : "In progress…";
+  const bar = (
+    <progress
+      aria-label="Scan progress"
+      // daisyUI renders a missing `value` as the indeterminate animation,
+      // which is what an unknown or unmeasurable total deserves.
+      class={compact ? "progress progress-primary h-1.5 w-17" : "progress progress-primary mt-2 w-full"}
+      max={counted ? scan.total : undefined}
+      value={counted ? scan.completed : undefined}
+    />
+  );
+
+  if (compact) {
+    return (
+      <section
+        aria-label="Printer discovery"
+        class="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
+      >
+        <span>Scanning printers</span>
+        {bar}
+        <span>{readout}</span>
+        <a class="link" href="/app/printers">View</a>
+      </section>
+    );
+  }
+
   return (
-    <section
-      aria-label="Printer discovery"
-      class={compact ? "rounded-box bg-primary/10 px-3 py-2 text-xs" : "rounded-box bg-primary/10 p-4 text-sm"}
-    >
+    <section aria-label="Printer discovery" class="rounded-box bg-primary/10 p-4 text-sm text-primary">
       <p class="font-medium">Scanning printers</p>
-      <progress
-        aria-label="Scan progress"
-        class="progress progress-primary mt-2 w-full"
-        max={preparing ? undefined : scan.total}
-        value={preparing ? undefined : scan.completed}
-      />
-      <p class="mt-1 flex items-center justify-between gap-2 text-base-content/70">
-        <span>{preparing ? "Preparing…" : `${scan.completed} / ${scan.total}`}</span>
+      {bar}
+      <p class="mt-1 flex items-center justify-between gap-2">
+        <span>{readout}</span>
         <a class="link" href="/app/printers">View</a>
       </p>
     </section>

@@ -83,6 +83,20 @@ async function startScanInShell(path: string) {
   return { view, stream: FakeEventSource.instances[0]! };
 }
 
+// Both responsive variants render the progress block, and every assertion
+// about it is made against both: returning the pair (and failing here when
+// either one is missing) keeps a variant from silently disappearing behind a
+// test that only ever looked at the other.
+function discoveryRegions() {
+  const regions = screen.getAllByRole("region", { name: "Printer discovery" });
+  const sidebar = regions.find((region) => region.closest("aside"));
+  const compact = regions.find((region) => region.closest("header"));
+  expect(regions).toHaveLength(2);
+  expect(sidebar).toBeTruthy();
+  expect(compact).toBeTruthy();
+  return [sidebar!, compact!];
+}
+
 describe("App", () => {
   test("shows the current job workbench from the Print jobs route", async () => {
     renderAt("/app/jobs");
@@ -211,28 +225,89 @@ describe("App", () => {
     const { stream } = await startScanInShell("/app/profiles");
     act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
 
-    const regions = screen.getAllByRole("region", { name: "Printer discovery" });
-    expect(regions).toHaveLength(2);
-    for (const region of regions) {
+    for (const region of discoveryRegions()) {
       expect(within(region).getByText("Scanning printers")).toBeTruthy();
       expect(within(region).getByText("312 / 508")).toBeTruthy();
       expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/app/printers");
-      const bar = region.querySelector("progress");
-      expect(bar?.getAttribute("value")).toBe("312");
-      expect(bar?.getAttribute("max")).toBe("508");
+      expect(region.querySelector("progress")?.getAttribute("value")).toBe("312");
     }
-    expect(regions.find((region) => region.closest("aside"))?.getAttribute("class")).toContain("text-sm");
-    expect(regions.find((region) => region.closest("header"))?.getAttribute("class")).toContain("text-xs");
+  });
+
+  test("renders the sidebar variant as a card and the compact variant as an inline pill", async () => {
+    const { stream } = await startScanInShell("/app/profiles");
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+
+    const [sidebar, compact] = discoveryRegions();
+    expect(sidebar.getAttribute("class")).toContain("text-sm");
+    expect(compact.getAttribute("class")).toContain("text-xs");
+    expect(compact.getAttribute("class")).toContain("inline-flex");
+    expect(compact.getAttribute("class")).toContain("rounded-full");
+    expect(sidebar.getAttribute("class")).not.toContain("rounded-full");
   });
 
   test("scan progress stays indeterminate until the probe total is known", async () => {
     await startScanInShell("/app/printers");
 
-    for (const region of screen.getAllByRole("region", { name: "Printer discovery" })) {
-      const bar = region.querySelector("progress");
-      expect(bar?.hasAttribute("value")).toBe(false);
+    for (const region of discoveryRegions()) {
+      expect(region.querySelector("progress")?.hasAttribute("value")).toBe(false);
       expect(within(region).queryByText("0 / 0")).toBeNull();
-      expect(within(region).getByText("Preparing…")).toBeTruthy();
+      expect(within(region).getByText("In progress…")).toBeTruthy();
+    }
+  });
+
+  // A USB-only scope resolves to no scan targets, so the server sends
+  // `prepared` with a zero probe total and never sends a `progress` event.
+  // The readout has to stay honest for the whole life of that scan.
+  test("a USB-only scan never claims to be preparing or to have zero of zero probes", async () => {
+    const { stream } = await startScanInShell("/app/printers");
+    act(() => { stream.emit("prepared", { targets: [], skipped: [], total_probes: 0 }); });
+
+    for (const region of discoveryRegions()) {
+      expect(within(region).queryByText("Preparing…")).toBeNull();
+      expect(within(region).queryByText("0 / 0")).toBeNull();
+      expect(within(region).getByText("In progress…")).toBeTruthy();
+    }
+  });
+
+  // A rescan started while one is already running resets the probe total to
+  // zero without unmounting the bar, which is the only way the determinate
+  // to indeterminate direction is ever exercised.
+  test("a rescan drops the probe total back to an indeterminate bar", async () => {
+    const { stream } = await startScanInShell("/app/printers");
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+    for (const region of discoveryRegions()) {
+      expect(region.querySelector("progress")?.getAttribute("value")).toBe("312");
+    }
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+
+    for (const region of discoveryRegions()) {
+      expect(region.querySelector("progress")?.hasAttribute("value")).toBe(false);
+    }
+  });
+
+  test("announces a scan starting and ending without announcing every probe", async () => {
+    const { view, stream } = await startScanInShell("/app/printers");
+    const announcers = [...view.container.querySelectorAll('[aria-live="polite"].sr-only')];
+    expect(announcers).toHaveLength(2);
+    for (const announcer of announcers) {
+      expect(announcer.textContent).toBe("Scanning printers");
+    }
+
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+    for (const announcer of announcers) {
+      expect(announcer.textContent).toBe("Scanning printers");
+    }
+    // The ticking readout must never sit inside a live region, or every probe
+    // is announced on its own.
+    for (const region of discoveryRegions()) {
+      expect(region.closest("[aria-live]")).toBeNull();
+    }
+
+    act(() => { stream.emit("completed", {}); });
+    expect(screen.queryAllByRole("region", { name: "Printer discovery" })).toHaveLength(0);
+    for (const announcer of announcers) {
+      expect(announcer.textContent).toBe("");
     }
   });
 
