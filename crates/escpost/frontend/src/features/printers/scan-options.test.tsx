@@ -134,15 +134,16 @@ describe("ScanOptions", () => {
     expect(startButton().hasAttribute("disabled")).toBe(false);
   });
 
-  test("a skipped adapter is listed with its reason and cannot be selected", async () => {
-    renderOptions({
+  // The reason is the shared layer's; the remedy is this panel's. The
+  // terminal answers the same omission with `--subnet`, which is useless
+  // advice in a browser with a custom-network field two rows below.
+  test("a skipped adapter is listed with the server's reason, this panel's remedy, and no CLI flag", async () => {
+    const { view } = renderOptions({
       networks: [],
-      skipped: [{
-        interface: "enp5s0",
-        subnet: "10.0.0.0/16",
-        reason: "too_large",
-        description: "enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16",
-      }],
+      skipped: [
+        { interface: "enp5s0", subnet: "10.0.0.0/16", reason: "too_large", description: "enp5s0 (10.0.0.0/16): larger than /24" },
+        { interface: "weird0", subnet: null, reason: "unusable_netmask", description: "weird0: its netmask does not name a scannable subnet" },
+      ],
       default_port: 9100,
       default_timeout_ms: 1000,
     });
@@ -150,7 +151,11 @@ describe("ScanOptions", () => {
     const skipped = await screen.findByLabelText("10.0.0.0/16");
     expect((skipped as HTMLInputElement).disabled).toBe(true);
     expect((skipped as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByText(/larger than \/24/)).toBeTruthy();
+    expect(screen.getByText("enp5s0 (10.0.0.0/16): larger than /24, add it as a custom network")).toBeTruthy();
+    expect(view.container.textContent).not.toContain("--subnet");
+    // No subnet to retype, so no remedy is offered.
+    expect(screen.getByText("weird0: its netmask does not name a scannable subnet")).toBeTruthy();
+    expect((screen.getByLabelText("weird0") as HTMLInputElement).disabled).toBe(true);
     expect(startButton().hasAttribute("disabled")).toBe(true);
   });
 

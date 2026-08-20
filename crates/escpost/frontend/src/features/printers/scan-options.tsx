@@ -1,13 +1,14 @@
 import { useEffect, useState } from "preact/hooks";
 import { getDiscoveryNetworks } from "../../api/client";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
-import type { DiscoveryNetworksResponse } from "../../api/types";
+import type { DiscoveryNetworksResponse, SkippedNetwork } from "../../api/types";
 
-// The shared layer's own bound on an explicitly named subnet
-// (`discovery::EXPLICIT_SCAN_MINIMUM_PREFIX`). Refusing it here only saves a
-// round trip and lets the panel say what is wrong next to the field: the
-// server refuses the same input in the same words, and remains the authority
-// on what a scan accepts.
+// Copied from `discovery::EXPLICIT_SCAN_MINIMUM_PREFIX`, which is the source
+// of truth. Refusing the subnet here only saves a round trip and lets the
+// panel say what is wrong next to the field; the server refuses the same
+// input in the same words and stays the authority on what a scan accepts. If
+// the Rust constant moves and this does not, the cost is a wrong hint, never
+// a wrong scan.
 const EXPLICIT_SCAN_MINIMUM_PREFIX = 16;
 
 // Exactly the input space `discovery::Subnet::parse` accepts: a dotted-quad
@@ -25,11 +26,12 @@ function prefixOf(subnet: string) {
   return Number(subnet.slice(subnet.indexOf("/") + 1));
 }
 
-// What a sweep of this subnet will probe. Mirrors `Subnet::hosts`, where a
-// /31 and a /32 have no network or broadcast address to leave out (RFC 3021).
-// It is an upper bound rather than the exact figure the scan reports: the
-// server also excludes its own addresses, which it can only do once it knows
-// which of them fall inside the subnet.
+// What a sweep of this subnet will probe. Copied from `Subnet::hosts`, the
+// source of truth, where a /31 and a /32 have no network or broadcast address
+// to leave out (RFC 3021). It is an upper bound rather than the exact figure
+// the scan reports: the server also excludes its own addresses, which it can
+// only do once it knows which of them fall inside the subnet. Drift from the
+// Rust definition shows up as a wrong footer number, never a wrong scan.
 function hostsIn(subnet: string) {
   const prefix = prefixOf(subnet);
   const addresses = 2 ** (32 - prefix);
@@ -46,6 +48,15 @@ function customIssue(entries: string[]) {
     }
   }
   return null;
+}
+
+// The server states why an adapter was skipped; what to do about it is this
+// interface's own wording. The terminal answers "scan it with --subnet
+// 10.0.0.0/16"; here the custom-network field is two rows below, so the row
+// points at that instead. Only a too-large adapter has a subnet worth
+// retyping — an unusable netmask names none, so there is nothing to suggest.
+function skippedExplanation(adapter: SkippedNetwork) {
+  return adapter.reason === "too_large" && adapter.subnet ? `${adapter.description}, add it as a custom network` : adapter.description;
 }
 
 // Slashes and dots are legal in an id but hostile to anything that resolves
@@ -212,13 +223,13 @@ export function ScanOptions({ onStart, onClose }: {
                     {entry.interface && <span class="text-xs text-base-content/60">{entry.interface}</span>}
                   </div>
                 ))}
-                {/* A skipped adapter carries the CLI's own sentence rather than
-                    a second wording of the same omission. */}
+                {/* A skipped adapter states the shared layer's own reason,
+                    and this panel's own remedy for it. */}
                 {data.skipped.map((entry) => (
                   <div key={`${entry.interface} ${entry.subnet ?? ""}`} class="flex items-center gap-2 opacity-60">
                     <input id={checkboxId(entry.interface)} type="checkbox" class="checkbox checkbox-xs" checked={false} disabled />
                     <label for={checkboxId(entry.interface)} class="font-mono text-sm">{entry.subnet ?? entry.interface}</label>
-                    <span class="text-xs text-base-content/60">{entry.description}</span>
+                    <span class="text-xs text-base-content/60">{skippedExplanation(entry)}</span>
                   </div>
                 ))}
                 {known.length === 0 && data.skipped.length === 0 && (

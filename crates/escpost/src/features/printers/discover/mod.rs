@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "no directly connected IPv4 network is small enough to scan automatically \
-             (at most /24): enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16"
+             (at most /24): enp5s0 (10.0.0.0/16): larger than /24"
         );
     }
 

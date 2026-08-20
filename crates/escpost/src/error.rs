@@ -266,12 +266,12 @@ mod tests {
     #[test]
     fn automatic_discovery_failure_names_the_skipped_adapters_before_the_cli_guidance() {
         let error = CliError::from(ApplicationError::NoDiscoverableSubnets(
-            ": enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16".to_owned(),
+            ": enp5s0 (10.0.0.0/16): larger than /24".to_owned(),
         ));
 
         assert_eq!(
             error.display_message().to_string(),
-            "no directly connected IPv4 network is small enough to scan automatically (at most /24): enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16; pass --subnet <CIDR>"
+            "no directly connected IPv4 network is small enough to scan automatically (at most /24): enp5s0 (10.0.0.0/16): larger than /24; pass --subnet <CIDR>"
         );
     }
 

@@ -14,6 +14,7 @@ use super::super::cli::scan_announcement;
 use super::super::cli::{DiscoverPrintersArgs, InventoryTransport};
 use super::super::inventory::{NusbInventory, UsbEnumerationFailure, UsbFailureStage};
 use super::{DiscoveryEvent, DiscoveryScope, NetworkScan, Response, execute, prepare};
+use crate::discovery::SkippedInterface;
 use crate::error::CliError;
 
 impl TryFrom<DiscoverPrintersArgs> for DiscoveryScope {
@@ -39,6 +40,17 @@ impl TryFrom<DiscoverPrintersArgs> for DiscoveryScope {
             None => Self::All(scan),
             Some(InventoryTransport::Usb) => unreachable!("USB was handled above"),
         })
+    }
+}
+
+/// The terminal's line for one skipped adapter: the shared reason, then the
+/// flag that scans it anyway. The remedy is composed here rather than carried
+/// by `SkippedInterface` because it is the terminal's alone — the workbench
+/// answers the same omission by pointing at its custom-network field.
+fn skipped_line(adapter: &SkippedInterface) -> String {
+    match adapter.cli_hint() {
+        Some(hint) => format!("Skipped {}, {hint}", adapter.describe()),
+        None => format!("Skipped {}", adapter.describe()),
     }
 }
 
@@ -72,7 +84,7 @@ pub(crate) async fn run_discover(
                     // left to scan: a combined USB+network discovery still has USB
                     // work to do, and the omission must be reported either way.
                     for adapter in skipped {
-                        eprintln!("Skipped {}", adapter.describe());
+                        eprintln!("{}", skipped_line(adapter));
                     }
                     if !scan_targets.is_empty() {
                         eprintln!("{}", scan_announcement(scan_targets, scan.port()));
@@ -242,11 +254,36 @@ mod tests {
     use super::*;
     use crate::application::ApplicationError;
     use crate::discovery::ScanTarget;
-    use crate::discovery::Subnet;
+    use crate::discovery::{SkipReason, Subnet};
     use crate::features::printers::discover::{
         DiscoveryScope, NetworkDiscovery, NetworkScan, RegistrationAvailability, UsbDiscovery,
     };
     use crate::features::printers::inventory::UsbPrinter;
+
+    /// Moving the remedy out of `SkippedInterface::describe` must leave the
+    /// terminal saying exactly what it said before, flag included.
+    #[test]
+    fn the_skipped_line_still_names_the_flag_that_scans_the_adapter() {
+        let too_large = SkippedInterface {
+            name: "enp5s0".to_owned(),
+            subnet: Some(Subnet::parse("10.0.0.0/16").expect("valid subnet")),
+            reason: SkipReason::TooLarge,
+        };
+        let unusable = SkippedInterface {
+            name: "weird0".to_owned(),
+            subnet: None,
+            reason: SkipReason::UnusableNetmask,
+        };
+
+        assert_eq!(
+            skipped_line(&too_large),
+            "Skipped enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16"
+        );
+        assert_eq!(
+            skipped_line(&unusable),
+            "Skipped weird0: its netmask does not name a scannable subnet"
+        );
+    }
 
     #[test]
     fn cli_arguments_convert_to_each_valid_discovery_scope() {

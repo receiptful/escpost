@@ -143,16 +143,21 @@ pub(crate) struct SkippedInterface {
 }
 
 impl SkippedInterface {
-    /// One line naming the adapter and, when the subnet is known, the command
-    /// that scans it anyway. Shared by the CLI's pre-scan skip lines and the
-    /// "nothing to scan" error, so a user reads one explanation for an
-    /// omission rather than two differently worded ones.
+    /// Why this adapter was left out, naming it and the subnet it covers when
+    /// the netmask named one. Shared by the CLI's pre-scan skip lines, the
+    /// "nothing to scan" error, and the workbench's disabled rows, so a user
+    /// reads one explanation for an omission rather than several differently
+    /// worded ones.
+    ///
+    /// The reason only. What to do about it is the calling interface's own
+    /// wording, because the answers genuinely differ: the terminal names a
+    /// flag (`cli_hint`), while the workbench points at the custom-network
+    /// field sitting beside the row.
     pub(crate) fn describe(&self) -> String {
         match (self.reason, self.subnet) {
-            (SkipReason::TooLarge, Some(subnet)) => format!(
-                "{} ({subnet}): larger than /24, scan it with --subnet {subnet}",
-                self.name
-            ),
+            (SkipReason::TooLarge, Some(subnet)) => {
+                format!("{} ({subnet}): larger than /24", self.name)
+            }
             (SkipReason::TooLarge, None) | (SkipReason::UnusableNetmask, _) => {
                 format!(
                     "{}: its netmask does not name a scannable subnet",
@@ -161,11 +166,23 @@ impl SkippedInterface {
             }
         }
     }
+
+    /// The terminal's remedy for this omission, appended to `describe()` by
+    /// the CLI adapter alone. `None` when no subnet could be derived: there is
+    /// then nothing to pass to `--subnet`, so there is no advice to give.
+    pub(crate) fn cli_hint(&self) -> Option<String> {
+        match (self.reason, self.subnet) {
+            (SkipReason::TooLarge, Some(subnet)) => Some(format!("scan it with --subnet {subnet}")),
+            (SkipReason::TooLarge, None) | (SkipReason::UnusableNetmask, _) => None,
+        }
+    }
 }
 
 /// Every skipped adapter's `describe()`, joined into one reportable clause.
 /// Empty when nothing was skipped, so a caller can splice it straight into a
-/// message without a special case for "nothing to say".
+/// message without a special case for "nothing to say". Reasons only: this
+/// clause ends up inside `NoDiscoverableSubnets`, which both interfaces
+/// report, and each appends its own guidance to it.
 pub(crate) fn describe_skipped(skipped: &[SkippedInterface]) -> String {
     skipped
         .iter()
@@ -594,17 +611,39 @@ mod tests {
     }
 
     #[test]
-    fn describe_names_the_subnet_and_the_flag_that_scans_it_for_a_too_large_adapter() {
+    fn describe_names_the_adapter_and_its_subnet_for_a_too_large_adapter() {
         let skipped = SkippedInterface {
             name: "enp5s0".to_owned(),
             subnet: Some(Subnet::parse("10.0.0.0/16").expect("a valid CIDR should parse")),
             reason: SkipReason::TooLarge,
         };
 
+        assert_eq!(skipped.describe(), "enp5s0 (10.0.0.0/16): larger than /24");
+    }
+
+    /// The reason travels to every interface, so it must not name a flag the
+    /// browser has no way to pass. The flag lives in `cli_hint`, which only
+    /// the terminal adapter reads.
+    #[test]
+    fn describe_leaves_the_remedy_to_the_interface_and_cli_hint_names_the_flag() {
+        let too_large = SkippedInterface {
+            name: "enp5s0".to_owned(),
+            subnet: Some(Subnet::parse("10.0.0.0/16").expect("a valid CIDR should parse")),
+            reason: SkipReason::TooLarge,
+        };
+        let unusable = SkippedInterface {
+            name: "weird0".to_owned(),
+            subnet: None,
+            reason: SkipReason::UnusableNetmask,
+        };
+
+        assert!(!too_large.describe().contains("--subnet"));
         assert_eq!(
-            skipped.describe(),
-            "enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16"
+            too_large.cli_hint().as_deref(),
+            Some("scan it with --subnet 10.0.0.0/16")
         );
+        // Nothing to pass to the flag, so there is no advice to give.
+        assert_eq!(unusable.cli_hint(), None);
     }
 
     #[test]
@@ -638,7 +677,7 @@ mod tests {
 
         assert_eq!(
             describe_skipped(&skipped),
-            "enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16; \
+            "enp5s0 (10.0.0.0/16): larger than /24; \
              weird0: its netmask does not name a scannable subnet"
         );
     }

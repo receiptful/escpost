@@ -85,6 +85,9 @@ pub(crate) enum ApplicationError {
     /// The trailing string names which adapters were skipped and why, in the
     /// same vocabulary as the CLI's pre-scan skip lines (`SkippedInterface::describe`),
     /// so a user sees one explanation whether the omission is partial or total.
+    /// Reasons only, with no advice: this is a factual error both interfaces
+    /// report, and each appends its own remedy — the CLI in
+    /// `error::format_application_error`.
     /// Empty when there was nothing to name — no non-loopback interface existed at all.
     #[error(
         "no directly connected IPv4 network is small enough to scan automatically (at most /24){0}"
