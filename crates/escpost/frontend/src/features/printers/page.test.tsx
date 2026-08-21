@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { AppDataProvider } from "../../app/data";
 import { PrintersPage } from "./page";
@@ -85,6 +85,30 @@ function discovered(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// A serial-less device by default, which is the case where two of them are
+// indistinguishable by anything but where they are plugged in.
+function discoveredUsb(connection: Record<string, unknown> = {}) {
+  return {
+    transport: "usb",
+    configured_names: [],
+    configured_profile: null,
+    connection: {
+      type: "usb",
+      vendor_id: 0x0416,
+      product_id: 0x5011,
+      bus: "003",
+      address: 7,
+      manufacturer: null,
+      product: "POS-58 Printer",
+      serial_number: null,
+      interface_number: 0,
+      out_endpoints: [0x01],
+      in_endpoints: [],
+      ...connection,
+    },
+  };
+}
+
 const originalEventSource = globalThis.EventSource;
 
 function renderPage(fetch: typeof globalThis.fetch) {
@@ -120,6 +144,18 @@ async function advanceTimers(milliseconds: number) {
 // the page — which buries every other failure in the run.
 function gone(element: Element | null) {
   return element === null;
+}
+
+// Waits for a registered printer's highlight on both layouts. The flash is
+// raised only once the forced refresh has resolved — later than the row it
+// belongs to, deliberately, so that a slow poll cannot let the window expire
+// before there is anything to highlight.
+async function expectFlash(name: string, flash: string) {
+  await waitFor(() => {
+    const [row, card] = screen.getAllByText(name);
+    expect(row?.closest("tr")?.classList.contains(flash)).toBe(true);
+    expect(card?.closest("article")?.classList.contains(flash)).toBe(true);
+  });
 }
 
 function openMenu() {
@@ -273,9 +309,7 @@ describe("PrintersPage", () => {
     fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
 
-    const [row, card] = await screen.findAllByText("warehouse");
-    expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
-    expect(card?.closest("article")?.classList.contains("printer-row-found")).toBe(true);
+    await expectFlash("warehouse", "printer-row-found");
     expect(gone(screen.queryByRole("heading", { name: "Add network printer" }))).toBe(true);
   });
 
@@ -313,7 +347,7 @@ describe("PrintersPage", () => {
     // actually happens.
     expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
-    expect((await screen.findAllByText("warehouse"))[0]?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
+    await expectFlash("warehouse", "printer-row-found");
   });
 
   test("a registered result stays out of the results across a route change", async () => {
@@ -362,7 +396,10 @@ describe("PrintersPage", () => {
     await act(async () => {});
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
-    await act(async () => { stream().emit("printer", discovered()); });
+    await act(async () => {
+      stream().emit("printer", discovered());
+      stream().emit("printer", discovered({ connection: { type: "network", host: "10.0.5.21", port: 9100 } }));
+    });
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Add network printer manually" }));
@@ -372,8 +409,69 @@ describe("PrintersPage", () => {
 
     // The host typed here is the one the scan is listing, and nothing but
     // this dialog ever knew it.
-    expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("1 new so far · 1 already configured")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
+    // The neighbour on the next address is a different printer and is still
+    // offered: registering one endpoint may never claim another.
+    expect(screen.getByRole("button", { name: "Add 10.0.5.21:9100" })).toBeTruthy();
+  });
+
+  test("registering a discovered USB printer moves it out of the results too", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/add") {
+        return Promise.resolve(json({ name: "counter", transport: "usb", profile: null, warnings: [] }));
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as typeof globalThis.fetch);
+    await act(async () => {});
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await act(async () => { stream().emit("printer", discoveredUsb()); });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add POS-58 Printer" }));
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
+
+    expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(gone(screen.queryByRole("button", { name: "Add POS-58 Printer" }))).toBe(true);
+  });
+
+  // `classify_usb_printers` gives one saved printer at most one connected
+  // interface, so the terminal keeps offering the second of two identical
+  // devices after the first is registered. Marking every match instead would
+  // hide a printer nobody registered, with no way back but a rescan.
+  test("registering one of two indistinguishable USB printers leaves the other offered", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/add") {
+        return Promise.resolve(json({ name: "counter", transport: "usb", profile: null, warnings: [] }));
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as typeof globalThis.fetch);
+    await act(async () => {});
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await act(async () => {
+      stream().emit("printer", discoveredUsb());
+      // Same vendor, product, interface and (absent) serial: only the port it
+      // is plugged into tells the two apart.
+      stream().emit("printer", discoveredUsb({ address: 8 }));
+    });
+    expect(screen.getAllByRole("button", { name: "Add POS-58 Printer" })).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Add POS-58 Printer" })[0]!);
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
+
+    expect(await screen.findByText("1 new so far · 1 already configured")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Add POS-58 Printer" })).toHaveLength(1);
   });
 
   test("a scan re-finding a configured printer counts it and flashes its existing row", async () => {
@@ -446,9 +544,8 @@ describe("PrintersPage", () => {
     await act(async () => { releaseFirstPoll(json({ printers: [] })); });
     // The released response is the one that predates the printer, and it is
     // empty; the printer can only appear through a request issued after it.
-    const [row] = await screen.findAllByText("warehouse");
+    await expectFlash("warehouse", "printer-row-found");
     expect(listCalls).toBe(2);
-    expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
   });
 
   test("the discovery menu holds focus, moves it with the arrow keys, and hands it back on Escape", async () => {

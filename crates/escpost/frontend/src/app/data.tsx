@@ -48,7 +48,10 @@ type AppData = {
   // `force` queues a fresh request behind one already in flight instead of
   // joining it. A caller that has just *changed* the inventory needs an
   // answer that was asked for after the change; the in-flight one was asked
-  // for before it and cannot contain it.
+  // for before it and cannot contain it. The returned promise settles when
+  // that fresh request does, so awaiting a forced refresh means the inventory
+  // has caught up — an unforced one may settle on a response that predates
+  // anything the caller did.
   refreshPrinters: (options?: { force?: boolean }) => Promise<void>;
   profiles: ProfileResource;
   ensureProfiles: () => Promise<void>;
@@ -120,7 +123,11 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   const printerData = useRef<PrintersResponse | null>(null);
   const printerRequest = useRef<Promise<void> | null>(null);
   const printerAbort = useRef<AbortController | null>(null);
-  const printerRefreshPending = useRef(false);
+  // The follow-up request a forced refresh asked for while another was in
+  // flight, and the handle that settles the promise its caller is holding.
+  // One entry however many forced calls arrive: they all want the same thing,
+  // which is one inventory fetched after their change.
+  const printerRefreshPending = useRef<{ promise: Promise<void>; settle: () => void } | null>(null);
   const profileData = useRef<ProfilesResponse | null>(null);
   const profileRequest = useRef<Promise<void> | null>(null);
   const profileAbort = useRef<AbortController | null>(null);
@@ -245,15 +252,27 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   // This lives beside the scan rather than in the page because the scan does:
   // a route change unmounts the page, and a printer registered before that
   // must not be offered again after it.
+  // One result, not every result that matches: `classify_usb_printers` gives
+  // a saved printer at most one connected interface, so the terminal keeps
+  // offering the second of two devices that share a vendor, product and
+  // absent serial after the first is registered. Marking both would hide a
+  // printer nobody registered until a rescan corrected it. For a network
+  // result the distinction is theoretical — one host and port is one result —
+  // but the rule is the shared layer's, so it is followed rather than
+  // reasoned around.
   const markScanResultConfigured = useCallback((name: string, connection: AddPrinterBody["connection"]) => {
-    setScan((current) => ({
-      ...current,
-      printers: current.printers.map((printer) => (
+    setScan((current) => {
+      const index = current.printers.findIndex((printer) => (
         registeredAs(printer, connection) && !printer.configured_names.includes(name)
-          ? { ...printer, configured_names: [...printer.configured_names, name] }
-          : printer
-      )),
-    }));
+      ));
+      if (index === -1) {
+        return current;
+      }
+      const printers = [...current.printers];
+      const found = printers[index]!;
+      printers[index] = { ...found, configured_names: [...found.configured_names, name] };
+      return { ...current, printers };
+    });
   }, []);
 
   useEffect(() => {
@@ -272,10 +291,20 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       // before the change it is asking about — the response is already on its
       // way and cannot contain it — so a fresh one is queued behind it
       // instead. Deduping still applies to ordinary polls.
-      if (options?.force) {
-        printerRefreshPending.current = true;
+      if (!options?.force) {
+        return printerRequest.current;
       }
-      return printerRequest.current;
+      if (!printerRefreshPending.current) {
+        let settle!: () => void;
+        const promise = new Promise<void>((resolve) => { settle = resolve; });
+        printerRefreshPending.current = { promise, settle };
+      }
+      // The caller's promise is the follow-up's, never the stale request's:
+      // awaiting a forced refresh has to mean the inventory has caught up,
+      // which is exactly the mistake this branch exists to prevent. It stays
+      // unsettled if the provider unmounts before the follow-up runs, which
+      // is the same nothing every caller already does with it.
+      return printerRefreshPending.current.promise;
     }
 
     const controller = new AbortController();
@@ -306,9 +335,12 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
           printerAbort.current = null;
         }
         printerRequest.current = null;
-        if (printerRefreshPending.current) {
-          printerRefreshPending.current = false;
-          void refreshPrinters();
+        const pending = printerRefreshPending.current;
+        if (pending) {
+          printerRefreshPending.current = null;
+          // Issued here, inside this request's own settle, so it goes out
+          // before the poll loop re-arms rather than racing it.
+          void refreshPrinters().finally(pending.settle);
         }
       });
     printerRequest.current = request;
@@ -452,7 +484,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       statusAbort?.abort();
       printerAbort.current?.abort();
-      printerRefreshPending.current = false;
+      printerRefreshPending.current = null;
       profileAbort.current?.abort();
     };
   }, [refreshPrinters, refreshProfiles]);

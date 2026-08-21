@@ -205,10 +205,11 @@ export function ScanOptions({ onStart, onClose }: {
     //
     // `startable` vets those fields only while Network is checked — refusing
     // a USB scan over a value that scan does not use would be its own
-    // contradiction — so an unvetted field falls back to the server's own
-    // default here. `DiscoveryQuery` promises numbers, and it should be true
-    // where the query is built rather than because whoever reads it happens
-    // to discard the field.
+    // contradiction — so an unvetted field falls back here to the default the
+    // server advertised on `discover/networks`, which is also what the fields
+    // are showing. `DiscoveryQuery` would accept the omission, but this panel
+    // has a number to send: it asked for one and displayed the answer, so
+    // sending what the reader is looking at is the honest query.
     onStart({
       usb,
       network,
