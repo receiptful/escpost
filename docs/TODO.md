@@ -263,9 +263,9 @@ discovery, adding a printer, calibration — from any open network port.
 - [ ] Enable and disable the virtual printer from the web app at runtime,
       selecting its profile, through a local control endpoint that binds and
       unbinds the RAW listener live.
-- [ ] Surface printer discovery — attached USB printer-class interfaces and
+- [x] Surface printer discovery — attached USB printer-class interfaces and
       configured network targets — in the web interface.
-- [ ] Add and configure a printer through the shared add workflow used by
+- [x] Add and configure a printer through the shared add workflow used by
       `printers add` and `print`.
 - [ ] Render and print the shared calibration case, and other conformance
       cases, against a selected printer from the interface.
@@ -409,9 +409,9 @@ rules are specified in `CLI.md`.
       Its only unique capability, a non-interactive USB config write, is now
       `printers add --vendor-id/--product-id/--serial`.
 - [x] Add the Rust `escpost printers discover` command: a read-only sweep of
-      directly connected IPv4 /24s (or explicit, uncapped `--subnet` values)
-      that probes each host with a zero-byte connect-and-drop TCP handshake.
-      (`CLI-M16`, `CLI-M17`)
+      directly connected IPv4 /24s (or explicit `--subnet` values up to a /16)
+      that probes each host with a zero-byte connect-and-drop TCP handshake,
+      skipping the scanning machine's own addresses. (`CLI-M16`, `CLI-M17`)
 - [x] Register a swept host through `printers add --discover`, auto-selecting
       a single discovery result, prompting a menu for several at an
       interactive terminal, and erroring on zero or, under

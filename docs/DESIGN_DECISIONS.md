@@ -977,6 +977,117 @@ committed and buffered commands while referencing one rendered sheet.
   semantically separate from printed output.
 - Ordinary non-traced rendering keeps its current end-of-input behavior.
 
+## DD-034 — Never let a discovery scan find the scanning machine
+
+**Status:** Accepted
+
+### Context
+
+`escpost serve` opens a RAW TCP listener, and printer discovery finds RAW TCP
+listeners. A workbench that scans the network it sits on therefore meets itself:
+a host answering on the probed port, indistinguishable from a printer, offered
+for registration like one. Registering it produces a printer that accepts every
+job and prints nothing.
+
+The scanning host can appear in a sweep in more than one way. It sits on the
+subnet it detected automatically; it may hold several addresses on that same
+subnet; loopback is a subnet a developer can legitimately name; and a subnet
+given by hand is just as likely to be the one the machine is on as a detected
+one is.
+
+Discovery reports facts, and "something is listening on this port" is a fact. A
+scanner cannot ask a RAW listener what it is without sending bytes it might
+interpret as a print job, so nothing later in the pipeline can tell the
+workbench apart from a printer either.
+
+### Decision
+
+A scan never probes an address the scanning machine holds. Each scan target
+carries the local IPv4 addresses that fall inside its subnet, and those
+addresses are excluded from the sweep and from the probe count that is announced
+before it starts. Exclusion is a property of the target, so it applies to every
+interface that starts a scan and to automatically detected and explicitly named
+subnets alike, loopback included.
+
+Exclusion is defined by the addresses the operating system reports for a local
+interface, not by address ranges that look local. A machine's own `127.0.0.1` is
+excluded because an interface holds it; another loopback address no interface
+holds remains probeable.
+
+Registering a local RAW listener by hand stays possible. Discovery declines to
+suggest this machine; it does not forbid naming it.
+
+### Consequences
+
+- A developer running `serve` can scan their own network without being offered
+  their own workbench as a printer.
+- The announced probe count and the sweep agree, because both are derived from
+  the same excluded set.
+- Confirming that a local virtual printer is listening is `serve`'s own job, and
+  the workbench's status endpoint reports the same fact. Discovery is not the
+  tool for it.
+- A second workbench on another machine is still discovered, correctly: it is
+  not this machine, and the fact that something answers there is true.
+- Deliberately registering a loopback printer requires typing its host and port,
+  which is a small cost paid by a rare case.
+
+## DD-035 — The shared layer owns the reason, each interface words the remedy
+
+**Status:** Accepted
+
+### Context
+
+The CLI and the web workbench call the same operations, and a fact those
+operations report must read the same in both. An adapter that reworded "this
+network is larger than /24" would leave two explanations of one omission.
+
+What to *do* about a fact is not the same kind of statement. The terminal's
+answer to a skipped adapter is a flag; the browser's answer is the custom-network
+field sitting beside the row it just disabled. A shared string that carries the
+remedy makes one interface tell users to do something the other's users cannot,
+and telling a browser user to type a CLI flag is telling them to leave the page
+that already solves it.
+
+Some remedies also depend on the machine rather than the interface.
+`printers grant-usb-permissions` exists only on Linux, and the browser may be
+talking to a server across the room. A browser that words a remedy from its own
+assumptions names a command that host does not have.
+
+### Decision
+
+Facts and reasons live in the shared layer, in one wording every interface
+reports. Remedies belong to the interface that offers them, and each one words
+its own.
+
+A skipped adapter therefore describes itself as the reason alone. The terminal
+appends the flag that scans it anyway; the browser appends its own pointer at the
+custom-network field. The shared error for "nothing left to scan" carries the
+same reasons and no advice, because both interfaces raise it.
+
+A remedy that depends on the platform is worded by the interface from facts the
+server supplies. The server states whether it can grant USB permissions at all;
+the browser decides what to say about it.
+
+This is not a rule against mentioning the terminal in the browser. Where a
+remedy genuinely requires one, the browser names it: USB permissions cannot be
+granted from a web page, so on a Linux host the workbench names
+`sudo escpost printers grant-usb-permissions` and says which machine to run it
+on. The rule is that the interface chooses, and it can only choose well from
+facts rather than from another interface's sentence.
+
+### Consequences
+
+- One omission has one explanation and as many remedies as there are ways to fix
+  it.
+- A shared message never sends a user to a command their interface does not
+  offer, or their platform does not have.
+- Payloads carry platform facts such as "this host has that subcommand" that a
+  purely factual API would not otherwise need.
+- Each interface carries a little wording of its own, and a remedy that should
+  change everywhere has to be changed in each place that offers it.
+- A shared reason must read as a complete clause, since it is spliced into
+  sentences the shared layer does not write.
+
 ## Open questions
 
 The following are intentionally not decided yet:

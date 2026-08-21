@@ -363,7 +363,17 @@ Listing does not pair devices, change configuration, send ESC/POS data, open a
 USB device, or start a broad Bluetooth or network search. It opens and
 immediately closes one TCP connection to each configured network target,
 using a one-second timeout. These probes run concurrently and send zero
-bytes. USB presence comes from the operating system's device metadata alone;
+bytes. A probe that fails is confirmed before it is believed: the target is
+probed a second time two seconds later, and only when that attempt fails too
+is the printer reported `unavailable`. RAW TCP is frequently single-session,
+so a printer busy with a job refuses one connection while being perfectly
+healthy. This costs nothing when every configured printer answers, since a
+successful probe is never repeated. When one does not answer, the listing
+takes about two seconds longer if the connection is refused, and four seconds
+in the worst case against a host that drops packets silently — one probe
+timeout, the retry delay, a second probe timeout. Probes remain concurrent,
+so that cost is paid once for the whole set rather than once per printer.
+USB presence comes from the operating system's device metadata alone;
 when no USB printer is configured, USB is not even enumerated. After the
 listing, a stderr hint always points at `printers discover` for finding
 connected printers not yet in the listing, regardless of how many (if any)
@@ -401,23 +411,77 @@ there is then no network sweep for them to configure.
 
 Without `--subnet`, ESCPost enumerates the machine's directly connected IPv4
 networks and scans each one automatically, but only when it is at most a
-`/24`; a larger directly connected network is skipped rather than swept in
-full, and finding no eligible network at all is an error pointing at
-`--subnet`. Passing one or more `--subnet <CIDR>` values scans exactly those
-networks instead: it disables the automatic network enumeration and removes
-the `/24` cap, so an explicit subnet may be arbitrarily large. `--subnet` may
-be repeated to scan several networks in one sweep.
+`/24`. A larger directly connected network is skipped rather than swept in
+full, and stderr names every adapter left out before the sweep starts, one
+line each:
+
+```text
+Skipped enp5s0 (10.0.0.0/16): larger than /24, scan it with --subnet 10.0.0.0/16
+Skipped weird0: its netmask does not name a scannable subnet
+```
+
+Each line states the reason first, in the wording every ESCPost interface uses
+for that omission. The trailing `scan it with --subnet <CIDR>` is the
+terminal's own remedy, and it appears only when a subnet could be derived at
+all: an adapter whose netmask is not contiguous names no CIDR subnet, so there
+is nothing to pass and no advice to give, as on the second line above.
+
+These lines belong to automatic detection, so an explicit `--subnet` never
+produces them. They are printed whenever an adapter was skipped, even when
+nothing is left to scan at all: a combined sweep still has USB work to do, and
+the omission has to be reported either way. On a machine whose only network is
+too large, the default combined sweep therefore succeeds — it enumerates USB
+and explains the missing network half — while `--transport network`, which has
+no other work, fails:
+
+```text
+error: no directly connected IPv4 network is small enough to scan automatically (at most /24): enp5s0 (10.0.0.0/16): larger than /24; pass --subnet <CIDR>
+```
+
+Passing one or more `--subnet <CIDR>` values scans exactly those networks
+instead: it disables the automatic network enumeration and relaxes the `/24`
+cap to `/16`. Naming a subnet is a deliberate act, so the bound is far more
+permissive than the automatic one, but it is not unbounded — a `/16` is
+already 65,534 probes and minutes of sweeping. A wider request is refused
+rather than quietly narrowed:
+
+```text
+error: subnet 10.0.0.0/8 is too large to scan (at most /16)
+```
+
+`--subnet` may be repeated to scan several networks in one sweep.
+
+No sweep ever probes this machine's own addresses. Every local IPv4 address
+that falls inside a scanned subnet is excluded from the sweep — loopback
+included, and whether the subnet was detected automatically or named with
+`--subnet` — so a machine running `escpost serve` never discovers its own RAW
+listener. Excluded addresses are left out of the announced address count too.
+To confirm that a local virtual printer is listening, read `escpost serve`'s
+own output rather than scanning for it.
 
 `--port` selects the probed port and defaults to `9100`. `--timeout <MS>`
 bounds each per-host connection attempt and defaults to `1000`. Probes run
 concurrently and send zero bytes; a reachable port is reported as-is and is
 never assumed to be a printer. Before the sweep starts, stderr prints a
-`Scanning <N> network(s) on port <port>:` header followed by one indented
-line per network being scanned (with its interface name for automatically
-detected ones) and, only when no `--subnet` was given, a trailing tip
-pointing at `--subnet` to scan a different network; a progress bar then
-follows on stderr during the network sweep when stderr is attached to a
-terminal.
+`Scanning <N> network(s) on port <port> (<count> addresses):` header, whose
+address count is exactly how many probes the sweep will make, followed by one
+indented line per network being scanned and, only when no `--subnet` was
+given, a trailing tip pointing at `--subnet` to scan a different network:
+
+```text
+Scanning 2 networks on port 9100 (507 addresses):
+  - 10.42.0.0/24 (enx0)
+  - 192.168.50.0/24
+Tip: pass --subnet <CIDR> to scan a different network.
+```
+
+A network carries the interface name of the local adapter it belongs to
+whenever this machine sits on it, for a subnet named with `--subnet` exactly
+as for an automatically detected one; a subnet for a network this machine is
+not on gets no label. A progress bar then follows on stderr during the network
+sweep when stderr is attached to a terminal. Interrupting the sweep with
+`Ctrl+C` abandons it and prints nothing: results are reported only by a run
+that finishes.
 
 USB results are listed first, then network results, numbered continuously
 across both; network results are ordered by ascending IPv4 address,

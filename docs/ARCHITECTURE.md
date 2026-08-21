@@ -189,8 +189,14 @@ write to configured physical hardware.
 `printers list` is a metadata-only inventory of configured printers. For saved
 USB entries it compares `nusb`'s operating-system device identities without
 opening a device or reading active configuration descriptors; for saved
-network entries it performs the bounded reachability probe. A matching saved
-entry is reported as connected and an unmatched saved entry as unavailable.
+network entries it performs the bounded reachability probe. A failed network
+probe is confirmed by one delayed retry before the printer is called
+unavailable, because RAW TCP is frequently single-session and a printer busy
+with a job refuses a probe while being perfectly healthy. Probes stay
+concurrent, so the retry costs one extra timeout window for the whole set
+rather than one per printer, and it is paid only when something failed. A
+matching saved entry is reported as connected and an unmatched saved entry as
+unavailable.
 When several saved aliases ambiguously match the same USB identity, the
 deterministic first alias is connected and its sibling aliases are omitted
 rather than double-counted. Connected USB devices with no saved identity are
@@ -218,7 +224,21 @@ and `NetworkScan`; incompatible options and an invalid port fail before any
 configuration I/O. `prepare` then loads configuration and derives scan targets,
 and `execute` emits factual observer events and returns typed discovery facts.
 `printers add --discover` reuses that lifecycle and retains only prompting and
-selection in its CLI adapter.
+selection in its CLI adapter. The HTTP adapter builds the same
+`DiscoveryScope` from query parameters through the CLI's own argument type and
+drives the same `prepare`/`execute` pair, so neither interface can express an
+input the other cannot.
+
+Target resolution is shared, so its rules apply to every adapter. Each target
+carries the scanning machine's own addresses inside that subnet as exclusions,
+which the sweep and the probe count both honor. Automatic detection keeps the
+adapters it declines to sweep as facts rather than dropping them, and an
+explicitly named subnet is bounded as well as labeled: it inherits the
+interface name and self-exclusion of a detected subnet when the machine sits on
+it, and is refused outright when it is wider than the explicit limit. Whether
+zero resolved targets is fatal is the scope's decision and belongs to
+`prepare`: a network-only scope has no other work and fails, while a combined
+scope proceeds with USB enumeration and reports the omission.
 
 All inventory commands read `printers.toml` through the same path precedence:
 an explicit `--config` file, then `ESCPOST_CONFIG_DIR`, then the platform user
@@ -291,15 +311,74 @@ reference. A Preact and TypeScript workbench is available at `/app/`, with
 `preact-iso` client routing for Overview, Print jobs, Printers, Profiles, and
 Calibration. Its responsive shell uses semantic tables on wide screens and
 labeled cards on narrow screens. Print jobs renders the current job directly;
-job history is a later capability.
+job history is a later capability. Printers discovers and registers printers as
+well as listing them, which makes it the first page that writes. Its inventory
+polls only while the document is visible, and its scan state lives in the
+application data provider rather than the page component, so in-app navigation
+neither ends a running scan nor restarts it; the shell's global status block
+shows the scan's progress from any page.
 
 Feature-local HTTP adapters call the same application operations as the CLI.
 Read-only routes mirror CLI paths: `GET /api/printers/list` and
 `GET /api/profiles/list`; `GET /api/status` is runtime-only infrastructure,
-not a CLI operation. The shell polls status while mounted, retains successful
+not a CLI operation. `GET /api/status` reports the virtual printer's state and
+address, the processed job count, and `config_path`, the resolved
+`printers.toml` the process reads and writes; a path that cannot be resolved
+degrades to an empty string rather than failing the endpoint that reports
+server health. The shell polls status while mounted, retains successful
 printer and profile responses for the app session, and reports loading, empty,
 error, retry, and stale-data states without introducing client-side filters or
 search parameters.
+
+Printer discovery and registration are three routes. `GET
+/api/printers/discover/networks` prepares the browser's scan-options panel: the
+automatically detected networks with their interface name, subnet, and own host
+count; the skipped adapters with a machine-readable `reason` (`too_large` or
+`unusable_netmask`) and the shared layer's `description` of it; and
+`default_port` and `default_timeout_ms`, restated from the CLI's own flag
+defaults so the panel cannot advertise a different scan than the one it starts.
+Like every other route in this API it answers `Cache-Control: no-store`, and
+the panel re-requests it each time it opens, because adapters change when a
+cable or a VPN does.
+
+`GET /api/printers/discover` runs the scan itself and answers as a
+`text/event-stream`. Its query parameters are the `printers discover` flags —
+`transport`, repeated `subnet`, `port`, `timeout` — parsed into the CLI's own
+argument type, so a combination the terminal rejects is rejected here too, and
+an unknown or repeated single-valued parameter is a bad request rather than a
+silent last-one-wins. Named events carry the run: `prepared` (resolved
+targets, skipped adapters, and the exact `total_probes`, so a progress bar can
+be sized before any work starts), `printer` (one discovered printer, USB or
+network, with its connection facts and the configured names it already matches),
+`progress` (`completed` and `total` probes), `usb_failure` (one tolerated
+enumeration failure with its stage, reason, `permission_denied` flag, and
+`can_grant_usb_permissions` — a platform fact stating whether this host has the
+Linux-only `printers grant-usb-permissions` subcommand at all). The stream ends
+with a `completed` marker carrying an empty payload, or with `error` carrying a
+message when the scan failed after the stream had opened; a failure before it
+opens is an ordinary JSON API error instead. `completed` needs no payload
+because the client already holds every `printer` event and counts them itself.
+The stream reports every discovered printer,
+configured or not; hiding the already-configured ones is the printers page's
+decision, not the endpoint's.
+
+A scan belongs to its request. Two tabs run two scans, there is no global scan
+and no shared scan state to reconcile, and cancellation needs no mechanism of
+its own: the response body owns the scan future, so dropping the response drops
+the `JoinSet` and aborts every outstanding probe. Cancelling discards what the
+run had found, exactly as interrupting `printers discover` does.
+
+`POST /api/printers/add` is the first write endpoint the API exposes. Its body
+carries the name, an optional profile, and one connection — a USB route (vendor,
+product, optional serial, interface, OUT endpoint, optional IN endpoint) or a
+network endpoint (host and port) — and is turned into the same `add::Request`
+the CLI builds, so every validation rule and every error meaning is shared. It
+answers `201 Created` with the saved printer and any advisory the CLI would
+print, notably the ambiguity warning for a USB printer that reports no serial
+number. Failures keep their own codes rather than one generic rejection: a
+colliding name is `printer_already_configured` with `409`, while a blank name,
+blank host, blank profile, blank serial, zero port, or an out-of-range endpoint
+is a `400` naming which of them it was.
 
 The current-job projection is `GET /api/jobs/current`. It reports reception and
 render status plus one optional immutable job document. That document contains
@@ -347,7 +426,8 @@ HTTP operation paths will follow the CLI command tree below an unversioned
 
 ```text
 escpost printers list       GET  /api/printers/list
-escpost printers discover   POST /api/printers/discover
+escpost printers discover   GET  /api/printers/discover
+                            GET  /api/printers/discover/networks
 escpost printers add        POST /api/printers/add
 escpost profiles list       GET  /api/profiles/list
 escpost profiles get ID     GET  /api/profiles/get/{id}
