@@ -7,19 +7,15 @@ import { DiscoveryPanel } from "./discovery-panel";
 import { PrinterList } from "./printer-list";
 import { ScanOptions } from "./scan-options";
 
-// What `Discover printers` scans with before anyone opens the options panel:
-// the CLI's own no-flag behaviour, both transports, targets detected
-// automatically. It names no port and no timeout because nobody has chosen
-// either, and the endpoint owns both defaults — a number restated here would
-// be invisible in the interface and would silently outlive the server's own.
-const DEFAULT_QUERY: DiscoveryQuery = { usb: true, network: true, subnets: [] };
-
 export function PrintersPage() {
-  const { scan, startScan, cancelScan, refreshPrinters, flashPrinter, markScanResultConfigured } = useAppData();
+  // `scanQuery` is the scope the last scan ran with, and it comes from the
+  // provider because this component does not survive a route change while the
+  // scan does — `Rescan` after a detour must repeat the sweep that was
+  // configured, not the default one.
+  const { scan, scanQuery, startScan, cancelScan, refreshPrinters, flashPrinter, markScanResultConfigured } = useAppData();
   const actions = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLUListElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
-  const [query, setQuery] = useState<DiscoveryQuery>(DEFAULT_QUERY);
   const [menuOpen, setMenuOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   // `null` while nothing is being registered, and `{ printer: null }` for the
@@ -77,10 +73,9 @@ export function PrintersPage() {
   }, [menuOpen, closeMenu]);
 
   // A scan is started from two places with the same settings: the split
-  // button reuses the last ones, the options panel supplies new ones and they
-  // become the last ones.
+  // button repeats the last ones, the options panel supplies new ones and
+  // `startScan` makes those the last ones.
   const beginScan = (next: DiscoveryQuery) => {
-    setQuery(next);
     setMenuOpen(false);
     setOptionsOpen(false);
     startScan(next);
@@ -117,7 +112,7 @@ export function PrintersPage() {
           <button
             type="button"
             class="btn btn-primary join-item grow sm:grow-0"
-            onClick={() => beginScan(query)}
+            onClick={() => beginScan(scanQuery)}
           >
             {scan.phase === "idle" ? "Discover printers" : "Rescan"}
           </button>

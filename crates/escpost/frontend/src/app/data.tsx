@@ -57,6 +57,12 @@ type AppData = {
   ensureProfiles: () => Promise<void>;
   refreshProfiles: () => Promise<void>;
   scan: ScanState;
+  // The scope the running or most recent scan was started with, and what a
+  // repeat of it would send. It lives here rather than in the page for the
+  // same reason the scan does: navigation unmounts the page, and a sweep
+  // narrowed to one segment must not silently widen back to every network
+  // this machine is on.
+  scanQuery: DiscoveryQuery;
   startScan: (query: DiscoveryQuery) => void;
   cancelScan: () => void;
   printerFlashes: PrinterFlashes;
@@ -79,6 +85,13 @@ const initialProfiles: ProfileResource = {
   error: null,
   phase: "loading",
 };
+
+// What a scan nobody has configured runs with: the CLI's own no-flag
+// behaviour, both transports, targets detected automatically. It names no
+// port and no timeout because nobody has chosen either, and the endpoint owns
+// both defaults — a number restated here would be invisible in the interface
+// and would silently outlive the server's own.
+const initialScanQuery: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 
 const initialScan: ScanState = {
   phase: "idle",
@@ -119,6 +132,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   const [printers, setPrinters] = useState<PrinterResource>(initialPrinters);
   const [profiles, setProfiles] = useState<ProfileResource>(initialProfiles);
   const [scan, setScan] = useState<ScanState>(initialScan);
+  const [scanQuery, setScanQuery] = useState<DiscoveryQuery>(initialScanQuery);
   const [printerFlashes, setPrinterFlashes] = useState<PrinterFlashes>({});
   const printerData = useRef<PrintersResponse | null>(null);
   const printerRequest = useRef<Promise<void> | null>(null);
@@ -216,6 +230,11 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   const startScan = useCallback((query: DiscoveryQuery) => {
     closeScan();
     setScan({ ...initialScan, phase: "running" });
+    // Remembered rather than merely used, so that repeating this scan repeats
+    // what was actually asked for. A cancel leaves it alone: stopping a sweep
+    // is not a change of mind about its scope, and `printers discover` does
+    // not forget your flags when you interrupt it either.
+    setScanQuery(query);
     scanCloser.current = openDiscoveryStream(query, {
       onPrepared: (prepared) => {
         setScan((current) => ({ ...current, total: prepared.total_probes }));
@@ -501,6 +520,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
         ensureProfiles,
         refreshProfiles,
         scan,
+        scanQuery,
         startScan,
         cancelScan,
         printerFlashes,

@@ -249,9 +249,11 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
           <div class="border-t border-base-300 px-4 py-8 text-center text-sm text-base-content/70">
             <p class="font-medium text-base-content">{configuredCount > 0 ? "No new printers" : "No printers discovered"}</p>
             <p class="mx-auto mt-1 max-w-prose">
-              {configuredCount > 0
-                ? `All ${configuredCount} discovered printers are already configured. They are listed below with live status.`
-                : "Nothing answered this scan."}
+              {configuredCount === 1
+                ? "The one printer discovered is already configured. It is listed below with live status."
+                : configuredCount > 0
+                  ? `All ${configuredCount} discovered printers are already configured. They are listed below with live status.`
+                  : "Nothing answered this scan."}
             </p>
           </div>
         )}

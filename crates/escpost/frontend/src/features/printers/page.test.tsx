@@ -14,7 +14,13 @@ const printer = {
 };
 
 const networks = {
-  networks: [{ subnet: "10.42.0.0/24", interface: "enx0", hosts: 253 }],
+  // Two, so that a selection can be partial: one checked network out of two
+  // is an explicit subnet on the wire, where every network checked is
+  // automatic mode and names none.
+  networks: [
+    { subnet: "10.42.0.0/24", interface: "enx0", hosts: 253 },
+    { subnet: "192.168.1.0/24", interface: "wlp3s0", hosts: 254 },
+  ],
   skipped: [],
   default_port: 9100,
   default_timeout_ms: 1000,
@@ -380,6 +386,31 @@ describe("PrintersPage", () => {
 
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
     expect(screen.getByText("0 new so far · 1 already configured")).toBeTruthy();
+  });
+
+  test("the chosen scan scope survives a route change, so Rescan repeats the same sweep", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    globalThis.fetch = fetchStub();
+    // The scope a scan ran with belongs to the scan, and the scan outlives
+    // the page: narrowing a sweep to one segment and then walking to another
+    // route may not quietly widen it back to every network this machine is
+    // on, which is what `Rescan` would then send.
+    render(<AppDataProvider><Navigable /></AppDataProvider>);
+    await act(async () => {});
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    await screen.findByLabelText("10.42.0.0/24");
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+    const narrowed = "/api/printers/discover?subnet=10.42.0.0%2F24&port=9100&timeout=1000";
+    expect(FakeEventSource.urls).toEqual([narrowed]);
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rescan" })); });
+    expect(FakeEventSource.urls[1]).toBe(narrowed);
   });
 
   test("a printer registered manually stops being offered by the running scan", async () => {
