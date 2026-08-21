@@ -1081,7 +1081,12 @@ fn printers_discover_announces_how_many_addresses_it_will_probe() {
             "--transport",
             "network",
             "--subnet",
-            "10.42.0.0/30",
+            // TEST-NET-3 (RFC 5737): reserved for documentation and never
+            // routed, so the announced count cannot change with whatever
+            // network the developer running this happens to be on. A private
+            // range here would drop to one address on any machine holding an
+            // address inside it, because self-exclusion correctly removes it.
+            "203.0.113.0/30",
             "--timeout",
             "1",
         ])

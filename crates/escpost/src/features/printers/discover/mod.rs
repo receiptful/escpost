@@ -369,10 +369,16 @@ mod tests {
     use std::net::{Ipv4Addr, TcpListener};
     use std::time::Duration;
 
+    /// A subnet from TEST-NET-3 (RFC 5737), which is reserved for
+    /// documentation and never routed, so these tests probe address space no
+    /// machine can be on. A private range like `10.42.0.0/24` looks harmless
+    /// and is not: the test container shares the host's network namespace, so
+    /// a developer whose own LAN happens to use that range gets real answers
+    /// here and a test that fails on their desk and nowhere else.
     fn explicit_network_scan() -> NetworkScan {
         NetworkScan::new(
             9100,
-            vec![Subnet::parse("10.42.0.0/24").expect("valid subnet")],
+            vec![Subnet::parse("203.0.113.0/24").expect("valid subnet")],
             Duration::from_millis(50),
         )
         .expect("the explicit network scan should be valid")
