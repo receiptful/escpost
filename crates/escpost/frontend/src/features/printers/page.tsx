@@ -181,7 +181,7 @@ export function PrintersPage() {
 
         {optionsOpen && (
           <div class="absolute right-0 top-full z-20 mt-2 flex w-full max-w-sm justify-end">
-            <ScanOptions onStart={beginScan} onClose={() => setOptionsOpen(false)} />
+            <ScanOptions query={scanQuery} onStart={beginScan} onClose={() => setOptionsOpen(false)} />
           </div>
         )}
       </div>

@@ -164,6 +164,10 @@ async function expectFlash(name: string, flash: string) {
   });
 }
 
+function checkbox(label: string) {
+  return screen.getByLabelText(label) as HTMLInputElement;
+}
+
 function openMenu() {
   fireEvent.click(screen.getByRole("button", { name: "Discovery options" }));
 }
@@ -411,6 +415,65 @@ describe("PrintersPage", () => {
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rescan" })); });
     expect(FakeEventSource.urls[1]).toBe(narrowed);
+  });
+
+  test("the scan options panel reopens showing the scope the last scan ran with", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    globalThis.fetch = fetchStub();
+    renderPage(fetchStub());
+    await act(async () => {});
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    await screen.findByLabelText("10.42.0.0/24");
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+
+    // The panel is where a reader goes to answer "what will Rescan do?", so
+    // it may not answer with the default when the last scan was narrowed.
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    await screen.findByLabelText("10.42.0.0/24");
+    expect(checkbox("10.42.0.0/24").checked).toBe(true);
+    expect(checkbox("192.168.1.0/24").checked).toBe(false);
+    expect((screen.getByLabelText("RAW TCP port") as HTMLInputElement).value).toBe("9101");
+    expect(screen.getByText("253 probes")).toBeTruthy();
+  });
+
+  test("a network that has since disappeared reopens in the custom field", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    let detections = 0;
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/discover/networks") {
+        detections += 1;
+        // The cable came out between the two openings, so the subnet the
+        // scan ran on is no longer one of this machine's adapters.
+        return Promise.resolve(json(detections === 1
+          ? networks
+          : { ...networks, networks: networks.networks.slice(1) }));
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as typeof globalThis.fetch);
+    await act(async () => {});
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    await screen.findByLabelText("10.42.0.0/24");
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    await screen.findByLabelText("192.168.1.0/24");
+    // A chosen subnet with no adapter behind it has no row to be checked in,
+    // so it lands where the reader would have to retype it rather than
+    // vanishing from the selection.
+    expect(gone(screen.queryByLabelText("10.42.0.0/24"))).toBe(true);
+    expect((screen.getByLabelText("Custom network") as HTMLInputElement).value).toBe("10.42.0.0/24");
   });
 
   test("a printer registered manually stops being offered by the running scan", async () => {

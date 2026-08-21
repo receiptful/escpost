@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { getDiscoveryNetworks } from "../../api/client";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
 import type { DiscoveryNetworksResponse, SkippedNetwork } from "../../api/types";
@@ -77,7 +77,18 @@ function checkboxId(value: string) {
   return `scan-network-${value.replace(/[^a-zA-Z0-9]/g, "-")}`;
 }
 
-export function ScanOptions({ onStart, onClose }: {
+/**
+ * The scan scope, as controls. `query` is the scope the last scan ran with —
+ * the provider's `scanQuery`, which is the CLI's no-flag default until a scan
+ * has been configured — and the panel opens showing it, so that what it
+ * displays and what `Discover printers` would send are the same thing.
+ *
+ * The networks themselves are still fetched on every open: adapters change
+ * with a cable or a VPN, so the server stays the authority on which networks
+ * exist while `query` says which of them were chosen.
+ */
+export function ScanOptions({ query, onStart, onClose }: {
+  query: DiscoveryQuery;
   onStart: (query: DiscoveryQuery) => void;
   onClose: () => void;
 }) {
@@ -95,11 +106,50 @@ export function ScanOptions({ onStart, onClose }: {
   const [port, setPort] = useState<string | null>(null);
   const [timeout, setTimeoutMs] = useState<string | null>(null);
 
+  // Read through a ref rather than as an effect dependency, so a caller that
+  // rebuilds the object on every render cannot turn the networks fetch into a
+  // loop. The scope only changes when a scan starts, which closes this panel.
+  const requested = useRef(query);
+  requested.current = query;
+
+  // The recorded scope expressed in these controls, applied once the adapters
+  // it has to be matched against have arrived.
+  //
+  // A chosen subnet that no adapter reports any more has no row to be checked
+  // in, so it goes to the custom field — where the reader would have to
+  // retype it — rather than disappearing from the selection. And because a
+  // custom entry disables the known list outright, the whole selection moves
+  // there as soon as any part of it must: splitting it would leave the
+  // checked half out of the query the footer is promising.
+  const seed = (data: DiscoveryNetworksResponse) => {
+    const scope = requested.current;
+    setUsb(scope.usb);
+    setNetwork(scope.network);
+    setPort(scope.port === undefined ? null : String(scope.port));
+    setTimeoutMs(scope.timeoutMs === undefined ? null : String(scope.timeoutMs));
+    const known = data.networks.map((entry) => entry.subnet);
+    if (scope.subnets.length === 0) {
+      // Automatic mode: every network checked, which is also how the panel
+      // opens before any scan has been configured.
+      setUnchecked([]);
+      setCustom("");
+    } else if (scope.subnets.every((subnet) => known.includes(subnet))) {
+      setUnchecked(known.filter((subnet) => !scope.subnets.includes(subnet)));
+      setCustom("");
+    } else {
+      setUnchecked([]);
+      setCustom(scope.subnets.join(", "));
+    }
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     setResource({ data: null, error: null });
     void getDiscoveryNetworks(controller.signal)
-      .then((data) => setResource({ data, error: null }))
+      .then((data) => {
+        setResource({ data, error: null });
+        seed(data);
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) {
           return;
@@ -183,7 +233,10 @@ export function ScanOptions({ onStart, onClose }: {
 
   // Back to the panel as it opened, adapters included: a network appears or
   // vanishes with a cable or a VPN, and Reset is the only way back from a
-  // failed detection.
+  // failed detection. These are the hard defaults rather than the recorded
+  // scope only for as long as the refetch takes — its response re-seeds the
+  // controls, so Reset lands on the scope the panel opened with, which is
+  // what "as it opened" has to mean now that it opens configured.
   const reset = () => {
     setUsb(true);
     setNetwork(true);

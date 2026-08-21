@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import type { DiscoveryQuery } from "../../api/discovery-stream";
 import type { DiscoveryNetworksResponse } from "../../api/types";
 import { ScanOptions } from "./scan-options";
 
@@ -24,13 +25,17 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function renderOptions(response: Response | DiscoveryNetworksResponse) {
+// The scope of a session where no scan has been configured yet, which is what
+// the provider hands the panel until one has: the CLI's no-flag behaviour.
+const noScanYet: DiscoveryQuery = { usb: true, network: true, subnets: [] };
+
+function renderOptions(response: Response | DiscoveryNetworksResponse, query: DiscoveryQuery = noScanYet) {
   const onStart = jest.fn();
   const onClose = jest.fn();
   globalThis.fetch = (() => Promise.resolve(
     response instanceof Response ? response : json(response),
   )) as unknown as typeof globalThis.fetch;
-  const view = render(<ScanOptions onStart={onStart} onClose={onClose} />);
+  const view = render(<ScanOptions query={query} onStart={onStart} onClose={onClose} />);
   return { view, onStart, onClose };
 }
 
@@ -74,6 +79,36 @@ describe("ScanOptions", () => {
     expect(await screen.findByText("507 probes")).toBeTruthy();
     fireEvent.click(startButton());
     expect(onStart).toHaveBeenLastCalledWith({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+  });
+
+  // The panel opens on the scope the last scan ran with, so that what it
+  // shows and what `Discover printers` would send are the same thing.
+  test("opens on the recorded scope, port and timeout included", async () => {
+    const { onStart } = renderOptions(twoNetworks, {
+      usb: false,
+      network: true,
+      subnets: ["192.168.1.0/24"],
+      port: 9101,
+      timeoutMs: 500,
+    });
+    await screen.findByLabelText("10.42.0.0/24");
+
+    expect((screen.getByLabelText("USB") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("10.42.0.0/24") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("192.168.1.0/24") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("RAW TCP port") as HTMLInputElement).value).toBe("9101");
+    expect((screen.getByLabelText("Timeout per host") as HTMLInputElement).value).toBe("500");
+    expect(screen.getByText("254 probes")).toBeTruthy();
+
+    // Reopened and started untouched, it repeats the scan it was showing.
+    fireEvent.click(startButton());
+    expect(onStart).toHaveBeenCalledWith({
+      usb: false,
+      network: true,
+      subnets: ["192.168.1.0/24"],
+      port: 9101,
+      timeoutMs: 500,
+    });
   });
 
   test("start is disabled when the network transport is checked with nothing selected", async () => {
@@ -251,7 +286,7 @@ describe("ScanOptions", () => {
   test("keeps a skeleton network list until the networks response arrives", async () => {
     let resolveNetworks!: (response: Response) => void;
     globalThis.fetch = (() => new Promise<Response>((resolve) => { resolveNetworks = resolve; })) as unknown as typeof globalThis.fetch;
-    const view = render(<ScanOptions onStart={jest.fn()} onClose={jest.fn()} />);
+    const view = render(<ScanOptions query={noScanYet} onStart={jest.fn()} onClose={jest.fn()} />);
 
     expect(screen.getByLabelText("Detecting networks")).toBeTruthy();
     expect(view.container.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
@@ -270,7 +305,7 @@ describe("ScanOptions", () => {
       json(twoNetworks),
     ];
     globalThis.fetch = (() => Promise.resolve(responses.shift()!)) as unknown as typeof globalThis.fetch;
-    render(<ScanOptions onStart={jest.fn()} onClose={jest.fn()} />);
+    render(<ScanOptions query={noScanYet} onStart={jest.fn()} onClose={jest.fn()} />);
 
     expect(await screen.findByText("Unable to detect this machine's networks.")).toBeTruthy();
     expect(screen.getByText("Networks unavailable")).toBeTruthy();
