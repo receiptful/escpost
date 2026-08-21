@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { useState } from "preact/hooks";
 import { AppDataProvider } from "../../app/data";
 import { PrintersPage } from "./page";
 
@@ -40,15 +41,48 @@ function fetchStub(printers: unknown = { printers: [] }) {
 
 // The scan is an `EventSource`, which neither Bun nor the happy-dom
 // registrator provides, so the page is driven against the same stand-in
-// `data.test.tsx` uses — reduced to the one fact these tests assert, which is
-// the query the split button and the options panel produced.
+// `data.test.tsx` uses. It dispatches: a results panel with nothing in it
+// cannot show what happens to a row, so every test about registering a
+// discovered printer needs the stream to actually deliver one.
 class FakeEventSource {
+  static instances: FakeEventSource[] = [];
   static urls: string[] = [];
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>();
+
   constructor(url: string) {
     FakeEventSource.urls.push(url);
+    FakeEventSource.instances.push(this);
   }
-  addEventListener() {}
+
+  addEventListener(name: string, handler: (event: Event) => void) {
+    const existing = this.listeners.get(name) ?? [];
+    existing.push(handler);
+    this.listeners.set(name, existing);
+  }
+
+  emit(name: string, payload: unknown) {
+    for (const handler of this.listeners.get(name) ?? []) {
+      handler(new MessageEvent(name, { data: JSON.stringify(payload) }));
+    }
+  }
+
   close() {}
+}
+
+// The stream the page most recently opened.
+function stream() {
+  return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
+}
+
+function discovered(overrides: Record<string, unknown> = {}) {
+  return {
+    transport: "network",
+    configured_names: [],
+    configured_profile: null,
+    interface: "enx0",
+    connection: { type: "network", host: "10.0.5.20", port: 9100 },
+    ...overrides,
+  };
 }
 
 const originalEventSource = globalThis.EventSource;
@@ -56,6 +90,18 @@ const originalEventSource = globalThis.EventSource;
 function renderPage(fetch: typeof globalThis.fetch) {
   globalThis.fetch = fetch;
   return render(<AppDataProvider><PrintersPage /></AppDataProvider>);
+}
+
+// Stands in for the router, which unmounts a route component on navigation
+// while the provider above it stays mounted.
+function Navigable() {
+  const [onPrinters, setOnPrinters] = useState(true);
+  return (
+    <>
+      <button type="button" onClick={() => setOnPrinters((current) => !current)}>Leave the printers page</button>
+      {onPrinters && <PrintersPage />}
+    </>
+  );
 }
 
 // Steps `bun:test`'s fake clock forward and flushes the microtask queue, so
@@ -69,6 +115,13 @@ async function advanceTimers(milliseconds: number) {
   }
 }
 
+// Absence as a boolean. `expect(node).toBeNull()` prints the entire happy-dom
+// node graph when it fails — tens of megabytes for a node still attached to
+// the page — which buries every other failure in the run.
+function gone(element: Element | null) {
+  return element === null;
+}
+
 function openMenu() {
   fireEvent.click(screen.getByRole("button", { name: "Discovery options" }));
 }
@@ -78,6 +131,7 @@ afterEach(() => {
   jest.useRealTimers();
   globalThis.EventSource = originalEventSource;
   FakeEventSource.urls = [];
+  FakeEventSource.instances = [];
 });
 
 describe("PrintersPage", () => {
@@ -116,7 +170,7 @@ describe("PrintersPage", () => {
         : Promise.resolve(inventories.shift()!)) as typeof globalThis.fetch);
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
 
-    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    expect(gone(screen.queryByRole("button", { name: "Refresh" }))).toBe(true);
     await act(async () => {
       jest.advanceTimersByTime(10_000);
       await Promise.resolve();
@@ -149,12 +203,12 @@ describe("PrintersPage", () => {
     await act(async () => {});
 
     expect(screen.getByRole("button", { name: "Discover printers" })).toBeTruthy();
-    expect(screen.queryByRole("menuitem", { name: "Scan options…" })).toBeNull();
+    expect(gone(screen.queryByRole("menuitem", { name: "Scan options…" }))).toBe(true);
 
     openMenu();
     expect(screen.getByRole("menuitem", { name: "Scan options…" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Add network printer manually" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    expect(gone(screen.queryByRole("button", { name: "Refresh" }))).toBe(true);
   });
 
   test("Discover printers scans with the current settings, and Cancel discards the scan", async () => {
@@ -162,13 +216,15 @@ describe("PrintersPage", () => {
     renderPage(fetchStub());
     await act(async () => {});
 
+    // No port and no timeout: nobody has chosen either, and the endpoint owns
+    // both defaults. The page never states a number it does not own.
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
-    expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9100&timeout=1000"]);
+    expect(FakeEventSource.urls).toEqual(["/api/printers/discover"]);
     expect(screen.getByRole("heading", { name: "Discovering printers" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
-    expect(screen.queryByRole("heading", { name: "Discovering printers" })).toBeNull();
+    expect(gone(screen.queryByRole("heading", { name: "Discovering printers" }))).toBe(true);
     expect(screen.getByRole("button", { name: "Discover printers" })).toBeTruthy();
   });
 
@@ -184,7 +240,7 @@ describe("PrintersPage", () => {
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
     expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9101&timeout=1000"]);
-    expect(screen.queryByRole("heading", { name: "Scan options" })).toBeNull();
+    expect(gone(screen.queryByRole("heading", { name: "Scan options" }))).toBe(true);
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rescan" })); });
     expect(FakeEventSource.urls[1]).toBe("/api/printers/discover?port=9101&timeout=1000");
@@ -220,7 +276,219 @@ describe("PrintersPage", () => {
     const [row, card] = await screen.findAllByText("warehouse");
     expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
     expect(card?.closest("article")?.classList.contains("printer-row-found")).toBe(true);
-    expect(screen.queryByRole("heading", { name: "Add network printer" })).toBeNull();
+    expect(gone(screen.queryByRole("heading", { name: "Add network printer" }))).toBe(true);
+  });
+
+  test("registering a discovered printer moves it out of the results and into the count", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    let added = false;
+    const warehouse = {
+      name: "warehouse",
+      transport: "network",
+      availability: "connected",
+      profile: null,
+      connection: { type: "network", host: "10.0.5.20", port: 9100 },
+    };
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/add") {
+        added = true;
+        return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
+      }
+      return Promise.resolve(json({ printers: added ? [warehouse] : [] }));
+    }) as typeof globalThis.fetch);
+    await act(async () => {});
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await act(async () => { stream().emit("printer", discovered()); });
+    expect(screen.getByText("1 new so far")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add 10.0.5.20:9100" }));
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
+
+    // Recorded while the sweep is still running, which is when adding
+    // actually happens.
+    expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
+    expect((await screen.findAllByText("warehouse"))[0]?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
+  });
+
+  test("a registered result stays out of the results across a route change", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/add") {
+        return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as typeof globalThis.fetch);
+    cleanup();
+    // The scan outlives the page on purpose, so anything the page learned
+    // about the scan has to outlive it too — a route component is unmounted
+    // by the router, and coming back must not offer a printer that has just
+    // been registered.
+    render(<AppDataProvider><Navigable /></AppDataProvider>);
+    await act(async () => {});
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await act(async () => { stream().emit("printer", discovered()); });
+    fireEvent.click(screen.getByRole("button", { name: "Add 10.0.5.20:9100" }));
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
+
+    expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
+    expect(screen.getByText("0 new so far · 1 already configured")).toBeTruthy();
+  });
+
+  test("a printer registered manually stops being offered by the running scan", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/add") {
+        return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
+      }
+      return Promise.resolve(json({ printers: [] }));
+    }) as typeof globalThis.fetch);
+    await act(async () => {});
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await act(async () => { stream().emit("printer", discovered()); });
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add network printer manually" }));
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
+
+    // The host typed here is the one the scan is listing, and nothing but
+    // this dialog ever knew it.
+    expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
+  });
+
+  test("a scan re-finding a configured printer counts it and flashes its existing row", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(fetchStub({
+      printers: [{
+        name: "kitchen",
+        transport: "network",
+        availability: "unavailable",
+        profile: null,
+        connection: { type: "network", host: "10.42.0.71", port: 9100 },
+      }],
+    }));
+    expect(await screen.findAllByText("kitchen")).toHaveLength(2);
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await act(async () => {
+      stream().emit("printer", discovered({
+        configured_names: ["kitchen"],
+        connection: { type: "network", host: "10.42.0.71", port: 9100 },
+      }));
+    });
+
+    // Counted, never listed, and the printer it already is lights up — proved
+    // reachable by the scan rather than by waiting for the next poll.
+    expect(gone(screen.queryByRole("button", { name: "Add 10.42.0.71:9100" }))).toBe(true);
+    expect(screen.getByText("0 new so far · 1 already configured")).toBeTruthy();
+    const [row, card] = screen.getAllByText("kitchen");
+    expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
+    expect(card?.closest("article")?.classList.contains("printer-row-found")).toBe(true);
+    expect(screen.getAllByText("Connected")).toHaveLength(2);
+  });
+
+  test("an add that lands while an inventory poll is in flight still reaches the inventory", async () => {
+    let listCalls = 0;
+    let added = false;
+    let releaseFirstPoll!: (response: Response) => void;
+    const warehouse = {
+      name: "warehouse",
+      transport: "network",
+      availability: "connected",
+      profile: null,
+      connection: { type: "network", host: "10.0.5.20", port: 9100 },
+    };
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/status") return Promise.resolve(json(status));
+      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      if (url === "/api/printers/add") {
+        added = true;
+        return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
+      }
+      listCalls += 1;
+      // The first poll is still open when the printer is saved, so its
+      // response cannot possibly contain it.
+      if (listCalls === 1) {
+        return new Promise<Response>((resolve) => { releaseFirstPoll = resolve; });
+      }
+      return Promise.resolve(json({ printers: added ? [warehouse] : [] }));
+    }) as typeof globalThis.fetch);
+    await act(async () => {});
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add network printer manually" }));
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
+    fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
+    expect(listCalls).toBe(1);
+
+    await act(async () => { releaseFirstPoll(json({ printers: [] })); });
+    // The released response is the one that predates the printer, and it is
+    // empty; the printer can only appear through a request issued after it.
+    const [row] = await screen.findAllByText("warehouse");
+    expect(listCalls).toBe(2);
+    expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
+  });
+
+  test("the discovery menu holds focus, moves it with the arrow keys, and hands it back on Escape", async () => {
+    renderPage(fetchStub());
+    await act(async () => {});
+
+    openMenu();
+    const items = screen.getAllByRole("menuitem");
+    // By index rather than by node, so a failure reports a number instead of
+    // printing an entire DOM element.
+    const focused = () => items.indexOf(document.activeElement as HTMLButtonElement);
+    expect(focused()).toBe(0);
+
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(focused()).toBe(1);
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(focused()).toBe(0);
+    fireEvent.keyDown(document, { key: "ArrowUp" });
+    expect(focused()).toBe(1);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(gone(screen.queryByRole("menuitem"))).toBe(true);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Discovery options");
+  });
+
+  test("a pointer press outside the menu closes it, and opening it closes the scan options", async () => {
+    renderPage(fetchStub());
+    await act(async () => {});
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    expect(await screen.findByRole("heading", { name: "Scan options" })).toBeTruthy();
+
+    // The menu and the panel are anchored to the same corner, so the menu may
+    // never open behind the panel.
+    openMenu();
+    expect(gone(screen.queryByRole("heading", { name: "Scan options" }))).toBe(true);
+
+    fireEvent.pointerDown(document.body);
+    expect(gone(screen.queryByRole("menuitem"))).toBe(true);
   });
 
   test("a printer that has just become unavailable carries the lost highlight", async () => {

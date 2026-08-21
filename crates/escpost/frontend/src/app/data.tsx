@@ -3,7 +3,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "preact/hoo
 import { NetworkRequestError, getPrinters, getProfiles, getStatus } from "../api/client";
 import { openDiscoveryStream } from "../api/discovery-stream";
 import type { DiscoveryQuery, UsbDiscoveryFailure } from "../api/discovery-stream";
-import type { DiscoveredPrinter, PrintersResponse, ProfilesResponse, StatusResponse } from "../api/types";
+import type { AddPrinterBody, DiscoveredPrinter, PrintersResponse, ProfilesResponse, StatusResponse } from "../api/types";
 
 type ConnectionState = "loading" | "ready" | "disconnected";
 type ResourcePhase = "loading" | "ready" | "refreshing" | "error";
@@ -45,7 +45,11 @@ type AppData = {
   status: StatusResponse | null;
   statusError: Error | null;
   printers: PrinterResource;
-  refreshPrinters: () => Promise<void>;
+  // `force` queues a fresh request behind one already in flight instead of
+  // joining it. A caller that has just *changed* the inventory needs an
+  // answer that was asked for after the change; the in-flight one was asked
+  // for before it and cannot contain it.
+  refreshPrinters: (options?: { force?: boolean }) => Promise<void>;
   profiles: ProfileResource;
   ensureProfiles: () => Promise<void>;
   refreshProfiles: () => Promise<void>;
@@ -54,6 +58,7 @@ type AppData = {
   cancelScan: () => void;
   printerFlashes: PrinterFlashes;
   flashPrinter: (name: string, kind: "found" | "lost") => void;
+  markScanResultConfigured: (name: string, connection: AddPrinterBody["connection"]) => void;
 };
 
 const AppDataContext = createContext<AppData | null>(null);
@@ -82,6 +87,28 @@ const initialScan: ScanState = {
   error: null,
 };
 
+// Whether a discovered printer is the device that was just registered, by the
+// shared layer's own rules. `discover::configured_names` pairs a network
+// result with a configured host and port; `inventory::configuration_matches`
+// pairs a USB device with the vendor, product and interface its route was
+// saved under, requires the saved OUT endpoint to be one the device exposes,
+// and treats a configured printer with no serial number as matching any
+// serial. Getting this wrong in either direction only ever changes which
+// results the panel offers — the server remains the authority on a
+// collision — but it is worth mirroring exactly rather than approximating.
+function registeredAs(discovered: DiscoveredPrinter, connection: AddPrinterBody["connection"]) {
+  const found = discovered.connection;
+  if (connection.type === "network") {
+    return found.type === "network" && found.host === connection.host && found.port === connection.port;
+  }
+  return found.type === "usb"
+    && found.vendor_id === connection.vendor_id
+    && found.product_id === connection.product_id
+    && found.interface_number === connection.interface_number
+    && found.out_endpoints.includes(connection.out_endpoint)
+    && (connection.serial_number === null || found.serial_number === connection.serial_number);
+}
+
 export function AppDataProvider({ children }: { children: preact.ComponentChildren }) {
   const [connection, setConnection] = useState<ConnectionState>("loading");
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -93,7 +120,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
   const printerData = useRef<PrintersResponse | null>(null);
   const printerRequest = useRef<Promise<void> | null>(null);
   const printerAbort = useRef<AbortController | null>(null);
-  const printerRecoveryPending = useRef(false);
+  const printerRefreshPending = useRef(false);
   const profileData = useRef<ProfilesResponse | null>(null);
   const profileRequest = useRef<Promise<void> | null>(null);
   const profileAbort = useRef<AbortController | null>(null);
@@ -209,6 +236,26 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
     setScan(initialScan);
   }, [closeScan]);
 
+  // Records that a scan result has just been registered under `name`. The
+  // stream computed `configured_names` from the configuration as it stood
+  // when the scan began, so a printer added since then would still be offered
+  // as new; the panel hides configured hits and counts them, so stating that
+  // it is now configured is all it takes for the row to move.
+  //
+  // This lives beside the scan rather than in the page because the scan does:
+  // a route change unmounts the page, and a printer registered before that
+  // must not be offered again after it.
+  const markScanResultConfigured = useCallback((name: string, connection: AddPrinterBody["connection"]) => {
+    setScan((current) => ({
+      ...current,
+      printers: current.printers.map((printer) => (
+        registeredAs(printer, connection) && !printer.configured_names.includes(name)
+          ? { ...printer, configured_names: [...printer.configured_names, name] }
+          : printer
+      )),
+    }));
+  }, []);
+
   useEffect(() => {
     return () => {
       closeScan();
@@ -219,8 +266,15 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
     };
   }, [closeScan]);
 
-  const refreshPrinters = useCallback(async () => {
+  const refreshPrinters = useCallback(async (options?: { force?: boolean }) => {
     if (printerRequest.current) {
+      // A forced refresh cannot be satisfied by a request that was issued
+      // before the change it is asking about — the response is already on its
+      // way and cannot contain it — so a fresh one is queued behind it
+      // instead. Deduping still applies to ordinary polls.
+      if (options?.force) {
+        printerRefreshPending.current = true;
+      }
       return printerRequest.current;
     }
 
@@ -252,8 +306,8 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
           printerAbort.current = null;
         }
         printerRequest.current = null;
-        if (printerRecoveryPending.current) {
-          printerRecoveryPending.current = false;
+        if (printerRefreshPending.current) {
+          printerRefreshPending.current = false;
           void refreshPrinters();
         }
       });
@@ -324,11 +378,10 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
           setConnection("ready");
           if (disconnected) {
             disconnected = false;
-            if (printerRequest.current) {
-              printerRecoveryPending.current = true;
-            } else {
-              void refreshPrinters();
-            }
+            // Reconnecting is the same hazard as registering a printer: an
+            // inventory request issued while the server was unreachable
+            // cannot answer for the server that just came back.
+            void refreshPrinters({ force: true });
           }
         })
         .catch((error: unknown) => {
@@ -399,7 +452,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       statusAbort?.abort();
       printerAbort.current?.abort();
-      printerRecoveryPending.current = false;
+      printerRefreshPending.current = false;
       profileAbort.current?.abort();
     };
   }, [refreshPrinters, refreshProfiles]);
@@ -425,6 +478,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
         // event the flash treatment marks, and only the caller that
         // registered it knows it happened.
         flashPrinter,
+        markScanResultConfigured,
       }}
     >
       {children}

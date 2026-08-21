@@ -155,7 +155,10 @@ describe("AddPrinterDialog", () => {
     expect(screen.queryByText(/already configured/)).toBeNull();
     fireEvent.click(addButton());
 
-    await waitFor(() => expect(onAdded).toHaveBeenCalledWith("Kitchen"));
+    // The connection travels with the name because the owner cannot
+    // reconstruct it: for a manual registration this host and port were typed
+    // here, and a scan still listing that endpoint as new has to be told.
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith("Kitchen", { type: "network", host: "10.0.5.20", port: 9100 }));
     expect(posted[0]).toEqual({
       name: "Kitchen",
       profile: null,

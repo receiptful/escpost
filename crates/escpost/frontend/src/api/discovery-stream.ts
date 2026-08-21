@@ -2,15 +2,21 @@ import type { DiscoveredPrinter, DiscoveryNetwork, SkippedNetwork } from "./type
 
 // Mirrors the CLI's own flags: no filter when both transports are selected
 // (matching the CLI's no-flag behavior), a repeated `subnet` per network,
-// `port`, and `timeout`. Nothing else is sent. `port` and `timeoutMs` are
-// carried even for a USB-only scan, where the panel's fields are disabled
-// rather than cleared, and dropped on the wire — see `discoveryQueryString`.
+// `port`, and `timeout`. Nothing else is sent.
+//
+// `port` and `timeoutMs` are optional because an unchosen one is not a value
+// this client owns: omitting the parameter is how the CLI omits a flag, and
+// the endpoint applies the very same defaults it advertises on
+// `discover/networks`. Restating a number the server owns would go stale
+// silently and scan the wrong port. They are carried even for a USB-only
+// scan, where the panel's fields are disabled rather than cleared, and
+// dropped on the wire — see `discoveryQueryString`.
 export type DiscoveryQuery = {
   usb: boolean;
   network: boolean;
   subnets: string[];
-  port: number;
-  timeoutMs: number;
+  port?: number;
+  timeoutMs?: number;
 };
 
 // Payload of the stream's `prepared` event: the scan targets and skipped
@@ -65,8 +71,12 @@ export function discoveryQueryString(query: DiscoveryQuery) {
   for (const subnet of query.subnets) {
     parameters.append("subnet", subnet);
   }
-  parameters.set("port", String(query.port));
-  parameters.set("timeout", String(query.timeoutMs));
+  if (query.port !== undefined) {
+    parameters.set("port", String(query.port));
+  }
+  if (query.timeoutMs !== undefined) {
+    parameters.set("timeout", String(query.timeoutMs));
+  }
   return parameters.toString();
 }
 
@@ -109,7 +119,10 @@ function errorMessage(event: Event): string {
  * starting a second scan.
  */
 export function openDiscoveryStream(query: DiscoveryQuery, handlers: DiscoveryHandlers): () => void {
-  const source = new EventSource(`/api/printers/discover?${discoveryQueryString(query)}`);
+  // A scan that chose nothing at all sends no query string rather than a bare
+  // `?`, which is what `printers discover` with no flags is.
+  const parameters = discoveryQueryString(query);
+  const source = new EventSource(parameters === "" ? "/api/printers/discover" : `/api/printers/discover?${parameters}`);
 
   listen<DiscoveryPrepared>(source, "prepared", handlers.onPrepared);
   listen<DiscoveredPrinter>(source, "printer", handlers.onPrinter);

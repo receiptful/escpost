@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
-import type { DiscoveredPrinter } from "../../api/types";
+import type { AddPrinterBody, DiscoveredPrinter } from "../../api/types";
 import { useAppData } from "../../app/data";
 import { AddPrinterDialog } from "./add-printer-dialog";
 import { DiscoveryPanel } from "./discovery-panel";
@@ -8,24 +8,17 @@ import { PrinterList } from "./printer-list";
 import { ScanOptions } from "./scan-options";
 
 // What `Discover printers` scans with before anyone opens the options panel:
-// the CLI's own no-flag behaviour — both transports, targets detected
-// automatically — at the shared layer's defaults, copied from
-// `printers::discover::http`'s `DEFAULT_PORT` and `DEFAULT_TIMEOUT_MS`. The
-// options panel reads the server's own values and replaces these as soon as
-// it starts a scan, so drift from the Rust constants costs at most one scan
-// at a stale port, never a divergence that outlives it.
-const DEFAULT_QUERY: DiscoveryQuery = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1_000 };
-
-// A printer registered from the results panel, paired with the name it was
-// registered under. Held by object identity, which is what makes it right:
-// the provider appends the object the stream delivered and never rebuilds it,
-// and a rescan replaces the whole array, so entries from a previous scan stop
-// matching on their own.
-type Registration = { printer: DiscoveredPrinter; name: string };
+// the CLI's own no-flag behaviour, both transports, targets detected
+// automatically. It names no port and no timeout because nobody has chosen
+// either, and the endpoint owns both defaults — a number restated here would
+// be invisible in the interface and would silently outlive the server's own.
+const DEFAULT_QUERY: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 
 export function PrintersPage() {
-  const { scan, startScan, cancelScan, refreshPrinters, flashPrinter } = useAppData();
+  const { scan, startScan, cancelScan, refreshPrinters, flashPrinter, markScanResultConfigured } = useAppData();
   const actions = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLUListElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState<DiscoveryQuery>(DEFAULT_QUERY);
   const [menuOpen, setMenuOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -34,65 +27,79 @@ export function PrintersPage() {
   // unmount cleanup, so dismissing it has to unmount it rather than blank a
   // field it is still reading.
   const [registering, setRegistering] = useState<{ printer: DiscoveredPrinter | null } | null>(null);
-  const [registered, setRegistered] = useState<Registration[]>([]);
+
+  // Dismissing the menu returns focus to the control that opened it, which is
+  // the other half of the contract `role="menu"` announces: a reader who
+  // opened it from the keyboard is not left with focus on a removed element.
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    setMenuOpen(false);
+    if (restoreFocus) {
+      toggle.current?.focus();
+    }
+  }, []);
 
   useEffect(() => {
     if (!menuOpen) {
       return;
     }
+    const items = () => Array.from(menu.current?.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]") ?? []);
+    // Focus moves into the menu on open, so the next arrow key has somewhere
+    // to move from and Escape has something to return.
+    items()[0]?.focus();
+
     const dismiss = (event: Event) => {
       if (!actions.current?.contains(event.target as Node)) {
-        setMenuOpen(false);
+        closeMenu(false);
       }
     };
-    const escape = (event: KeyboardEvent) => {
+    const navigate = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setMenuOpen(false);
+        event.preventDefault();
+        closeMenu(true);
+        return;
       }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+        return;
+      }
+      event.preventDefault();
+      const open = items();
+      const current = open.indexOf(document.activeElement as HTMLButtonElement);
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      // Wrapping in both directions, so the list has no dead end.
+      open[(current + step + open.length) % open.length]?.focus();
     };
     document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", navigate);
     return () => {
       document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("keydown", navigate);
     };
-  }, [menuOpen]);
+  }, [menuOpen, closeMenu]);
 
   // A scan is started from two places with the same settings: the split
   // button reuses the last ones, the options panel supplies new ones and they
   // become the last ones.
   const beginScan = (next: DiscoveryQuery) => {
     setQuery(next);
-    setRegistered([]);
     setMenuOpen(false);
     setOptionsOpen(false);
     startScan(next);
   };
 
-  const handleAdded = (name: string) => {
-    const added = registering?.printer ?? null;
+  const handleAdded = (name: string, connection: AddPrinterBody["connection"]) => {
     setRegistering(null);
-    if (added) {
-      setRegistered((current) => [...current, { printer: added, name }]);
-    }
+    // A registered result leaves the panel by becoming what it now is: a
+    // printer this machine has configured. The scan owns that fact, so a
+    // route change cannot undo it.
+    markScanResultConfigured(name, connection);
     // A printer that was just registered has no availability transition to
     // diff against — it is absent from the previous inventory and present in
     // the next — so the flash is raised here and the row it lands on carries
     // it from the moment the refresh renders it.
     flashPrinter(name, "found");
-    void refreshPrinters();
-  };
-
-  // A registered result leaves the panel by becoming what it now is: a
-  // printer this machine has configured. The panel already hides those and
-  // counts them, so the row disappears and the count line records the move
-  // without the panel needing a second notion of "added".
-  const panelScan = registered.length === 0 ? scan : {
-    ...scan,
-    printers: scan.printers.map((printer) => {
-      const entry = registered.find((candidate) => candidate.printer === printer);
-      return entry ? { ...printer, configured_names: [...printer.configured_names, entry.name] } : printer;
-    }),
+    // Forced, because the inventory poll that may be in flight was issued
+    // before this printer existed and cannot report it.
+    void refreshPrinters({ force: true });
   };
 
   return (
@@ -111,12 +118,19 @@ export function PrintersPage() {
             {scan.phase === "idle" ? "Discover printers" : "Rescan"}
           </button>
           <button
+            ref={toggle}
             type="button"
             class="btn btn-primary join-item"
             aria-label="Discovery options"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
+            onClick={() => {
+              // The menu and the options panel are anchored to the same
+              // corner, so one has to give way rather than render behind the
+              // other, open and invisible.
+              setOptionsOpen(false);
+              setMenuOpen((open) => !open);
+            }}
           >
             ▾
           </button>
@@ -127,7 +141,7 @@ export function PrintersPage() {
           // one target, and is hidden from the accessible name — which stays
           // the command — while `aria-describedby` still reads it out, since a
           // reference is followed into hidden content.
-          <ul role="menu" class="absolute right-0 top-full z-20 mt-2 w-72 rounded-box bg-base-100 p-1 shadow-lg">
+          <ul ref={menu} role="menu" class="absolute right-0 top-full z-20 mt-2 w-72 rounded-box bg-base-100 p-1 shadow-lg">
             <li role="none">
               <button
                 type="button"
@@ -177,7 +191,7 @@ export function PrintersPage() {
           scan is idle, and a heading or spacing box around it would leave an
           empty block above the inventory on first load. */}
       <DiscoveryPanel
-        scan={panelScan}
+        scan={scan}
         onAdd={(printer) => setRegistering({ printer })}
         onCancel={() => {
           // Cancel discards the results along with the sweep: `cancelScan`
@@ -187,7 +201,6 @@ export function PrintersPage() {
           // and the alternative — stopping but keeping a partial list — is a
           // state the CLI has no equivalent of.
           cancelScan();
-          setRegistered([]);
         }}
       />
 

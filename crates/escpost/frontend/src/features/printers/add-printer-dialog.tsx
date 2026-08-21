@@ -89,11 +89,15 @@ function deviceIdentity(printer: DiscoveredPrinter | null) {
  *
  * `onClose` must unmount the dialog — nothing here renders a closed one, and
  * the native element is closed in the unmount cleanup.
+ *
+ * `onAdded` receives the connection that was registered as well as the name,
+ * because the owner cannot reconstruct it: for a manual registration the host
+ * and port were typed here and exist nowhere else.
  */
 export function AddPrinterDialog({ printer, onClose, onAdded }: {
   printer: DiscoveredPrinter | null;
   onClose: () => void;
-  onAdded: (name: string) => void;
+  onAdded: (name: string, connection: AddPrinterBody["connection"]) => void;
 }) {
   const { printers, profiles, ensureProfiles } = useAppData();
   const connection = printer?.connection ?? null;
@@ -216,12 +220,15 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
     request.current = controller;
     setSubmitting(true);
     setFailure(null);
+    const submitted = body();
     try {
-      const response = await addPrinter(body(), controller.signal);
+      const response = await addPrinter(submitted, controller.signal);
       // The response's `warnings` carry the ambiguity advisory this dialog
       // has already shown, so there is nothing left to report; the owner
-      // takes it from here and unmounts the dialog.
-      onAdded(response.name);
+      // takes it from here and unmounts the dialog. It gets the connection
+      // that was saved, not the one it may have handed in: for a manual
+      // registration there was none.
+      onAdded(response.name, submitted.connection);
     } catch (error) {
       if (controller.signal.aborted) {
         return;

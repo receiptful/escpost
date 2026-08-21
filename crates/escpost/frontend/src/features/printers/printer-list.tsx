@@ -68,7 +68,7 @@ export function PrinterList() {
         </div>
         <div class="space-y-3 lg:hidden">
           {printerData.map((printer) => (
-            <article key={printer.name} class={`rounded-box bg-base-100 p-5 shadow-sm ${flashClass(printerFlashes, printer.name)}`}>
+            <article key={printer.name} class={["rounded-box bg-base-100 p-5 shadow-sm", flashClass(printerFlashes, printer.name)].join(" ").trim()}>
               <dl class="grid grid-cols-2 gap-3 text-sm">
                 <dt class="font-medium text-base-content/70">Name</dt><dd>{printer.name}</dd>
                 <dt class="font-medium text-base-content/70">Status</dt><dd>{titleCase(printer.availability)}</dd>

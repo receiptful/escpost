@@ -143,11 +143,12 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
   const running = scan.phase === "running";
   const grantable = scan.failures.some((failure) => failure.permission_denied && failure.can_grant_usb_permissions);
   const finished = completedAt(scan.finishedAt);
-  const summary = running
-    ? `${unconfigured.length} new so far`
-    : configuredCount > 0
-      ? `${unconfigured.length} new · ${configuredCount} already configured`
-      : `${unconfigured.length} new`;
+  // The already-configured half is stated while the sweep is still running
+  // too, because that is when a reader registers something: a printer added
+  // mid-scan leaves the results, and the count is the only place that says
+  // where it went.
+  const found = running ? `${unconfigured.length} new so far` : `${unconfigured.length} new`;
+  const summary = configuredCount > 0 ? `${found} · ${configuredCount} already configured` : found;
   // The scan line states probe counts, never networks or ports: the scan
   // state carries what the stream reported, and the stream reports progress
   // rather than the query that produced it.

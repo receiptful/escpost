@@ -100,7 +100,12 @@ describe("OverviewPage", () => {
     render(<AppDataProvider><OverviewPage /></AppDataProvider>);
     const path = await screen.findByText("/home/dev/.config/escpost/printers.toml");
 
-    // Beneath the grid rather than a fourth card, and informative only.
+    // The path says what it is, and says it in the spelling a path is read
+    // in; the line is muted, beneath the grid rather than a fourth card, and
+    // informative only.
+    expect(path.getAttribute("class")).toContain("font-mono");
+    expect(path.parentElement?.textContent).toBe("Configuration /home/dev/.config/escpost/printers.toml");
+    expect(path.parentElement?.getAttribute("class")).toContain("text-base-content/60");
     expect(path.closest("section[aria-label]")).toBeNull();
     expect(path.closest("a")).toBeNull();
   });
