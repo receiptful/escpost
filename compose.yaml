@@ -43,6 +43,46 @@ services:
       frontend-build:
         condition: service_completed_successfully
 
+  # A RAW TCP printer on a network of its own, so `printers discover` has
+  # something to find when no hardware is connected:
+  #
+  #   docker compose --profile dummy-printer up -d dummy-printer
+  #
+  # It deliberately does NOT use host networking, unlike every other service
+  # here. A scan never probes the scanning machine's own addresses, so a
+  # dummy printer sharing the host's network namespace would be excluded by
+  # design and could never be discovered. On a bridge of its own the host
+  # holds the gateway address and the printer holds another, which is the
+  # shape discovery expects of a real printer on a real segment.
+  dummy-printer:
+    image: escpost-development
+    build:
+      context: .
+      args:
+        USER_ID: 1000
+        GROUP_ID: 1000
+    profiles:
+      - dummy-printer
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - cargo-home:/home/developer/.cargo
+      - cargo-target:/home/developer/target
+    networks:
+      dummy-printer:
+        ipv4_address: 172.31.42.2
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        cargo build --quiet --locked --package escpost
+        exec "$${CARGO_TARGET_DIR}/debug/escpost" serve \
+          --listen 0.0.0.0:9100 \
+          --web-listen 127.0.0.1:9000 \
+          --non-interactive \
+          --no-open
+
   escpost:
     <<: *development-service
     depends_on:
@@ -94,6 +134,19 @@ services:
       - --web-listen
       - 127.0.0.1:9000
       - --no-open
+
+networks:
+  # Fixed subnet so the address the dummy printer answers on is stable, and
+  # narrow enough (/24) that an automatic scan will sweep it rather than skip
+  # it for being too large.
+  dummy-printer:
+    # A readable bridge name, so discovery reports the printer as reachable
+    # via `escpost-dummy` rather than via a generated hash nobody recognizes.
+    driver_opts:
+      com.docker.network.bridge.name: escpost-dummy
+    ipam:
+      config:
+        - subnet: 172.31.42.0/24
 
 volumes:
   cargo-home:

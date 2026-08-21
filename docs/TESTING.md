@@ -152,6 +152,32 @@ Fuzzing targets command framing and state-machine execution. A discovered
 failure becomes a permanent minimal regression case before the implementation
 is fixed.
 
+### Network discovery without hardware
+
+`printers discover` needs something on the network to find. A Compose profile
+provides a RAW TCP printer for that, so the scan can be exercised without a
+physical device:
+
+```sh
+docker compose --profile dummy-printer up -d dummy-printer
+docker compose run --rm test cargo run -p escpost -- printers discover --transport network
+```
+
+It answers on `172.31.42.2:9100` and reports as reachable via `escpost-dummy`.
+Stop it with `docker compose --profile dummy-printer down`.
+
+The service is the one place in `compose.yaml` that does not use host
+networking, and that is deliberate rather than incidental: a scan never probes
+the scanning machine's own addresses, so a listener sharing the host's network
+namespace is excluded by design and could never be discovered. Giving the
+printer a bridge of its own puts the host on the gateway address and the
+printer on another, which is the shape discovery expects of a real printer on
+a real segment. A scan of that subnet reports 253 addresses rather than 254,
+because the gateway is the scanning machine and is correctly left out.
+
+It is a real `escpost serve` listener, not a stub, so it also accepts jobs
+printed to it.
+
 ### Physical-printer calibration
 
 Hardware calibration sends either a focused case or the shared calibration
