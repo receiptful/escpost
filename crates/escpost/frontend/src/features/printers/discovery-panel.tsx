@@ -76,11 +76,14 @@ function completedAt(finishedAt: number | null) {
  * Only printers that are not yet configured become rows. Already-configured
  * hits are counted here and reported by flashing the row they already occupy
  * in the inventory below, which the application data provider drives.
+ *
+ * It renders into the `Discovery` section rather than owning one: the
+ * section's heading already names this, and its one button starts, stops and
+ * repeats the scan reported here.
  */
-export function DiscoveryPanel({ scan, onAdd, onCancel }: {
+export function DiscoveryPanel({ scan, onAdd }: {
   scan: ScanState;
   onAdd: (printer: DiscoveredPrinter) => void;
-  onCancel: () => void;
 }) {
   // Keys seen on the previous render, or `null` until the first one: a panel
   // that mounts onto a scan already in progress must not flash every row
@@ -157,14 +160,11 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
     : scan.total > 0 ? `Scanned ${scan.total.toLocaleString()} addresses` : "Scan complete";
 
   return (
-    <section aria-labelledby="discovery-heading" class="space-y-2">
-      <header class="flex items-center justify-between gap-3">
-        <h2 id="discovery-heading" class="font-medium">{running ? "Discovering printers" : "Discovered"}</h2>
-        {/* The live region is the count rather than the rows: a printer
-            arriving is announced once, as one more result, instead of a
-            screen reader narrating every fact of every row that lands. */}
-        <span aria-live="polite" class="text-sm text-base-content/70">{summary}</span>
-      </header>
+    <div class="space-y-2">
+      {/* The live region is the count rather than the rows: a printer
+          arriving is announced once, as one more result, instead of a screen
+          reader narrating every fact of every row that lands. */}
+      <p aria-live="polite" class="text-right text-sm text-base-content/70">{summary}</p>
 
       <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
         <div class="space-y-2 px-4 py-3 text-sm">
@@ -178,14 +178,6 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
           </div>
           {scan.total > 0 && (
             <progress class="progress progress-primary w-full" value={scan.completed} max={scan.total} aria-label="Scan progress" />
-          )}
-          {running && (
-            <div class="flex justify-end">
-              {/* 508 hosts at a second each is minutes of sweeping; the
-                  terminal answers that with Ctrl-C, and closing the stream is
-                  this interface's version of it. */}
-              <button type="button" class="btn btn-sm" onClick={onCancel}>Cancel</button>
-            </div>
           )}
         </div>
 
@@ -258,6 +250,6 @@ export function DiscoveryPanel({ scan, onAdd, onCancel }: {
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }

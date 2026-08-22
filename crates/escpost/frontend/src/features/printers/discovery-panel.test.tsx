@@ -61,12 +61,17 @@ function usbFailure(overrides: Partial<UsbDiscoveryFailure> = {}): UsbDiscoveryF
 
 function renderPanel(scan: Partial<ScanState>) {
   const onAdd = jest.fn();
-  const onCancel = jest.fn();
-  const view = render(<DiscoveryPanel scan={{ ...idle, ...scan }} onAdd={onAdd} onCancel={onCancel} />);
+  const view = render(<DiscoveryPanel scan={{ ...idle, ...scan }} onAdd={onAdd} />);
   const rerender = (next: Partial<ScanState>) => {
-    view.rerender(<DiscoveryPanel scan={{ ...idle, ...next }} onAdd={onAdd} onCancel={onCancel} />);
+    view.rerender(<DiscoveryPanel scan={{ ...idle, ...next }} onAdd={onAdd} />);
   };
-  return { view, onAdd, onCancel, rerender };
+  return { view, onAdd, rerender };
+}
+
+// Absence as a boolean. `expect(node).toBeNull()` prints the entire happy-dom
+// node graph when it fails, which buries every other failure in the run.
+function gone(element: Element | null) {
+  return element === null;
 }
 
 afterEach(() => {
@@ -94,15 +99,18 @@ describe("DiscoveryPanel", () => {
     // Returning to the page has to say when these results were observed:
     // they are a snapshot of the world, not live state.
     expect(screen.getByText(/^Completed /)).toBeTruthy();
-    // Cancelling a finished scan would throw the results away — the provider
-    // resets the whole scan — so a finished scan offers no Cancel at all.
-    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    // No heading and no scan button of its own: the section this renders into
+    // is titled `Discovery` and carries the one button that starts, repeats
+    // and cancels a scan. A second title here would name the same block
+    // twice.
+    expect(gone(screen.queryByRole("heading", { level: 2 }))).toBe(true);
+    expect(gone(screen.queryByRole("button", { name: "Cancel" }))).toBe(true);
   });
 
   // USB enumeration finishes long before the sweep does, so the panel has to
   // be right in the middle of a scan, not only at the end of one.
   test("lists USB results while the network sweep is still running", () => {
-    const { onCancel } = renderPanel({
+    renderPanel({
       phase: "running",
       completed: 312,
       total: 508,
@@ -121,9 +129,6 @@ describe("DiscoveryPanel", () => {
     expect(titles).toEqual(["POS-58 Printer", "10.42.0.83:9100"]);
     expect(screen.getByText("USB 0416:5011 · bus 003 addr 007 · no serial · interface 0 · out 0x01")).toBeTruthy();
     expect(screen.getByText("Network · reachable via enx0")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   // Fixing USB permissions genuinely requires a terminal, so naming the
@@ -171,8 +176,8 @@ describe("DiscoveryPanel", () => {
   });
 
   // A USB failure is tolerated, not fatal: the sweep underneath keeps going,
-  // and a panel that drops its progress bar and its Cancel button the moment
-  // a device is refused would look finished while probing 500 more hosts.
+  // and a panel that drops its progress bar the moment a device is refused
+  // would look finished while probing 500 more hosts.
   test("keeps a running scan running through USB failures", () => {
     renderPanel({
       phase: "running",
@@ -185,7 +190,6 @@ describe("DiscoveryPanel", () => {
     expect(screen.getByText("Could not open USB device 04b8:0202: permission denied (errno 13).")).toBeTruthy();
     expect(screen.getByText("Could not open USB device 04b8:0203: permission denied (errno 13).")).toBeTruthy();
     expect((screen.getByRole("progressbar") as HTMLProgressElement).value).toBe(100);
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
   // Two of the same model refused at two addresses report identical facts,

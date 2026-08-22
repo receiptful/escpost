@@ -175,8 +175,8 @@ function checkbox(label: string) {
   return screen.getByLabelText(label) as HTMLInputElement;
 }
 
-function openMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "Discovery options" }));
+function addManually() {
+  fireEvent.click(screen.getByRole("button", { name: "Add network printer manually" }));
 }
 
 function expandOptions() {
@@ -190,10 +190,10 @@ function statedScope() {
   return document.getElementById("scan-options-scope")?.textContent;
 }
 
-// The header scans with the scope the discovery panel states, and the panel
-// can only state one once it knows this machine's networks — so pressing the
-// header means waiting for it to stand for something first.
-async function discover(name: "Discover printers" | "Rescan") {
+// The section's one button scans with the scope the options state, and they
+// can only state one once the machine's networks are known — so pressing it
+// means waiting for it to stand for something first.
+async function scan(name: "Scan" | "Rescan") {
   const button = await screen.findByRole("button", { name });
   await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
   await act(async () => { fireEvent.click(button); });
@@ -265,42 +265,59 @@ describe("PrintersPage", () => {
     expect(screen.getAllByText("10.0.0.8:9100")).toHaveLength(2);
   });
 
-  // Scan options is a section of the page now, not a menu entry and not a
-  // popover: an idle page shows the discovery block with the options shut,
-  // and the menu is left holding only the escape hatch.
-  test("the header offers discovery and manual add, with the scan options inline and shut", async () => {
+  // One section, one heading, and no action row above it: discovery is the
+  // block, and everything that acts on it sits in that block's header.
+  test("the discovery section header carries scanning and manual add, with the options shut", async () => {
     renderPage(fetchStub());
-    expect(await screen.findByText("USB · 2 networks · port 9100")).toBeTruthy();
+    expect(await screen.findByText("USB · 2 networks · 507 probes")).toBeTruthy();
 
-    expect(screen.getByRole("button", { name: "Discover printers" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Discovery" })).toBeTruthy();
+    expect(screen.getAllByRole("heading", { name: "Discovery" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Scan" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add network printer manually" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("false");
 
-    openMenu();
-    expect(gone(screen.queryByRole("menuitem", { name: "Scan options…" }))).toBe(true);
-    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
-    expect(screen.getByRole("menuitem", { name: "Add network printer manually" })).toBeTruthy();
+    // Nothing that looks like a menu is left, and the form has no second
+    // button to disagree with the one above it.
+    expect(gone(screen.queryByRole("button", { name: "Discovery options" }))).toBe(true);
+    expect(gone(screen.queryByRole("menuitem"))).toBe(true);
+    expect(gone(screen.queryByRole("button", { name: "Start scan" }))).toBe(true);
     expect(gone(screen.queryByRole("button", { name: "Refresh" }))).toBe(true);
   });
 
-  test("Discover printers scans with the scope the options state, and Cancel discards the scan", async () => {
+  // One slot, three jobs: start, stop, repeat. A separate Cancel down in the
+  // progress line would be a second place to look for the same scan.
+  test("the one scan button becomes Cancel while scanning and Rescan afterwards", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());
 
     // Both transports and every network, which is the CLI's no-flag scope,
-    // with the port and timeout the panel asked the server for and is
-    // showing — the same query `Start scan` would send.
-    await discover("Discover printers");
+    // with the port and timeout the panel asked the server for.
+    await scan("Scan");
     expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9100&timeout=1000"]);
-    expect(screen.getByRole("heading", { name: "Discovering printers" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
+    expect(gone(screen.queryByRole("button", { name: "Scan" }))).toBe(true);
+    expect(gone(screen.queryByRole("button", { name: "Rescan" }))).toBe(true);
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
-    expect(gone(screen.queryByRole("heading", { name: "Discovering printers" }))).toBe(true);
-    expect(screen.getByRole("button", { name: "Discover printers" })).toBeTruthy();
+    await act(async () => { stream().emit("printer", discovered()); });
+    expect(screen.getByRole("button", { name: "Add 10.0.5.20:9100" })).toBeTruthy();
+
+    await act(async () => { stream().emit("completed", {}); });
+    expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
+    expect(gone(screen.queryByRole("button", { name: "Cancel" }))).toBe(true);
   });
 
-  test("Scan options starts the scan it configured, and the next scan reuses those settings", async () => {
+  test("Cancel discards the scan and hands the slot back to Scan", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(fetchStub());
+
+    await scan("Scan");
+    expect(screen.getByText("Scanning for printers…")).toBeTruthy();
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
+    expect(gone(screen.queryByText("Scanning for printers…"))).toBe(true);
+    expect(screen.getByRole("button", { name: "Scan" })).toBeTruthy();
+  });
+
+  test("scanning shuts the options, and the next scan reuses the settings it was configured with", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());
     await act(async () => {});
@@ -309,38 +326,58 @@ describe("PrintersPage", () => {
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+    await scan("Scan");
     expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9101&timeout=1000"]);
     expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("false");
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rescan" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
+    await scan("Scan");
     expect(FakeEventSource.urls[1]).toBe("/api/printers/discover?port=9101&timeout=1000");
   });
 
-  // The line under `Discovery` is the only place an idle page says what a
-  // scan will cover, so the header may not scan something else — including
-  // when the options have been changed and never started.
-  test("the header scans the scope the options state, and refuses when they state none", async () => {
+  // The line under `Discovery` is the only place the page says what a scan
+  // will cover and cost, so the button may not scan something else —
+  // including a change made in the options and never started.
+  test("the scan button sends the scope the options state, and is refused when they state none", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());
     await act(async () => {});
 
     expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
-    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
-    expect(screen.getByText("USB · 2 networks · port 9101")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    expect(statedScope()).toBe("USB · 1 of 2 networks · 253 probes");
 
-    await discover("Discover printers");
-    expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9101&timeout=1000"]);
+    await scan("Scan");
+    expect(FakeEventSource.urls).toEqual(["/api/printers/discover?subnet=10.42.0.0%2F24&port=9100&timeout=1000"]);
 
-    // Nothing left to scan refuses in both places at once, or the header
-    // would run a sweep the panel is refusing to start. The form is still
-    // open: the header does not reach into it, only its own footer does.
+    // Nothing left to scan leaves nothing to press: the only button that
+    // starts a scan is refused exactly when the options name no scan.
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
+    expandOptions();
     fireEvent.click(screen.getByLabelText("Network"));
     fireEvent.click(screen.getByLabelText("USB"));
     expect(statedScope()).toBe("Nothing to scan");
-    expect(screen.getByRole("button", { name: "Start scan" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("button", { name: "Rescan" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Scan" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  // A dead button with no visible reason is the failure this replaces: the
+  // options open themselves so the refusal, its cause and its remedy arrive
+  // together.
+  test("a failed network detection refuses the scan and opens its own reason", async () => {
+    renderPage(((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/printers/discover/networks") {
+        return Promise.resolve(json({ error: { code: "network_detection_failed", message: "Unable to detect this machine's networks." } }, 500));
+      }
+      return Promise.resolve(shared(url) ?? json({ printers: [] }));
+    }) as typeof globalThis.fetch);
+
+    expect(await screen.findByText("Unable to detect this machine's networks.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("true");
+    expect(statedScope()).toBe("USB · networks unavailable");
+    expect(screen.getByRole("button", { name: "Scan" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
   test("a manually registered printer lands in the inventory with the found highlight", async () => {
@@ -364,8 +401,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     expect(await screen.findByText("No printers configured.")).toBeTruthy();
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Add network printer manually" }));
+    addManually();
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
     fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
@@ -396,7 +432,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await discover("Discover printers");
+    await scan("Scan");
     await act(async () => { stream().emit("printer", discovered()); });
     expect(screen.getByText("1 new so far")).toBeTruthy();
 
@@ -430,7 +466,7 @@ describe("PrintersPage", () => {
     render(<AppDataProvider><Navigable /></AppDataProvider>);
     await act(async () => {});
 
-    await discover("Discover printers");
+    await scan("Scan");
     await act(async () => { stream().emit("printer", discovered()); });
     fireEvent.click(screen.getByRole("button", { name: "Add 10.0.5.20:9100" }));
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
@@ -456,21 +492,24 @@ describe("PrintersPage", () => {
     expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+    await scan("Scan");
     const narrowed = "/api/printers/discover?subnet=10.42.0.0%2F24&port=9100&timeout=1000";
     expect(FakeEventSource.urls).toEqual([narrowed]);
+    // Finished before the detour, so the slot holds `Rescan` rather than the
+    // `Cancel` a running scan puts there.
+    await act(async () => { stream().emit("completed", {}); });
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
 
     // The line the page comes back showing is the narrowed scope, and
     // `Rescan` sends exactly it.
-    expect(await screen.findByText("USB · 1 of 2 networks · port 9100")).toBeTruthy();
-    await discover("Rescan");
+    expect(await screen.findByText("USB · 1 of 2 networks · 253 probes")).toBeTruthy();
+    await scan("Rescan");
     expect(FakeEventSource.urls[1]).toBe(narrowed);
   });
 
-  test("the scan options panel reopens showing the scope the last scan ran with", async () => {
+  test("the scan options reopen showing the scope the last scan ran with", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());
     await act(async () => {});
@@ -479,16 +518,16 @@ describe("PrintersPage", () => {
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
     fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+    await scan("Scan");
 
-    // The panel is where a reader goes to answer "what will Rescan do?", so
+    // The form is where a reader goes to answer "what will Rescan do?", so
     // it may not answer with the default when the last scan was narrowed.
     expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     expect(checkbox("10.42.0.0/24").checked).toBe(true);
     expect(checkbox("192.168.1.0/24").checked).toBe(false);
     expect((screen.getByLabelText("RAW TCP port") as HTMLInputElement).value).toBe("9101");
-    expect(screen.getByText("253 probes")).toBeTruthy();
+    expect(statedScope()).toBe("USB · 1 of 2 networks · 253 probes");
   });
 
   // The panel detects the networks once per mount, so this is the case a
@@ -515,7 +554,7 @@ describe("PrintersPage", () => {
     expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
+    await scan("Scan");
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
@@ -542,14 +581,13 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await discover("Discover printers");
+    await scan("Scan");
     await act(async () => {
       stream().emit("printer", discovered());
       stream().emit("printer", discovered({ connection: { type: "network", host: "10.0.5.21", port: 9100 } }));
     });
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Add network printer manually" }));
+    addManually();
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
     fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
@@ -576,7 +614,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await discover("Discover printers");
+    await scan("Scan");
     await act(async () => { stream().emit("printer", discoveredUsb()); });
 
     fireEvent.click(screen.getByRole("button", { name: "Add POS-58 Printer" }));
@@ -604,7 +642,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await discover("Discover printers");
+    await scan("Scan");
     await act(async () => {
       stream().emit("printer", discoveredUsb());
       // Same vendor, product, interface and (absent) serial: only the port it
@@ -634,7 +672,7 @@ describe("PrintersPage", () => {
     }));
     expect(await screen.findAllByText("kitchen")).toHaveLength(2);
 
-    await discover("Discover printers");
+    await scan("Scan");
     await act(async () => {
       stream().emit("printer", discovered({
         configured_names: ["kitchen"],
@@ -681,8 +719,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Add network printer manually" }));
+    addManually();
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
     fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.5.20" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
@@ -693,46 +730,6 @@ describe("PrintersPage", () => {
     // empty; the printer can only appear through a request issued after it.
     await expectFlash("warehouse", "printer-row-found");
     expect(listCalls).toBe(2);
-  });
-
-  // One item is still a menu, and an arrow key in a one-item menu has
-  // nowhere to go but the item it is on.
-  test("the discovery menu holds focus, survives the arrow keys, and hands it back on Escape", async () => {
-    renderPage(fetchStub());
-    await act(async () => {});
-
-    openMenu();
-    const items = screen.getAllByRole("menuitem");
-    // By index rather than by node, so a failure reports a number instead of
-    // printing an entire DOM element.
-    const focused = () => items.indexOf(document.activeElement as HTMLButtonElement);
-    expect(focused()).toBe(0);
-
-    fireEvent.keyDown(document, { key: "ArrowDown" });
-    expect(focused()).toBe(0);
-    fireEvent.keyDown(document, { key: "ArrowUp" });
-    expect(focused()).toBe(0);
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(gone(screen.queryByRole("menuitem"))).toBe(true);
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Discovery options");
-  });
-
-  test("a pointer press outside the menu closes it, and leaves the scan options alone", async () => {
-    renderPage(fetchStub());
-    await act(async () => {});
-
-    // The options are part of the page now rather than a second thing
-    // anchored to the same corner, so opening the menu cannot displace them.
-    expandOptions();
-    expect(await screen.findByLabelText("Custom network")).toBeTruthy();
-
-    openMenu();
-    expect(screen.getByLabelText("Custom network")).toBeTruthy();
-
-    fireEvent.pointerDown(document.body);
-    expect(gone(screen.queryByRole("menuitem"))).toBe(true);
-    expect(screen.getByLabelText("Custom network")).toBeTruthy();
   });
 
   test("a printer that has just become unavailable carries the lost highlight", async () => {

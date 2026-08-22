@@ -31,7 +31,7 @@ function prefixOf(subnet: string) {
 // to leave out (RFC 3021). It is an upper bound rather than the exact figure
 // the scan reports: the server also excludes its own addresses, which it can
 // only do once it knows which of them fall inside the subnet. Drift from the
-// Rust definition shows up as a wrong footer number, never a wrong scan.
+// Rust definition shows up as a wrong probe count, never a wrong scan.
 function hostsIn(subnet: string) {
   const prefix = prefixOf(subnet);
   const addresses = 2 ** (32 - prefix);
@@ -46,7 +46,7 @@ function notCidr(value: string) {
 // scannable subnets. A field holding nothing but separators is invalid rather
 // than empty: reading it as empty would hand the query back to the known
 // networks the user is no longer looking at, and reading it as a valid empty
-// selection would ship automatic mode under a footer promising no probes.
+// selection would ship automatic mode under a line promising no probes.
 function customIssue(text: string, entries: string[]) {
   if (entries.length === 0) {
     return notCidr(text.trim());
@@ -84,30 +84,31 @@ function countOf(count: number, noun: string) {
 }
 
 /**
- * The scan scope, as controls, in the page rather than over it: a collapsed
- * row that states the scope in one line, and the form itself behind its
- * disclosure. `query` is the scope the last scan ran with — the provider's
+ * The scan scope, as controls, in the page rather than over it: a disclosure
+ * row that states the scope and its cost in one line, and the form itself
+ * behind it. `query` is the scope the last scan ran with — the provider's
  * `scanQuery`, which is the CLI's no-flag default until a scan has been
  * configured — and the controls are seeded from it, so the line and the form
  * are two views of the same thing.
  *
- * `onScopeChange` reports what those controls currently amount to, or `null`
- * when they amount to no scan at all. The page starts scans with exactly
- * that, which is what keeps `Discover printers` and `Start scan` from being
- * two answers to the same question.
+ * This panel starts nothing. `onScopeChange` reports what its controls
+ * amount to, or `null` when they amount to no scan at all, and the section's
+ * one scan button sends exactly that — so there is no second button here to
+ * disagree with it.
+ *
+ * `open` belongs to the page for the same reason: starting a scan shuts the
+ * form, and scans start outside it.
  *
  * The networks are fetched once per mount, and again on Reset: adapters
  * change with a cable or a VPN, so the server stays the authority on which
  * networks exist while `query` says which of them were chosen.
  */
-export function ScanOptions({ query, onStart, onScopeChange }: {
+export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
   query: DiscoveryQuery;
-  onStart: (query: DiscoveryQuery) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onScopeChange: (scope: DiscoveryQuery | null) => void;
 }) {
-  // Shut on arrival, so an idle page is one line about discovery rather than
-  // a form nobody asked for above the printers they came to see.
-  const [open, setOpen] = useState(false);
   const [resource, setResource] = useState<NetworksResource>({ data: null, error: null });
   const [reloads, setReloads] = useState(0);
   const [usb, setUsb] = useState(true);
@@ -138,7 +139,7 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
   // retype it — rather than disappearing from the selection. And because a
   // custom entry disables the known list outright, the whole selection moves
   // there as soon as any part of it must: splitting it would leave the
-  // checked half out of the query the footer is promising.
+  // checked half out of the query the line is promising.
   const seed = (data: DiscoveryNetworksResponse) => {
     const scope = requested.current;
     setUsb(scope.usb);
@@ -210,11 +211,11 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
   // restate that. With no known network at all it is vacuously
   // true, which would send an automatic scan the server has nothing to
   // resolve; that stays unreachable because `networkSelected` below already
-  // requires a checked network, and gates Start — so anything loosening
-  // either of those must revisit this.
+  // requires a checked network, and is what refuses the scan button — so
+  // anything loosening either of those must revisit this.
   const automatic = checked.length === known.length;
   const selected = customActive ? customEntries : automatic ? [] : checked.map((entry) => entry.subnet);
-  // The footer only ever states this while `networkSelected` holds, which for
+  // The line only ever states this while `networkSelected` holds, which for
   // a custom field means every entry passed `customIssue` — so no refused
   // subnet can inflate the count. The shape filter is here to keep a
   // malformed entry's `NaN` out of the arithmetic, not to correct the total.
@@ -227,17 +228,9 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
     && (usb || network)
     && (!network || (networkSelected && portValid && timeoutValid));
 
-  const footer = resource.error
-    ? "Networks unavailable"
-    : !data
-      ? "Counting…"
-      : !network
-        ? usb ? "USB only · no network probes" : "Nothing to scan"
-        : networkSelected ? `${probes.toLocaleString()} probes` : "No networks selected";
-
-  // The networks half of the collapsed line. Every branch names the scope
-  // rather than a count of probes: the footer below already has the cost, and
-  // this line has to survive being the only thing on screen.
+  // The networks half of the disclosure line, which is the only place the
+  // scope is stated while the form is shut — and the form is shut by
+  // default.
   //
   // One custom network is worth naming; several are only worth counting,
   // since the line has one row and a list of CIDRs has no end.
@@ -254,21 +247,25 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
           ? "no networks selected"
           : automatic ? countOf(known.length, "network") : `${checked.length} of ${known.length} networks`;
 
-  // What a scan started right now would cover, in one line. It is derived
-  // from the controls rather than from the recorded scope, because the
-  // controls are what both `Start scan` and the page's `Discover printers`
-  // build their query from — a second reading of the scope here is exactly
-  // how the displayed sweep and the performed one come apart.
+  // What a scan started right now would cover and what it would cost, in one
+  // line. The probe count is here rather than beside a start button because
+  // there is no start button here any more: the section's own button is what
+  // commits to this number, and both interfaces owe the reader that number
+  // before the sweep begins.
+  //
+  // The port is not in the line. It is one field of a form that is one click
+  // away, and a line that outgrows its row states nothing at all.
+  const cost = networkSelected && data ? `${probes.toLocaleString()} probes` : "";
   const scopeSummary = !usb && !network
     ? "Nothing to scan"
     : !network
-      ? "USB only"
-      : [usb ? "USB" : "", networkScope, data ? `port ${portText}` : ""].filter((part) => part.length > 0).join(" · ");
+      ? "USB only · no network probes"
+      : [usb ? "USB" : "", networkScope, cost].filter((part) => part.length > 0).join(" · ");
 
   // The scope those controls state, or `null` while they state none: still
   // counting, a failed detection, or a contradiction such as a checked
-  // Network with no network behind it. Both ways of starting a scan send
-  // this, and both refuse while it is `null`.
+  // Network with no network behind it. The section's scan button sends this
+  // and is refused while it is `null`.
   //
   // The port and timeout travel even when Network is unchecked, because the
   // fields keep their values while disabled; `discoveryQueryString` drops
@@ -326,17 +323,19 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
     setReloads((count) => count + 1);
   };
 
-  const start = () => {
-    if (scope === null) {
-      return;
+  // A failed detection refuses the only button that starts a scan, so the
+  // form opens itself to put the reason and its Retry in front of the reader
+  // rather than behind a disclosure they have no reason to open. Once, on
+  // the failure — reopening a form the reader has since shut would be the
+  // panel arguing with them.
+  const expand = useRef(onOpenChange);
+  expand.current = onOpenChange;
+  const failed = resource.error !== null;
+  useEffect(() => {
+    if (failed) {
+      expand.current(true);
     }
-    // Shut on the way out: this button is inside the form, so pressing it is
-    // done with the form, and the progress and results it just started need
-    // the room. The page's own `Discover printers` is not inside it and
-    // leaves the page as the reader arranged it.
-    setOpen(false);
-    onStart(scope);
-  };
+  }, [failed]);
 
   return (
     <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
@@ -350,7 +349,7 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
         aria-expanded={open}
         aria-controls="scan-options-form"
         aria-describedby="scan-options-scope"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => onOpenChange(!open)}
       >
         <span aria-hidden="true" class="text-xs text-base-content/60">{open ? "▾" : "▸"}</span>
         <span class="font-medium">Scan options</span>
@@ -478,12 +477,11 @@ export function ScanOptions({ query, onStart, onScopeChange }: {
           </fieldset>
         </div>
 
-        <footer class="flex items-center justify-between gap-3 border-t border-base-300 px-4 py-3">
-          <span class="text-sm text-base-content/70">{footer}</span>
-          <span class="flex gap-2">
-            <button type="button" class="btn btn-sm" onClick={reset}>Reset</button>
-            <button type="button" class="btn btn-primary btn-sm" disabled={!startable} onClick={start}>Start scan</button>
-          </span>
+        {/* Reset alone: the probe count moved to the line above, where it is
+            readable without opening anything, and starting a scan belongs to
+            the section header. */}
+        <footer class="flex justify-end border-t border-base-300 px-4 py-3">
+          <button type="button" class="btn btn-sm" onClick={reset}>Reset</button>
         </footer>
         </div>
       )}
