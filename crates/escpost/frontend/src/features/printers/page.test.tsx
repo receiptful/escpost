@@ -176,11 +176,25 @@ function checkbox(label: string) {
 }
 
 function addManually() {
-  fireEvent.click(screen.getByRole("button", { name: "Add network printer manually" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add IP printer manually" }));
 }
 
 function expandOptions() {
   fireEvent.click(screen.getByRole("button", { name: "Scan options" }));
+}
+
+// Whether two controls share the one bar under the accordion, and whether one
+// control follows another in the document. Both answer with a boolean, so a
+// failure prints a word instead of the entire page.
+function sameBar(one: string, other: string) {
+  const bar = (name: string) => screen.getByRole("button", { name }).closest("footer");
+  return bar(one) !== null && bar(one) === bar(other);
+}
+
+function below(first: string, second: string) {
+  const position = screen.getByRole("button", { name: first })
+    .compareDocumentPosition(screen.getByRole("button", { name: second }));
+  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
 // The scope line under `Discovery`, read through the element the disclosure
@@ -265,19 +279,27 @@ describe("PrintersPage", () => {
     expect(screen.getAllByText("10.0.0.8:9100")).toHaveLength(2);
   });
 
-  // One section, one heading, and no action row above it: discovery is the
-  // block, and everything that acts on it sits in that block's header.
-  test("the discovery section header carries scanning and manual add, with the options shut", async () => {
+  // Two named blocks, both named after printers rather than one after an
+  // activity, and every control that acts on discovery in one bar under its
+  // accordion.
+  test("the page reads as Printer Discovery and Configured Printers, with one bar of controls", async () => {
     renderPage(fetchStub());
     expect(await screen.findByText("USB · 2 networks · 507 probes")).toBeTruthy();
 
-    expect(screen.getAllByRole("heading", { name: "Discovery" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Scan" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Add network printer manually" })).toBeTruthy();
+    expect(screen.getAllByRole("heading", { name: "Printer Discovery" })).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { name: "Configured Printers" })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("false");
 
+    // The bar is one row: Reset on the left, the two actions on the right —
+    // and it is there with the form shut, because resetting the scope is
+    // meaningful whether or not the fields are on screen.
+    expect(sameBar("Reset", "Add IP printer manually")).toBe(true);
+    expect(sameBar("Reset", "Scan")).toBe(true);
+    // Below the accordion, not above it: the title row holds the title.
+    expect(below("Scan options", "Scan")).toBe(true);
+
     // Nothing that looks like a menu is left, and the form has no second
-    // button to disagree with the one above it.
+    // button to disagree with the one in the bar.
     expect(gone(screen.queryByRole("button", { name: "Discovery options" }))).toBe(true);
     expect(gone(screen.queryByRole("menuitem"))).toBe(true);
     expect(gone(screen.queryByRole("button", { name: "Start scan" }))).toBe(true);
@@ -355,8 +377,8 @@ describe("PrintersPage", () => {
     // starts a scan is refused exactly when the options name no scan.
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
     expandOptions();
-    fireEvent.click(screen.getByLabelText("Network"));
-    fireEvent.click(screen.getByLabelText("USB"));
+    fireEvent.click(screen.getByLabelText("Network (IP) Printers"));
+    fireEvent.click(screen.getByLabelText("USB Printers"));
     expect(statedScope()).toBe("Nothing to scan");
     expect(screen.getByRole("button", { name: "Scan" }).hasAttribute("disabled")).toBe(true);
   });
@@ -407,7 +429,7 @@ describe("PrintersPage", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
 
     await expectFlash("warehouse", "printer-row-found");
-    expect(gone(screen.queryByRole("heading", { name: "Add network printer" }))).toBe(true);
+    expect(gone(screen.queryByRole("heading", { name: "Add IP printer" }))).toBe(true);
   });
 
   test("registering a discovered printer moves it out of the results and into the count", async () => {

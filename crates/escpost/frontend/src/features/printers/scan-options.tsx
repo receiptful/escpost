@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { getDiscoveryNetworks } from "../../api/client";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
@@ -71,6 +72,19 @@ function skippedExplanation(adapter: SkippedNetwork) {
   return adapter.reason === "too_large" && adapter.subnet ? `${adapter.description}, add it as a custom network` : adapter.description;
 }
 
+// The one treatment every field label in this panel shares. Sentence case,
+// deliberately: the capitals used to come from `uppercase`, and the only
+// capitals left are the ones the words are actually spelled with.
+const FIELD_LABEL = "text-xs font-medium text-base-content/60";
+
+// A disabled checkbox has to stay visible: it is what says this network
+// exists and is deliberately unavailable, which is the whole reason a skipped
+// adapter is listed rather than dropped. daisyUI fades a disabled box to
+// near-nothing, so the fade is overridden and the box keeps an explicit
+// outline instead — still disabled, still `not-allowed`, just legible. The
+// row dims its text rather than itself, so nothing dims the control twice.
+const CHECKBOX = "checkbox checkbox-xs border-base-content/40 disabled:opacity-100";
+
 // Slashes and dots are legal in an id but hostile to anything that resolves
 // one as a selector, so a subnet becomes an id the plain way.
 function checkboxId(value: string) {
@@ -97,17 +111,21 @@ function countOf(count: number, noun: string) {
  * disagree with it.
  *
  * `open` belongs to the page for the same reason: starting a scan shuts the
- * form, and scans start outside it.
+ * form, and scans start outside it. So do `actions` — the bar along the
+ * bottom is this panel's, the buttons the page puts in it are the page's, and
+ * the bar stays whether the form is open or shut because everything in it
+ * acts on the scope the line states rather than on the fields.
  *
  * The networks are fetched once per mount, and again on Reset: adapters
  * change with a cable or a VPN, so the server stays the authority on which
  * networks exist while `query` says which of them were chosen.
  */
-export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
+export function ScanOptions({ query, open, onOpenChange, onScopeChange, actions }: {
   query: DiscoveryQuery;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onScopeChange: (scope: DiscoveryQuery | null) => void;
+  actions: ComponentChildren;
 }) {
   const [resource, setResource] = useState<NetworksResource>({ data: null, error: null });
   const [reloads, setReloads] = useState(0);
@@ -362,19 +380,19 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
           <fieldset class={`rounded-box border border-base-300 px-3 pb-3 ${usb ? "" : "opacity-60"}`}>
             <legend class="flex items-center gap-2 px-1">
               <input id="scan-usb" type="checkbox" class="checkbox checkbox-xs" checked={usb} onChange={(event) => setUsb(event.currentTarget.checked)} />
-              <label for="scan-usb" class="text-sm font-medium">USB</label>
+              <label for="scan-usb" class="text-sm font-medium">USB Printers</label>
             </legend>
-            <p class="text-xs text-base-content/60">Connected USB printers are discovered automatically. No options.</p>
+            <p class="text-xs text-base-content/60">Connected USB printers are discovered automatically.</p>
           </fieldset>
 
           <fieldset class={`space-y-3 rounded-box border border-base-300 px-3 pb-3 ${network ? "" : "opacity-60"}`}>
             <legend class="flex items-center gap-2 px-1">
               <input id="scan-network" type="checkbox" class="checkbox checkbox-xs" checked={network} onChange={(event) => setNetwork(event.currentTarget.checked)} />
-              <label for="scan-network" class="text-sm font-medium">Network</label>
+              <label for="scan-network" class="text-sm font-medium">Network (IP) Printers</label>
             </legend>
 
             <div class="space-y-1">
-              <p class="text-xs font-medium uppercase tracking-wide text-base-content/60">Known networks</p>
+              <p class={FIELD_LABEL}>Known networks</p>
               {resource.error ? (
                 <div role="alert" class="alert alert-warning alert-soft text-xs">
                   <span>{resource.error.message}</span>
@@ -391,7 +409,7 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
                       <input
                         id={checkboxId(entry.subnet)}
                         type="checkbox"
-                        class="checkbox checkbox-xs"
+                        class={CHECKBOX}
                         checked={!unchecked.includes(entry.subnet)}
                         disabled={!network || customActive}
                         onChange={() => toggleKnown(entry.subnet)}
@@ -406,9 +424,9 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
                       two too-large addresses on one interface arrive as two
                       rows and only the position tells them apart. */}
                   {data.skipped.map((entry, index) => (
-                    <div key={checkboxId(`skipped-${index}`)} class="flex items-center gap-2 opacity-60">
-                      <input id={checkboxId(`skipped-${index}`)} type="checkbox" class="checkbox checkbox-xs" checked={false} disabled />
-                      <label for={checkboxId(`skipped-${index}`)} class="font-mono text-sm">{entry.subnet ?? entry.interface}</label>
+                    <div key={checkboxId(`skipped-${index}`)} class="flex items-center gap-2">
+                      <input id={checkboxId(`skipped-${index}`)} type="checkbox" class={CHECKBOX} checked={false} disabled />
+                      <label for={checkboxId(`skipped-${index}`)} class="font-mono text-sm text-base-content/60">{entry.subnet ?? entry.interface}</label>
                       <span class="text-xs text-base-content/60">{skippedExplanation(entry)}</span>
                     </div>
                   ))}
@@ -421,7 +439,7 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
             </div>
 
             <div class="space-y-1">
-              <label class="text-xs font-medium uppercase tracking-wide text-base-content/60" for="scan-custom">Custom network</label>
+              <label class={FIELD_LABEL} for="scan-custom">Custom network</label>
               <input
                 id="scan-custom"
                 type="text"
@@ -476,15 +494,21 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange }: {
             {network && data && !timeoutValid && <p role="alert" class="text-xs text-warning">Enter a timeout as a whole number of milliseconds.</p>}
           </fieldset>
         </div>
-
-        {/* Reset alone: the probe count moved to the line above, where it is
-            readable without opening anything, and starting a scan belongs to
-            the section header. */}
-        <footer class="flex justify-end border-t border-base-300 px-4 py-3">
-          <button type="button" class="btn btn-sm" onClick={reset}>Reset</button>
-        </footer>
         </div>
       )}
+
+      {/* Outside the disclosure, so the controls that act on the scope are
+          there whether or not the fields are. Reset holds the left because
+          the probe count it used to share the bar with is up on the line,
+          where it is readable without opening anything.
+
+          Wraps rather than crushes: the manual-add label is long, and at
+          phone width the two actions take a row of their own, still
+          trailing. */}
+      <footer class="flex flex-wrap items-center gap-2 border-t border-base-300 px-4 py-3">
+        <button type="button" class="btn btn-sm" onClick={reset}>Reset</button>
+        <span class="ml-auto flex gap-2">{actions}</span>
+      </footer>
     </div>
   );
 }

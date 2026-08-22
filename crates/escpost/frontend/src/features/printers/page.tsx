@@ -59,27 +59,35 @@ export function PrintersPage() {
       <h1 id="printers-heading" class="sr-only">Printers</h1>
 
       {/* One section for the whole of discovery: what a scan would do, the
-          button that does it, and what it found. The results panel renders
-          nothing at all while the scan is idle, and the header and options
-          above it stand on their own. */}
+          controls that do it, and what it found. The results panel renders
+          nothing at all while the scan is idle, and the title, options and
+          bar above it stand on their own. */}
       <section aria-labelledby="discovery-heading" class="space-y-2">
-        {/* Wraps rather than crushes: the manual-add label is long, and at
-            phone width the buttons take a row of their own, still trailing. */}
-        <header class="flex flex-wrap items-center gap-2">
-          <h2 id="discovery-heading" class="font-medium">Discovery</h2>
-          <div class="ml-auto flex gap-2">
-            {/* The escape hatch for a printer no scan can reach, so it sits
-                beside the scan rather than inside anything. */}
+        <h2 id="discovery-heading" class="font-medium">Printer Discovery</h2>
+
+        {/* The bar along the bottom of the options is the panel's; these two
+            buttons are the page's, because both act on things only the page
+            has: the scan and the registration dialog. */}
+        <ScanOptions
+          query={scanQuery}
+          open={optionsOpen}
+          onOpenChange={setOptionsOpen}
+          onScopeChange={setScope}
+          actions={<>
+            {/* The escape hatch for a printer no scan can reach. `IP` rather
+                than `network` is the reader's word for it here and in the
+                dialog it opens; the transport is still `network` on the wire
+                and in the inventory's own column. */}
             <button
               type="button"
               class="btn btn-sm"
               onClick={() => setRegistering({ printer: null })}
             >
-              Add network printer manually
+              Add IP printer manually
             </button>
             {/* One slot, three jobs. Start, stop and repeat are the same
                 decision about the same scan, and the scope it acts on is the
-                one the line below states — refused, like the scan itself,
+                one the line above states — refused, like the scan itself,
                 when that line states none. */}
             {running ? (
               <button
@@ -108,20 +116,19 @@ export function PrintersPage() {
                 {scan.phase === "idle" ? "Scan" : "Rescan"}
               </button>
             )}
-          </div>
-        </header>
-
-        <ScanOptions
-          query={scanQuery}
-          open={optionsOpen}
-          onOpenChange={setOptionsOpen}
-          onScopeChange={setScope}
+          </>}
         />
 
         <DiscoveryPanel scan={scan} onAdd={(printer) => setRegistering({ printer })} />
       </section>
 
-      <PrinterList />
+      {/* The other named block. The heading belongs to the page rather than
+          to the list, so it stands over the loading and error states too —
+          an inventory that cannot be read is still the inventory. */}
+      <section aria-labelledby="configured-printers-heading" class="space-y-2">
+        <h2 id="configured-printers-heading" class="font-medium">Configured Printers</h2>
+        <PrinterList />
+      </section>
 
       {registering && (
         <AddPrinterDialog

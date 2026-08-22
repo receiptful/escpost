@@ -36,13 +36,23 @@ const noScanYet: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 let stated: DiscoveryQuery | null = null;
 
 // Whether the panel is open is the page's state, because starting a scan
-// shuts the form and scans start outside it.
+// shuts the form and scans start outside it. `actions` is the page's too: the
+// bar belongs to the panel, the buttons in it belong to the page. A plain
+// stand-in stands for them here.
 function Options({ query, onScopeChange }: {
   query: DiscoveryQuery;
   onScopeChange: (scope: DiscoveryQuery | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  return <ScanOptions query={query} open={open} onOpenChange={setOpen} onScopeChange={onScopeChange} />;
+  return (
+    <ScanOptions
+      query={query}
+      open={open}
+      onOpenChange={setOpen}
+      onScopeChange={onScopeChange}
+      actions={<button type="button">Scan</button>}
+    />
+  );
 }
 
 // Collapsed is how the panel sits on an idle page, so every test about the
@@ -135,7 +145,10 @@ describe("ScanOptions", () => {
     });
     await screen.findByLabelText("10.42.0.0/24");
 
-    expect((screen.getByLabelText("USB") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("USB Printers") as HTMLInputElement).checked).toBe(false);
+    // The section titles name the transports at length; the line above stays
+    // terse, because it has one row to fit in at phone width.
+    expect(screen.getByText("Connected USB printers are discovered automatically.")).toBeTruthy();
     expect((screen.getByLabelText("10.42.0.0/24") as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("192.168.1.0/24") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("RAW TCP port") as HTMLInputElement).value).toBe("9101");
@@ -166,13 +179,13 @@ describe("ScanOptions", () => {
   test("an unchecked network transport scans USB alone, and unchecking both leaves nothing to do", async () => {
     renderOptions(twoNetworks);
     await screen.findByLabelText("10.42.0.0/24");
-    fireEvent.click(screen.getByLabelText("Network"));
+    fireEvent.click(screen.getByLabelText("Network (IP) Printers"));
 
     expect(statedScope()).toBe("USB only · no network probes");
     expect((screen.getByLabelText("Custom network") as HTMLInputElement).disabled).toBe(true);
     await expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
 
-    fireEvent.click(screen.getByLabelText("USB"));
+    fireEvent.click(screen.getByLabelText("USB Printers"));
     expect(statedScope()).toBe("Nothing to scan");
     await expectScope(null);
   });
@@ -283,7 +296,7 @@ describe("ScanOptions", () => {
     fireEvent.input(screen.getByLabelText("Timeout per host"), { target: { value: "" } });
     await expectScope(null);
 
-    fireEvent.click(screen.getByLabelText("Network"));
+    fireEvent.click(screen.getByLabelText("Network (IP) Printers"));
     await expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
@@ -307,6 +320,11 @@ describe("ScanOptions", () => {
     const skipped = await screen.findByLabelText("10.0.0.0/16") as HTMLInputElement;
     expect(skipped.disabled).toBe(true);
     expect(skipped.checked).toBe(false);
+    // Disabled has to stay visible: the box is what says this network exists
+    // and is deliberately unavailable, and a row that faded itself faded the
+    // box along with the words. The text carries the dimming instead.
+    expect(skipped.closest("div")?.className).not.toContain("opacity-");
+    expect(skipped.className).toContain("disabled:opacity-100");
     // Two rows from one adapter must not share a DOM id, or the second
     // row's label points at the first row's checkbox.
     const sameAdapter = screen.getByLabelText("172.16.0.0/12") as HTMLInputElement;
@@ -369,7 +387,11 @@ describe("ScanOptions", () => {
 
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
-    expect(gone(screen.queryByRole("button", { name: "Reset" }))).toBe(true);
+    // The bar is not part of what the disclosure hides: its controls act on
+    // the scope, which the line above states whether the fields are shown or
+    // not.
+    expect(screen.getByRole("button", { name: "Reset" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Scan" })).toBeTruthy();
 
     fireEvent.click(button);
     expect(button.getAttribute("aria-expanded")).toBe("true");
@@ -381,6 +403,19 @@ describe("ScanOptions", () => {
     fireEvent.click(button);
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
+  });
+
+  test("Reset is reachable with the form shut, and re-detects from there", async () => {
+    renderOptions(twoNetworks);
+    fireEvent.click(await screen.findByLabelText("192.168.1.0/24"));
+    expect(statedScope()).toBe("USB · 1 of 2 networks · 253 probes");
+
+    fireEvent.click(disclosure());
+    expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+
+    await waitFor(() => expect(statedScope()).toBe("USB · 2 networks · 507 probes"));
+    await expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // The collapsed line is the only place an idle page states what a scan
@@ -421,10 +456,10 @@ describe("ScanOptions", () => {
     expect(statedScope()).toBe("USB · custom network refused");
 
     fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "" } });
-    fireEvent.click(screen.getByLabelText("Network"));
+    fireEvent.click(screen.getByLabelText("Network (IP) Printers"));
     expect(statedScope()).toBe("USB only · no network probes");
 
-    fireEvent.click(screen.getByLabelText("USB"));
+    fireEvent.click(screen.getByLabelText("USB Printers"));
     expect(statedScope()).toBe("Nothing to scan");
   });
 });

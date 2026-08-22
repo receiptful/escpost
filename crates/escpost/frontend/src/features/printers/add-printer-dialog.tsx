@@ -15,6 +15,12 @@ const AMBIGUOUS_USB_WARNING = "This printer reports no serial number. Printing w
 // as the interactive prompt's default.
 const DEFAULT_RAW_PORT = 9100;
 
+// The one treatment every field label in this dialog shares. Sentence case,
+// deliberately: the capitals used to come from `uppercase`, and the only
+// capitals left are the ones the words are actually spelled with — `USB`,
+// `IP`, `RAW TCP`.
+const FIELD_LABEL = "text-xs font-medium text-base-content/60";
+
 // The identity line the results row shows, minus its endpoint tail: here the
 // endpoints are the one thing still being chosen, so they are inputs below
 // rather than facts.
@@ -238,7 +244,10 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
     }
   };
 
-  const heading = manual ? "Add network printer" : "Add printer";
+  // `IP printer` matches the button that opens this, which is the reader's
+  // word for a printer reached over the network. The transport it registers
+  // is still `network`, in the request and in the inventory column.
+  const heading = manual ? "Add IP printer" : "Add printer";
 
   return (
     <dialog ref={element} class="modal" aria-labelledby="add-printer-heading">
@@ -249,7 +258,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
         </header>
 
         <div class="space-y-1">
-          <label class="text-xs font-medium uppercase tracking-wide text-base-content/60" for="add-printer-name">Name</label>
+          <label class={FIELD_LABEL} for="add-printer-name">Name</label>
           <input
             id="add-printer-name"
             type="text"
@@ -265,7 +274,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
 
         <div class="space-y-1">
           <div class="flex items-baseline gap-2">
-            <label class="text-xs font-medium uppercase tracking-wide text-base-content/60" for="add-printer-profile">Profile</label>
+            <label class={FIELD_LABEL} for="add-printer-profile">Profile</label>
             <span class="text-xs text-base-content/60">optional</span>
           </div>
           {/* The catalog's ids and nothing else, where `printers add
@@ -289,7 +298,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
         {usb && (
           <>
             <div class="space-y-1">
-              <p class="text-xs font-medium uppercase tracking-wide text-base-content/60">Connection · USB</p>
+              <p class={FIELD_LABEL}>Connection · USB</p>
               <div class="rounded-box bg-base-200 px-3 py-2 text-xs">
                 <p class="font-medium">{usbTitle(usb)}</p>
                 <p class="font-mono text-base-content/70">{usbFacts(usb)}</p>
@@ -341,7 +350,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
 
         {discoveredNetwork && (
           <div class="space-y-1">
-            <p class="text-xs font-medium uppercase tracking-wide text-base-content/60">Connection · Network</p>
+            <p class={FIELD_LABEL}>Connection · Network</p>
             <div class="rounded-box bg-base-200 px-3 py-2 text-xs">
               <p class="font-mono">{`${discoveredNetwork.host}:${discoveredNetwork.port}`}</p>
               {printer?.interface && <p class="text-base-content/70">Answered on {printer.interface}</p>}
@@ -353,7 +362,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
           <div class="space-y-1">
             <div class="flex gap-3">
               <div class="flex-2 space-y-1">
-                <label class="text-xs font-medium uppercase tracking-wide text-base-content/60" for="add-printer-host">Host</label>
+                <label class={FIELD_LABEL} for="add-printer-host">Host</label>
                 <input
                   id="add-printer-host"
                   type="text"
@@ -364,7 +373,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
                 />
               </div>
               <div class="flex-1 space-y-1">
-                <label class="text-xs font-medium uppercase tracking-wide text-base-content/60" for="add-printer-port">Port</label>
+                <label class={FIELD_LABEL} for="add-printer-port">Port</label>
                 <input
                   id="add-printer-port"
                   type="number"

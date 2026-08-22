@@ -166,10 +166,13 @@ describe("AddPrinterDialog", () => {
     });
   });
 
-  test("the manual dialog is network-only, defaults to port 9100, and refuses a port the shared layer cannot take", async () => {
+  test("the manual dialog is IP-only, defaults to port 9100, and refuses a port the shared layer cannot take", async () => {
     const { view, posted, onClose } = renderDialog(null, { printers: [] });
 
-    expect(screen.getByRole("heading", { name: "Add network printer" })).toBeTruthy();
+    // `Add IP printer`, matching the button that opens it. The transport it
+    // registers is still `network` on the wire and in the inventory column —
+    // only what the reader is told to call it changed.
+    expect(screen.getByRole("heading", { name: "Add IP printer" })).toBeTruthy();
     expect(screen.queryByLabelText("OUT endpoint")).toBeNull();
     expect(view.container.textContent).not.toContain("USB");
     expect((screen.getByLabelText("Port") as HTMLInputElement).value).toBe("9100");
