@@ -272,13 +272,36 @@ describe("PrintersPage", () => {
     expect(screen.getAllByText("Bar")).toHaveLength(2);
   });
 
+  // Both layouts render the same printer, so both have to state the same
+  // facts — this list has been a place where a change landed in one and not
+  // the other. The transport is one of those facts: it moved into the
+  // connection cell as a tag rather than leaving the page.
   test("renders matching desktop-table and mobile-card printer facts", async () => {
-    renderPage(fetchStub({ printers: [printer] }));
+    const counter = {
+      name: "counter",
+      transport: "usb",
+      availability: "connected",
+      profile: null,
+      connection: { type: "usb", vendor_id: 0x0416, product_id: 0x5011, bus: "003", address: 4, manufacturer: null, product: null, serial_number: "B120300001", interface_number: 0, out_endpoints: [1], in_endpoints: [] },
+    };
+    renderPage(fetchStub({ printers: [printer, counter] }));
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
-    expect(screen.getAllByText("Connected")).toHaveLength(2);
-    expect(screen.getAllByText("Network")).toHaveLength(2);
+    expect(screen.getAllByText("Connected")).toHaveLength(4);
     expect(screen.getAllByText("REFERENCE")).toHaveLength(2);
     expect(screen.getAllByText("10.0.0.8:9100")).toHaveLength(2);
+
+    // `IP` rather than `Network`: the word the interface uses for a printer
+    // reached over the network, in both layouts. The wire still says
+    // `network`, which is why the tag is a rendering and not a rename.
+    expect(screen.getAllByText("IP")).toHaveLength(2);
+    expect(screen.getAllByText("USB")).toHaveLength(2);
+    expect(gone(screen.queryByRole("columnheader", { name: "Transport" }))).toBe(true);
+    expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent))
+      .toEqual(["Name", "Status", "Profile", "Connection"]);
+
+    // The tag is a word to a screen reader rather than two letters floating
+    // in front of an address.
+    expect(screen.getAllByText(/^connection$/).length).toBeGreaterThan(0);
   });
 
   // Two named blocks, both named after printers rather than one after an
