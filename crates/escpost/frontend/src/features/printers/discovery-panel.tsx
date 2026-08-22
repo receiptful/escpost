@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { UsbDiscoveryFailure } from "../../api/discovery-stream";
 import type { DiscoveredPrinter, UsbConnection } from "../../api/types";
 import type { ScanState } from "../../app/data";
+import { countOf } from "./counts";
 import { endpointHex, usbHex } from "./usb";
 
 // How long an arriving row keeps the flash class. The one thing this number
@@ -58,13 +59,6 @@ function failureSentence(failure: UsbDiscoveryFailure) {
     ? "Could not open"
     : "Could not inspect the active configuration of";
   return `${action} USB device ${usbHex(failure.vendor_id)}:${usbHex(failure.product_id)}: ${failure.reason}.`;
-}
-
-function completedAt(finishedAt: number | null) {
-  if (finishedAt === null) {
-    return null;
-  }
-  return new Date(finishedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 /**
@@ -145,111 +139,119 @@ export function DiscoveryPanel({ scan, onAdd }: {
 
   const running = scan.phase === "running";
   const grantable = scan.failures.some((failure) => failure.permission_denied && failure.can_grant_usb_permissions);
-  const finished = completedAt(scan.finishedAt);
+  // How many printers answered, which is every printer the scan reported and
+  // not only the ones that became rows: a reader watching a sweep wants to
+  // know the network replied at all, and a printer they registered last week
+  // replying is still a printer replying. Rising from zero, so it says that
+  // during the sweep rather than only at the end of one.
+  //
   // The already-configured half is stated while the sweep is still running
   // too, because that is when a reader registers something: a printer added
-  // mid-scan leaves the results, and the count is the only place that says
-  // where it went.
-  const found = running ? `${unconfigured.length} new so far` : `${unconfigured.length} new`;
+  // mid-scan leaves the results, and this line is the only place that says
+  // where it went. It is left out entirely at zero rather than stated as
+  // `0 already configured`, which is a fact about nothing.
+  const found = `${countOf(discovered.length, "printer")} found`;
   const summary = configuredCount > 0 ? `${found} · ${configuredCount} already configured` : found;
-  // The scan line states probe counts, never networks or ports: the scan
-  // state carries what the stream reported, and the stream reports progress
-  // rather than the query that produced it.
+  // The other half of the line is the network rather than the printers: how
+  // much of it has been swept, and then how much of it was. It states probe
+  // counts, never networks or ports — the scan state carries what the stream
+  // reported, and the stream reports progress rather than the query that
+  // produced it.
   const scanLine = running
-    ? "Scanning for printers…"
+    ? scan.total > 0 ? `Scanning ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts` : "Scanning for printers…"
     : scan.total > 0 ? `Scanned ${scan.total.toLocaleString()} addresses` : "Scan complete";
 
   return (
-    <div class="space-y-2">
-      {/* The live region is the count rather than the rows: a printer
-          arriving is announced once, as one more result, instead of a screen
-          reader narrating every fact of every row that lands. */}
-      <p aria-live="polite" class="text-right text-sm text-base-content/70">{summary}</p>
+    <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
+      <div class="space-y-2 px-4 py-3 text-sm">
+        {/* One line, two halves: the network on the left, the printers on the
+            right. They used to be two displays saying overlapping things —
+            a total beside a breakdown of the same total — and folding them
+            leaves one number to keep true.
 
-      <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
-        <div class="space-y-2 px-4 py-3 text-sm">
-          <div class="flex items-center justify-between gap-3">
-            <span>{scanLine}</span>
-            <span class="text-base-content/70">
-              {running
-                ? scan.total > 0 && `${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts`
-                : finished && `Completed ${finished}`}
-            </span>
-          </div>
-          {scan.total > 0 && (
-            <progress class="progress progress-primary w-full" value={scan.completed} max={scan.total} aria-label="Scan progress" />
-          )}
+            The live region is that count rather than the rows: a printer
+            arriving is announced once, as one more result, instead of a
+            screen reader narrating every fact of every row that lands. */}
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <span>{scanLine}</span>
+          <span aria-live="polite" class="text-base-content/70">{summary}</span>
         </div>
-
-        {scan.error && (
-          <p role="alert" class="alert alert-error alert-soft rounded-none text-sm">{scan.error}</p>
-        )}
-
-        {scan.failures.length > 0 && (
-          // A USB enumeration failure is tolerated rather than fatal, so
-          // several can arrive and the scan carries on regardless.
-          <div role="alert" class="alert alert-warning alert-soft block rounded-none text-sm">
-            <ul class="space-y-1">
-              {/* Two of the same model refused at two addresses are two
-                  failures reporting identical facts — `UsbEnumerationFailure`
-                  carries no bus or address — so only the position tells them
-                  apart. The list is append-only and never reordered. */}
-              {scan.failures.map((failure, index) => (
-                <li key={index}>{failureSentence(failure)}</li>
-              ))}
-            </ul>
-            {/* The one place the browser names a terminal command: USB
-                permissions cannot be fixed from a web page, so there is no
-                in-app remedy to point at instead. One line for the whole
-                banner, as the CLI also prints it once — and only where the
-                command exists, which the server reports, since `printers
-                grant-usb-permissions` is Linux-only and the browser may be
-                talking to a machine across the room rather than this one. */}
-            {grantable && (
-              <p class="mt-2">
-                Fix USB permissions on the machine running <code class="font-mono">escpost serve</code>, with:{" "}
-                <code class="font-mono">sudo escpost printers grant-usb-permissions</code>
-              </p>
-            )}
-          </div>
-        )}
-
-        {rows.map((printer) => {
-          const key = printerKey(printer);
-          const title = printerTitle(printer);
-          return (
-            <div
-              key={key}
-              class={`flex items-center justify-between gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
-            >
-              <div class="min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="badge badge-primary badge-sm">New</span>
-                  <h3 class="truncate font-medium">{title}</h3>
-                </div>
-                <p class="truncate font-mono text-xs text-base-content/60">{printerFacts(printer)}</p>
-              </div>
-              <button type="button" class="btn btn-primary btn-sm" aria-label={`Add ${title}`} onClick={() => onAdd(printer)}>Add</button>
-            </div>
-          );
-        })}
-
-        {/* Nothing out there and everything out there already registered are
-            different answers, and only the second one sends the reader to the
-            inventory. A failed scan claims neither. */}
-        {rows.length === 0 && scan.phase === "done" && (
-          <div class="border-t border-base-300 px-4 py-8 text-center text-sm text-base-content/70">
-            <p class="font-medium text-base-content">{configuredCount > 0 ? "No new printers" : "No printers discovered"}</p>
-            <p class="mx-auto mt-1 max-w-prose">
-              {configuredCount === 1
-                ? "The one printer discovered is already configured. It is listed below with live status."
-                : configuredCount > 0
-                  ? `All ${configuredCount} discovered printers are already configured. They are listed below with live status.`
-                  : "Nothing answered this scan."}
-            </p>
-          </div>
+        {/* Only while there is progress to show. A full bar under a finished
+            scan reports nothing the line above has not, and competes with
+            the results for the eye. */}
+        {running && scan.total > 0 && (
+          <progress class="progress progress-primary w-full" value={scan.completed} max={scan.total} aria-label="Scan progress" />
         )}
       </div>
+
+      {scan.error && (
+        <p role="alert" class="alert alert-error alert-soft rounded-none text-sm">{scan.error}</p>
+      )}
+
+      {scan.failures.length > 0 && (
+        // A USB enumeration failure is tolerated rather than fatal, so
+        // several can arrive and the scan carries on regardless.
+        <div role="alert" class="alert alert-warning alert-soft block rounded-none text-sm">
+          <ul class="space-y-1">
+            {/* Two of the same model refused at two addresses are two
+                failures reporting identical facts — `UsbEnumerationFailure`
+                carries no bus or address — so only the position tells them
+                apart. The list is append-only and never reordered. */}
+            {scan.failures.map((failure, index) => (
+              <li key={index}>{failureSentence(failure)}</li>
+            ))}
+          </ul>
+          {/* The one place the browser names a terminal command: USB
+              permissions cannot be fixed from a web page, so there is no
+              in-app remedy to point at instead. One line for the whole
+              banner, as the CLI also prints it once — and only where the
+              command exists, which the server reports, since `printers
+              grant-usb-permissions` is Linux-only and the browser may be
+              talking to a machine across the room rather than this one. */}
+          {grantable && (
+            <p class="mt-2">
+              Fix USB permissions on the machine running <code class="font-mono">escpost serve</code>, with:{" "}
+              <code class="font-mono">sudo escpost printers grant-usb-permissions</code>
+            </p>
+          )}
+        </div>
+      )}
+
+      {rows.map((printer) => {
+        const key = printerKey(printer);
+        const title = printerTitle(printer);
+        return (
+          <div
+            key={key}
+            class={`flex items-center justify-between gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
+          >
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="badge badge-primary badge-sm">New</span>
+                <h3 class="truncate font-medium">{title}</h3>
+              </div>
+              <p class="truncate font-mono text-xs text-base-content/60">{printerFacts(printer)}</p>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" aria-label={`Add ${title}`} onClick={() => onAdd(printer)}>Add</button>
+          </div>
+        );
+      })}
+
+      {/* Nothing out there and everything out there already registered are
+          different answers, and only the second one sends the reader to the
+          inventory. A failed scan claims neither. */}
+      {rows.length === 0 && scan.phase === "done" && (
+        <div class="border-t border-base-300 px-4 py-8 text-center text-sm text-base-content/70">
+          <p class="font-medium text-base-content">{configuredCount > 0 ? "No new printers" : "No printers discovered"}</p>
+          <p class="mx-auto mt-1 max-w-prose">
+            {configuredCount === 1
+              ? "The one printer discovered is already configured. It is listed below with live status."
+              : configuredCount > 0
+                ? `All ${configuredCount} discovered printers are already configured. They are listed below with live status.`
+                : "Nothing answered this scan."}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

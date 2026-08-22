@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { getDiscoveryNetworks } from "../../api/client";
+import { countOf } from "./counts";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
 import type { DiscoveryNetworksResponse, SkippedNetwork } from "../../api/types";
 
@@ -89,12 +90,6 @@ const CHECKBOX = "checkbox checkbox-xs border-base-content/40 disabled:opacity-1
 // one as a selector, so a subnet becomes an id the plain way.
 function checkboxId(value: string) {
   return `scan-network-${value.replace(/[^a-zA-Z0-9]/g, "-")}`;
-}
-
-// `1 network` rather than `1 networks`: the collapsed line is prose, not a
-// readout.
-function countOf(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 /**

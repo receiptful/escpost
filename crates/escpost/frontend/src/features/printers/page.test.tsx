@@ -456,7 +456,7 @@ describe("PrintersPage", () => {
 
     await scan("Scan");
     await act(async () => { stream().emit("printer", discovered()); });
-    expect(screen.getByText("1 new so far")).toBeTruthy();
+    expect(screen.getByText("1 printer found")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Add 10.0.5.20:9100" }));
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
@@ -464,7 +464,7 @@ describe("PrintersPage", () => {
 
     // Recorded while the sweep is still running, which is when adding
     // actually happens.
-    expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("1 printer found · 1 already configured")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
     await expectFlash("warehouse", "printer-row-found");
   });
@@ -498,7 +498,7 @@ describe("PrintersPage", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
 
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
-    expect(screen.getByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(screen.getByText("1 printer found · 1 already configured")).toBeTruthy();
   });
 
   test("the chosen scan scope survives a route change, so Rescan repeats the same sweep", async () => {
@@ -616,7 +616,7 @@ describe("PrintersPage", () => {
 
     // The host typed here is the one the scan is listing, and nothing but
     // this dialog ever knew it.
-    expect(await screen.findByText("1 new so far · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("2 printers found · 1 already configured")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
     // The neighbour on the next address is a different printer and is still
     // offered: registering one endpoint may never claim another.
@@ -643,7 +643,7 @@ describe("PrintersPage", () => {
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
 
-    expect(await screen.findByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("1 printer found · 1 already configured")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add POS-58 Printer" }))).toBe(true);
   });
 
@@ -677,7 +677,7 @@ describe("PrintersPage", () => {
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
 
-    expect(await screen.findByText("1 new so far · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("2 printers found · 1 already configured")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Add POS-58 Printer" })).toHaveLength(1);
   });
 
@@ -705,7 +705,7 @@ describe("PrintersPage", () => {
     // Counted, never listed, and the printer it already is lights up — proved
     // reachable by the scan rather than by waiting for the next poll.
     expect(gone(screen.queryByRole("button", { name: "Add 10.42.0.71:9100" }))).toBe(true);
-    expect(screen.getByText("0 new so far · 1 already configured")).toBeTruthy();
+    expect(screen.getByText("1 printer found · 1 already configured")).toBeTruthy();
     const [row, card] = screen.getAllByText("kitchen");
     expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
     expect(card?.closest("article")?.classList.contains("printer-row-found")).toBe(true);

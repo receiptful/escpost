@@ -95,10 +95,12 @@ describe("DiscoveryPanel", () => {
     expect(screen.getByText("10.42.0.83:9100")).toBeTruthy();
     expect(screen.queryByText("kitchen")).toBeNull();
     expect(view.container.textContent).not.toContain("10.42.0.71");
-    expect(screen.getByText("1 new · 1 already configured")).toBeTruthy();
-    // Returning to the page has to say when these results were observed:
-    // they are a snapshot of the world, not live state.
-    expect(screen.getByText(/^Completed /)).toBeTruthy();
+    // Both printers answered, so both are counted; only the unconfigured one
+    // is a row.
+    expect(screen.getByText("2 printers found · 1 already configured")).toBeTruthy();
+    // A full bar says nothing a finished scan has not already said, and it
+    // competes with the results for the eye.
+    expect(gone(screen.queryByRole("progressbar"))).toBe(true);
     // No heading and no scan button of its own: the section this renders into
     // is titled `Discovery` and carries the one button that starts, repeats
     // and cancels a scan. A second title here would name the same block
@@ -120,8 +122,8 @@ describe("DiscoveryPanel", () => {
     const progress = screen.getByRole("progressbar") as HTMLProgressElement;
     expect(progress.value).toBe(312);
     expect(progress.max).toBe(508);
-    expect(screen.getByText("312 / 508 hosts")).toBeTruthy();
-    expect(screen.getByText("2 new so far")).toBeTruthy();
+    expect(screen.getByText("Scanning 312 / 508 hosts")).toBeTruthy();
+    expect(screen.getByText("2 printers found")).toBeTruthy();
 
     // USB before network regardless of arrival order: an enumerated device is
     // a fact about this machine, a swept host an observation about the world.
@@ -129,6 +131,26 @@ describe("DiscoveryPanel", () => {
     expect(titles).toEqual(["POS-58 Printer", "10.42.0.83:9100"]);
     expect(screen.getByText("USB 0416:5011 · bus 003 addr 007 · no serial · interface 0 · out 0x01")).toBeTruthy();
     expect(screen.getByText("Network · reachable via enx0")).toBeTruthy();
+  });
+
+  // `1 printers found` shipped on this branch once already, in the empty
+  // state, so every arity the count can reach is pinned here.
+  test("counts every printer that answered, and says printer once for one", () => {
+    const { rerender } = renderPanel({ phase: "running", printers: [] });
+    expect(screen.getByText("0 printers found")).toBeTruthy();
+
+    rerender({ phase: "running", printers: [networkPrinter("10.42.0.83")] });
+    expect(screen.getByText("1 printer found")).toBeTruthy();
+
+    // The second printer is already configured and still answered. The count
+    // is how many printers the scan reached, not how many are new — a reader
+    // watching a sweep wants to know the network replied at all.
+    rerender({ phase: "running", printers: [networkPrinter("10.42.0.83"), networkPrinter("10.42.0.71", ["kitchen"])] });
+    expect(screen.getByText("2 printers found · 1 already configured")).toBeTruthy();
+
+    // One printer, already configured: singular on both halves.
+    rerender({ phase: "done", printers: [networkPrinter("10.42.0.71", ["kitchen"])], finishedAt: Date.now() });
+    expect(screen.getByText("1 printer found · 1 already configured")).toBeTruthy();
   });
 
   // Fixing USB permissions genuinely requires a terminal, so naming the
