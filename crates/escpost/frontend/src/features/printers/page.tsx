@@ -13,10 +13,6 @@ export function PrintersPage() {
   // scan does — `Rescan` after a detour must repeat the sweep that was
   // configured, not the default one.
   const { scan, scanQuery, startScan, cancelScan, refreshPrinters, flashPrinter, markScanResultConfigured } = useAppData();
-  // The scope the scan options currently state, or `null` while they state
-  // none. It is where the one scan button gets its query, so the button and
-  // the line above the form cannot mean two different sweeps.
-  const [scope, setScope] = useState<DiscoveryQuery | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   // `null` while nothing is being registered, and `{ printer: null }` for the
   // manual dialog — `AddPrinterDialog` closes the native element in its
@@ -67,13 +63,17 @@ export function PrintersPage() {
 
         {/* The bar along the bottom of the options is the panel's; these two
             buttons are the page's, because both act on things only the page
-            has: the scan and the registration dialog. */}
+            has: the scan and the registration dialog.
+
+            The scope arrives as an argument rather than through state of our
+            own, so the button below is built by the same render that draws
+            the line stating that scope. There is no version of this page
+            where the two disagree, not even for a frame. */}
         <ScanOptions
           query={scanQuery}
           open={optionsOpen}
           onOpenChange={setOptionsOpen}
-          onScopeChange={setScope}
-          actions={<>
+          actions={(scope) => <>
             {/* The escape hatch for a printer no scan can reach. `IP` rather
                 than `network` is the reader's word for it here and in the
                 dialog it opens; the transport is still `network` on the wire
@@ -119,7 +119,11 @@ export function PrintersPage() {
           </>}
         />
 
-        <DiscoveryPanel scan={scan} onAdd={(printer) => setRegistering({ printer })} />
+        {/* Whether USB was swept is the scope's fact, not the stream's: the
+            stream reports progress, and only the query says which halves ran.
+            `scanQuery` is the scope of the scan on screen, since it changes
+            only when one starts. */}
+        <DiscoveryPanel scan={scan} usb={scanQuery.usb} onAdd={(printer) => setRegistering({ printer })} />
       </section>
 
       {/* The other named block. The heading belongs to the page rather than

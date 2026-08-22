@@ -11,7 +11,6 @@ const idle: ScanState = {
   total: 0,
   printers: [],
   failures: [],
-  finishedAt: null,
   error: null,
 };
 
@@ -59,11 +58,15 @@ function usbFailure(overrides: Partial<UsbDiscoveryFailure> = {}): UsbDiscoveryF
   };
 }
 
-function renderPanel(scan: Partial<ScanState>) {
+// `usb` is the scope's, not the stream's: the stream reports progress, and
+// whether USB was part of the sweep is something only the query says. Both
+// transports is the CLI's no-flag default, so it is this harness's default
+// too.
+function renderPanel(scan: Partial<ScanState>, usb = true) {
   const onAdd = jest.fn();
-  const view = render(<DiscoveryPanel scan={{ ...idle, ...scan }} onAdd={onAdd} />);
+  const view = render(<DiscoveryPanel scan={{ ...idle, ...scan }} usb={usb} onAdd={onAdd} />);
   const rerender = (next: Partial<ScanState>) => {
-    view.rerender(<DiscoveryPanel scan={{ ...idle, ...next }} onAdd={onAdd} />);
+    view.rerender(<DiscoveryPanel scan={{ ...idle, ...next }} usb={usb} onAdd={onAdd} />);
   };
   return { view, onAdd, rerender };
 }
@@ -89,7 +92,6 @@ describe("DiscoveryPanel", () => {
       completed: 508,
       total: 508,
       printers: [networkPrinter("10.42.0.83"), networkPrinter("10.42.0.71", ["kitchen"])],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText("10.42.0.83:9100")).toBeTruthy();
@@ -97,7 +99,7 @@ describe("DiscoveryPanel", () => {
     expect(view.container.textContent).not.toContain("10.42.0.71");
     // Both printers answered, so both are counted; only the unconfigured one
     // is a row.
-    expect(screen.getByText("2 printers found · 1 already configured")).toBeTruthy();
+    expect(screen.getByText("2 printers found (1 new)")).toBeTruthy();
     // A full bar says nothing a finished scan has not already said, and it
     // competes with the results for the eye.
     expect(gone(screen.queryByRole("progressbar"))).toBe(true);
@@ -122,8 +124,8 @@ describe("DiscoveryPanel", () => {
     const progress = screen.getByRole("progressbar") as HTMLProgressElement;
     expect(progress.value).toBe(312);
     expect(progress.max).toBe(508);
-    expect(screen.getByText("Scanning 312 / 508 hosts")).toBeTruthy();
-    expect(screen.getByText("2 printers found")).toBeTruthy();
+    expect(screen.getByText("Checking USB · scanning 312 / 508 hosts")).toBeTruthy();
+    expect(screen.getByText("2 printers found (2 new)")).toBeTruthy();
 
     // USB before network regardless of arrival order: an enumerated device is
     // a fact about this machine, a swept host an observation about the world.
@@ -133,24 +135,60 @@ describe("DiscoveryPanel", () => {
     expect(screen.getByText("Network · reachable via enx0")).toBeTruthy();
   });
 
+  // Both transports selected and no USB printer attached used to read exactly
+  // like a scan where USB never ran. The scan line says which halves ran, and
+  // it may not claim the USB half finished while the sweep is still going —
+  // USB results arrive first, but nothing on the stream says enumeration is
+  // done, so `Checking` stands until the whole scan is.
+  test("the scan line states which halves of the scan ran", () => {
+    const { rerender } = renderPanel({ phase: "running", completed: 129, total: 253 });
+    expect(screen.getByText("Checking USB · scanning 129 / 253 hosts")).toBeTruthy();
+
+    rerender({ phase: "done", completed: 253, total: 253 });
+    expect(screen.getByText("Checked USB · scanned 253 addresses")).toBeTruthy();
+
+    cleanup();
+    // A USB-only scan has no addresses to count. It used to fall back to
+    // wording that said nothing; now it says what it did.
+    const usbOnly = renderPanel({ phase: "running" });
+    expect(screen.getByText("Checking USB")).toBeTruthy();
+    usbOnly.rerender({ phase: "done" });
+    expect(screen.getByText("Checked USB")).toBeTruthy();
+
+    cleanup();
+    // Network only: no USB half to mention, and the address count leads.
+    const networkOnly = renderPanel({ phase: "running", completed: 129, total: 253 }, false);
+    expect(screen.getByText("Scanning 129 / 253 hosts")).toBeTruthy();
+    networkOnly.rerender({ phase: "done", completed: 253, total: 253 });
+    expect(screen.getByText("Scanned 253 addresses")).toBeTruthy();
+  });
+
   // `1 printers found` shipped on this branch once already, in the empty
-  // state, so every arity the count can reach is pinned here.
-  test("counts every printer that answered, and says printer once for one", () => {
+  // state, so every arity both numbers can reach is pinned here. The new
+  // count comes from the same list as the total, so the pair cannot disagree
+  // — and the mixed case is the one a wrong derivation would still look
+  // plausible in.
+  test("counts every printer that answered and how many of them are new", () => {
     const { rerender } = renderPanel({ phase: "running", printers: [] });
+    // No parenthetical at zero: `(0 new)` is noise when nothing answered.
     expect(screen.getByText("0 printers found")).toBeTruthy();
 
     rerender({ phase: "running", printers: [networkPrinter("10.42.0.83")] });
-    expect(screen.getByText("1 printer found")).toBeTruthy();
+    expect(screen.getByText("1 printer found (1 new)")).toBeTruthy();
 
-    // The second printer is already configured and still answered. The count
+    // The second printer is already configured and still answered. The total
     // is how many printers the scan reached, not how many are new — a reader
     // watching a sweep wants to know the network replied at all.
     rerender({ phase: "running", printers: [networkPrinter("10.42.0.83"), networkPrinter("10.42.0.71", ["kitchen"])] });
-    expect(screen.getByText("2 printers found · 1 already configured")).toBeTruthy();
+    expect(screen.getByText("2 printers found (1 new)")).toBeTruthy();
 
-    // One printer, already configured: singular on both halves.
-    rerender({ phase: "done", printers: [networkPrinter("10.42.0.71", ["kitchen"])], finishedAt: Date.now() });
-    expect(screen.getByText("1 printer found · 1 already configured")).toBeTruthy();
+    rerender({ phase: "running", printers: [networkPrinter("10.42.0.83"), networkPrinter("10.42.0.84")] });
+    expect(screen.getByText("2 printers found (2 new)")).toBeTruthy();
+
+    // The case that earns the parenthetical: something answered, none of it
+    // is new, and the total alone would read as a find.
+    rerender({ phase: "done", printers: [networkPrinter("10.42.0.71", ["kitchen"])] });
+    expect(screen.getByText("1 printer found (0 new)")).toBeTruthy();
   });
 
   // Fixing USB permissions genuinely requires a terminal, so naming the
@@ -161,7 +199,6 @@ describe("DiscoveryPanel", () => {
       phase: "done",
       printers: [],
       failures: [usbFailure(), usbFailure({ product_id: 0x0203, stage: "inspect_configuration", permission_denied: false, reason: "device disconnected" })],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText("Could not open USB device 04b8:0202: permission denied (errno 13).")).toBeTruthy();
@@ -177,7 +214,6 @@ describe("DiscoveryPanel", () => {
       phase: "done",
       printers: [],
       failures: [usbFailure({ stage: "inspect_configuration", permission_denied: false, reason: "device disconnected" })],
-      finishedAt: Date.now(),
     });
     expect(view.container.textContent).not.toContain("grant-usb-permissions");
   });
@@ -190,7 +226,6 @@ describe("DiscoveryPanel", () => {
       phase: "done",
       printers: [],
       failures: [usbFailure({ can_grant_usb_permissions: false })],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText("Could not open USB device 04b8:0202: permission denied (errno 13).")).toBeTruthy();
@@ -222,7 +257,6 @@ describe("DiscoveryPanel", () => {
       phase: "done",
       printers: [],
       failures: [usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }), usbFailure({ vendor_id: 0x0416, product_id: 0x5011 })],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getAllByText("Could not open USB device 0416:5011: permission denied (errno 13).")).toHaveLength(2);
@@ -237,7 +271,6 @@ describe("DiscoveryPanel", () => {
         usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }),
         usbFailure({ vendor_id: 0x0416, product_id: 0x5011 }),
       ],
-      finishedAt: Date.now(),
     });
     expect(screen.getAllByText("Could not open USB device 0416:5011: permission denied (errno 13).")).toHaveLength(3);
   });
@@ -251,7 +284,6 @@ describe("DiscoveryPanel", () => {
       total: 508,
       printers: [networkPrinter("10.42.0.83")],
       failures: [usbFailure()],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText(/sudo escpost printers grant-usb-permissions/)).toBeTruthy();
@@ -266,18 +298,16 @@ describe("DiscoveryPanel", () => {
       completed: 508,
       total: 508,
       printers: [],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText("No printers discovered")).toBeTruthy();
-    expect(screen.getByText("Scanned 508 addresses")).toBeTruthy();
+    expect(screen.getByText("Checked USB · scanned 508 addresses")).toBeTruthy();
 
     rerender({
       phase: "done",
       completed: 508,
       total: 508,
       printers: [networkPrinter("10.42.0.71", ["kitchen"]), networkPrinter("10.42.0.72", ["bar", "counter"])],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText("No new printers")).toBeTruthy();
@@ -289,7 +319,6 @@ describe("DiscoveryPanel", () => {
       completed: 508,
       total: 508,
       printers: [networkPrinter("10.42.0.71", ["kitchen"])],
-      finishedAt: Date.now(),
     });
 
     expect(screen.getByText("The one printer discovered is already configured. It is listed below with live status.")).toBeTruthy();
@@ -297,7 +326,7 @@ describe("DiscoveryPanel", () => {
 
   test("hands the Add button the discovered printer its row was built from", () => {
     const printer = usbPrinter({ serial_number: "X9", out_endpoints: [0x01, 0x02] });
-    const { onAdd } = renderPanel({ phase: "done", printers: [printer], finishedAt: Date.now() });
+    const { onAdd } = renderPanel({ phase: "done", printers: [printer] });
 
     expect(screen.getByText("USB 0416:5011 · bus 003 addr 007 · serial X9 · interface 0 · out 0x01, 0x02")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add POS-58 Printer" }));
@@ -335,7 +364,6 @@ describe("DiscoveryPanel", () => {
       completed: 42,
       total: 508,
       printers: [],
-      finishedAt: Date.now(),
       error: "The discovery stream ended unexpectedly.",
     });
 

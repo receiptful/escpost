@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
@@ -30,27 +30,22 @@ function json(body: unknown, status = 200) {
 // the provider hands the panel until one has: the CLI's no-flag behaviour.
 const noScanYet: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 
-// The scope the panel last published. This is what the page's one scan button
-// sends, and `null` is what refuses it — the panel has no start button of its
-// own to read a disabled attribute off any more.
-let stated: DiscoveryQuery | null = null;
-
 // Whether the panel is open is the page's state, because starting a scan
-// shuts the form and scans start outside it. `actions` is the page's too: the
-// bar belongs to the panel, the buttons in it belong to the page. A plain
-// stand-in stands for them here.
-function Options({ query, onScopeChange }: {
-  query: DiscoveryQuery;
-  onScopeChange: (scope: DiscoveryQuery | null) => void;
-}) {
+// shuts the form and scans start outside it. The bar belongs to the panel and
+// the buttons in it belong to the page, which builds them from the scope it
+// is handed — in the same render that draws the line, so the stand-in here
+// can carry the scope on the button itself. Reading it back off the DOM is
+// how a test sees the two together in one tick.
+function Options({ query }: { query: DiscoveryQuery }) {
   const [open, setOpen] = useState(false);
   return (
     <ScanOptions
       query={query}
       open={open}
       onOpenChange={setOpen}
-      onScopeChange={onScopeChange}
-      actions={<button type="button">Scan</button>}
+      actions={(scope) => (
+        <button type="button" data-scope={scope === null ? "" : JSON.stringify(scope)}>Scan</button>
+      )}
     />
   );
 }
@@ -59,15 +54,14 @@ function Options({ query, onScopeChange }: {
 // form itself opens the disclosure first and only the ones about the
 // disclosure render it shut.
 function renderOptions(response: Response | DiscoveryNetworksResponse, query: DiscoveryQuery = noScanYet, expanded = true) {
-  const onScopeChange = jest.fn((scope: DiscoveryQuery | null) => { stated = scope; });
   globalThis.fetch = (() => Promise.resolve(
     response instanceof Response ? response : json(response),
   )) as unknown as typeof globalThis.fetch;
-  const view = render(<Options query={query} onScopeChange={onScopeChange} />);
+  const view = render(<Options query={query} />);
   if (expanded) {
     fireEvent.click(disclosure());
   }
-  return { view, onScopeChange };
+  return { view };
 }
 
 function disclosure() {
@@ -81,10 +75,17 @@ function statedScope() {
   return document.getElementById("scan-options-scope")?.textContent;
 }
 
-// Publishing is an effect, so the scope can be one turn behind the DOM the
-// assertion before it just read.
-async function expectScope(expected: DiscoveryQuery | null) {
-  await waitFor(() => expect(stated).toEqual(expected));
+// The scope the button would send, read off the button itself. Synchronous on
+// purpose: it is drawn by the same render as the line above it, so an
+// assertion that had to wait for it would be evidence of the hop this is
+// built to make impossible.
+function statedQuery() {
+  const carried = screen.getByRole("button", { name: "Scan" }).getAttribute("data-scope");
+  return carried ? JSON.parse(carried) as DiscoveryQuery : null;
+}
+
+function expectScope(expected: DiscoveryQuery | null) {
+  expect(statedQuery()).toEqual(expected);
 }
 
 // Absence as a boolean. `expect(node).toBeNull()` prints the entire happy-dom
@@ -94,10 +95,7 @@ function gone(element: Element | null) {
   return element === null;
 }
 
-afterEach(() => {
-  cleanup();
-  stated = null;
-});
+afterEach(cleanup);
 
 describe("ScanOptions", () => {
   test("publishes no subnets when every known network is checked, so the scan runs in automatic mode", async () => {
@@ -105,7 +103,7 @@ describe("ScanOptions", () => {
     await screen.findByLabelText("10.42.0.0/24");
 
     expect(statedScope()).toBe("USB · 2 networks · 507 probes");
-    await expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   test("names the checked networks once the selection is partial, and Reset restores automatic mode", async () => {
@@ -115,7 +113,7 @@ describe("ScanOptions", () => {
     fireEvent.input(screen.getByLabelText("Timeout per host"), { target: { value: "500" } });
 
     expect(statedScope()).toBe("USB · 1 of 2 networks · 253 probes");
-    await expectScope({
+    expectScope({
       usb: true,
       network: true,
       subnets: ["10.42.0.0/24"],
@@ -130,7 +128,7 @@ describe("ScanOptions", () => {
     expect(screen.getByLabelText("Detecting networks")).toBeTruthy();
     await screen.findByLabelText("10.42.0.0/24");
     expect(statedScope()).toBe("USB · 2 networks · 507 probes");
-    await expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // The panel opens on the scope the last scan ran with, so that what it
@@ -157,7 +155,7 @@ describe("ScanOptions", () => {
 
     // Untouched, it publishes the scan it was showing, so repeating it
     // repeats that scan.
-    await expectScope({
+    expectScope({
       usb: false,
       network: true,
       subnets: ["192.168.1.0/24"],
@@ -173,7 +171,7 @@ describe("ScanOptions", () => {
 
     expect(screen.getByText("Select a known network or enter a custom one.")).toBeTruthy();
     expect(statedScope()).toBe("USB · no networks selected");
-    await expectScope(null);
+    expectScope(null);
   });
 
   test("an unchecked network transport scans USB alone, and unchecking both leaves nothing to do", async () => {
@@ -183,11 +181,11 @@ describe("ScanOptions", () => {
 
     expect(statedScope()).toBe("USB only · no network probes");
     expect((screen.getByLabelText("Custom network") as HTMLInputElement).disabled).toBe(true);
-    await expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
 
     fireEvent.click(screen.getByLabelText("USB Printers"));
     expect(statedScope()).toBe("Nothing to scan");
-    await expectScope(null);
+    expectScope(null);
   });
 
   test("a custom network disables the known networks without removing them", async () => {
@@ -200,7 +198,7 @@ describe("ScanOptions", () => {
     expect(known.checked).toBe(true);
     expect(statedScope()).toBe("USB · 2 custom networks · 508 probes");
 
-    await expectScope({
+    expectScope({
       usb: true,
       network: true,
       subnets: ["10.0.5.0/24", "10.0.6.0/24"],
@@ -215,15 +213,15 @@ describe("ScanOptions", () => {
 
     fireEvent.input(custom, { target: { value: "enp5s0" } });
     expect(screen.getByText("Expected CIDR notation such as 10.42.0.0/24, found `enp5s0`.")).toBeTruthy();
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.input(custom, { target: { value: "10.0.0.0/8" } });
     expect(screen.getByText("Subnet 10.0.0.0/8 is too large to scan (at most /16).")).toBeTruthy();
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.input(custom, { target: { value: "10.0.0.0/16" } });
     expect(statedScope()).toBe("USB · 10.0.0.0/16 · 65,534 probes");
-    await expectScope({ usb: true, network: true, subnets: ["10.0.0.0/16"], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: ["10.0.0.0/16"], port: 9100, timeoutMs: 1000 });
   });
 
   // A field holding only separators is content, not emptiness. Reading it as
@@ -236,7 +234,7 @@ describe("ScanOptions", () => {
     expect(screen.getByText("Expected CIDR notation such as 10.42.0.0/24, found `, ,`.")).toBeTruthy();
     expect((screen.getByLabelText("10.42.0.0/24") as HTMLInputElement).disabled).toBe(true);
     expect(statedScope()).toBe("USB · custom network refused");
-    await expectScope(null);
+    expectScope(null);
   });
 
   // One refused entry invalidates the whole field, so the line states no
@@ -249,7 +247,7 @@ describe("ScanOptions", () => {
     expect(screen.getByText("Subnet 10.0.0.0/8 is too large to scan (at most /16).")).toBeTruthy();
     expect(statedScope()).toBe("USB · custom network refused");
     expect(view.container.textContent).not.toContain("probes");
-    await expectScope(null);
+    expectScope(null);
   });
 
   // The port is a `NonZeroU16` and the timeout a `u64` of milliseconds in the
@@ -262,28 +260,28 @@ describe("ScanOptions", () => {
 
     fireEvent.input(port, { target: { value: "0" } });
     expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.input(port, { target: { value: "65536" } });
     expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.input(port, { target: { value: "65535" } });
     expect(gone(screen.queryByText("Enter a port between 1 and 65535."))).toBe(true);
-    await expectScope({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 1000 });
 
     // Past `MAX_SAFE_INTEGER` a JavaScript number stringifies as `1e+21`,
     // which no `u64` parses — a wire limit, not a product rule.
     fireEvent.input(timeout, { target: { value: "999999999999999999999" } });
     expect(screen.getByText("Enter a timeout as a whole number of milliseconds.")).toBeTruthy();
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.input(timeout, { target: { value: "0" } });
     expect(gone(screen.queryByText("Enter a timeout as a whole number of milliseconds."))).toBe(true);
     // The field's own constraint has to agree, or the browser paints it
     // out of range while the panel accepts it.
     expect(timeout.getAttribute("min")).toBe("0");
-    await expectScope({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 0 });
+    expectScope({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 0 });
   });
 
   // The port and timeout are only vetted while Network is checked, so an
@@ -294,10 +292,10 @@ describe("ScanOptions", () => {
     renderOptions(twoNetworks);
     fireEvent.input(await screen.findByLabelText("RAW TCP port"), { target: { value: "" } });
     fireEvent.input(screen.getByLabelText("Timeout per host"), { target: { value: "" } });
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.click(screen.getByLabelText("Network (IP) Printers"));
-    await expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // The reason is the shared layer's; the remedy is this panel's. The
@@ -335,13 +333,13 @@ describe("ScanOptions", () => {
     // No subnet to retype, so no remedy is offered.
     expect(screen.getByText("weird0: its netmask does not name a scannable subnet")).toBeTruthy();
     expect((screen.getByLabelText("weird0") as HTMLInputElement).disabled).toBe(true);
-    await expectScope(null);
+    expectScope(null);
   });
 
   test("keeps a skeleton network list until the networks response arrives", async () => {
     let resolveNetworks!: (response: Response) => void;
     globalThis.fetch = (() => new Promise<Response>((resolve) => { resolveNetworks = resolve; })) as unknown as typeof globalThis.fetch;
-    const view = render(<Options query={noScanYet} onScopeChange={(scope) => { stated = scope; }} />);
+    const view = render(<Options query={noScanYet} />);
     fireEvent.click(disclosure());
 
     // The collapsed line says as much as is known, which until the response
@@ -349,12 +347,12 @@ describe("ScanOptions", () => {
     expect(statedScope()).toBe("USB · counting networks…");
     expect(screen.getByLabelText("Detecting networks")).toBeTruthy();
     expect(view.container.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
-    await expectScope(null);
+    expectScope(null);
 
     await act(async () => { resolveNetworks(json(twoNetworks)); });
     expect(await screen.findByLabelText("10.42.0.0/24")).toBeTruthy();
     expect(gone(screen.queryByLabelText("Detecting networks"))).toBe(true);
-    await expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // A failed detection refuses the one button that starts a scan, so its
@@ -366,16 +364,16 @@ describe("ScanOptions", () => {
       json(twoNetworks),
     ];
     globalThis.fetch = (() => Promise.resolve(responses.shift()!)) as unknown as typeof globalThis.fetch;
-    render(<Options query={noScanYet} onScopeChange={(scope) => { stated = scope; }} />);
+    render(<Options query={noScanYet} />);
 
     expect(await screen.findByText("Unable to detect this machine's networks.")).toBeTruthy();
     expect(disclosure().getAttribute("aria-expanded")).toBe("true");
     expect(statedScope()).toBe("USB · networks unavailable");
-    await expectScope(null);
+    expectScope(null);
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByLabelText("10.42.0.0/24")).toBeTruthy();
-    await expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // The panel lives in the page rather than over it, so an idle page is one
@@ -405,6 +403,50 @@ describe("ScanOptions", () => {
     expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
   });
 
+  // A Reset that would do nothing may not look available — and because the
+  // bar shows through a shut accordion, an enabled one is also the quiet
+  // signal that this scan is not the default one.
+  test("Reset offers itself only when the effective scope differs from the defaults", async () => {
+    renderOptions(twoNetworks);
+    await screen.findByLabelText("10.42.0.0/24");
+    const reset = () => screen.getByRole("button", { name: "Reset" });
+    expect(reset().hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    expect(reset().hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    expect(reset().hasAttribute("disabled")).toBe(true);
+
+    // Whitespace is not a custom network, so it is not a change either — a
+    // reader who types a character and deletes it has changed nothing.
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "   " } });
+    expect(reset().hasAttribute("disabled")).toBe(true);
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "10.0.5.0/24" } });
+    expect(reset().hasAttribute("disabled")).toBe(false);
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "" } });
+    expect(reset().hasAttribute("disabled")).toBe(true);
+
+    // The same number typed by hand is the same number.
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9100" } });
+    expect(reset().hasAttribute("disabled")).toBe(true);
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
+    expect(reset().hasAttribute("disabled")).toBe(false);
+
+    // Disabled, never hidden: the bar keeps its width in both states.
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9100" } });
+    expect(reset().hasAttribute("disabled")).toBe(true);
+    expect(reset().isConnected).toBe(true);
+  });
+
+  // The scope a scan was configured with is a difference from the defaults,
+  // and reopening on it is exactly when a reader wants the way back.
+  test("Reset is offered when the panel opens on a narrowed scope", async () => {
+    renderOptions(twoNetworks, { usb: true, network: true, subnets: ["192.168.1.0/24"], port: 9100, timeoutMs: 1000 });
+    await screen.findByLabelText("10.42.0.0/24");
+
+    expect(screen.getByRole("button", { name: "Reset" }).hasAttribute("disabled")).toBe(false);
+  });
+
   test("Reset is reachable with the form shut, and re-detects from there", async () => {
     renderOptions(twoNetworks);
     fireEvent.click(await screen.findByLabelText("192.168.1.0/24"));
@@ -415,7 +457,7 @@ describe("ScanOptions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
 
     await waitFor(() => expect(statedScope()).toBe("USB · 2 networks · 507 probes"));
-    await expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+    expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
   // The collapsed line is the only place an idle page states what a scan

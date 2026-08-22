@@ -100,27 +100,29 @@ function checkboxId(value: string) {
  * configured — and the controls are seeded from it, so the line and the form
  * are two views of the same thing.
  *
- * This panel starts nothing. `onScopeChange` reports what its controls
- * amount to, or `null` when they amount to no scan at all, and the section's
- * one scan button sends exactly that — so there is no second button here to
- * disagree with it.
+ * This panel starts nothing. `actions` is called with what its controls
+ * amount to — or `null` when they amount to no scan at all — and the page
+ * builds the button that acts on it. Handing the scope over as an argument
+ * rather than through a callback and a piece of the page's state is what
+ * makes the two impossible to separate: the button and the line it belongs
+ * to come out of one render of one value, so there is no moment, however
+ * short, in which the page is showing one scope and would send another.
  *
- * `open` belongs to the page for the same reason: starting a scan shuts the
- * form, and scans start outside it. So do `actions` — the bar along the
- * bottom is this panel's, the buttons the page puts in it are the page's, and
- * the bar stays whether the form is open or shut because everything in it
- * acts on the scope the line states rather than on the fields.
+ * `open` belongs to the page: starting a scan shuts the form, and scans
+ * start outside it. So does the content of the bar along the bottom — the
+ * bar is this panel's, the buttons in it are the page's, and it stays
+ * whether the form is open or shut because everything in it acts on the
+ * scope the line states rather than on the fields.
  *
  * The networks are fetched once per mount, and again on Reset: adapters
  * change with a cable or a VPN, so the server stays the authority on which
  * networks exist while `query` says which of them were chosen.
  */
-export function ScanOptions({ query, open, onOpenChange, onScopeChange, actions }: {
+export function ScanOptions({ query, open, onOpenChange, actions }: {
   query: DiscoveryQuery;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onScopeChange: (scope: DiscoveryQuery | null) => void;
-  actions: ComponentChildren;
+  actions: (scope: DiscoveryQuery | null) => ComponentChildren;
 }) {
   const [resource, setResource] = useState<NetworksResource>({ data: null, error: null });
   const [reloads, setReloads] = useState(0);
@@ -277,8 +279,8 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange, actions 
 
   // The scope those controls state, or `null` while they state none: still
   // counting, a failed detection, or a contradiction such as a checked
-  // Network with no network behind it. The section's scan button sends this
-  // and is refused while it is `null`.
+  // Network with no network behind it. The bar's scan button is handed this
+  // below, in this same render, and is refused while it is `null`.
   //
   // The port and timeout travel even when Network is unchecked, because the
   // fields keep their values while disabled; `discoveryQueryString` drops
@@ -302,18 +304,6 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange, actions 
       }
     : null;
 
-  // Both read through refs, so a parent that rebuilds either on every render
-  // cannot turn this into a render loop; the serialized scope is what decides
-  // that anything changed.
-  const publish = useRef(onScopeChange);
-  publish.current = onScopeChange;
-  const stated = useRef(scope);
-  stated.current = scope;
-  const scopeKey = scope === null ? "" : JSON.stringify(scope);
-  useEffect(() => {
-    publish.current(stated.current);
-  }, [scopeKey]);
-
   const toggleKnown = (subnet: string) => {
     setUnchecked((current) => current.includes(subnet)
       ? current.filter((entry) => entry !== subnet)
@@ -335,6 +325,34 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange, actions 
     setTimeoutMs(null);
     setReloads((count) => count + 1);
   };
+
+  // Reset only means something when there is something to undo, so it is
+  // refused when there is not. The comparison is against the scope of a scan
+  // with no options set — which is exactly `printers discover` with no flags:
+  // both transports, every detected network, no custom subnet, and the port
+  // and timeout the server advertises. That is the same equivalence the
+  // panel already trades on when it sends no subnets at all while everything
+  // is checked, and it is why the default is what it is: anything else here
+  // would stop matching the terminal.
+  //
+  // The comparison is made on the effective scope rather than on the raw
+  // fields, so a custom box holding nothing but spaces, or a port typed back
+  // to the number it already held, is not a change. The seeded scope is not
+  // the default either: a panel that opened on a narrowed `scanQuery` is
+  // showing a scan someone configured, which is exactly when a reader
+  // reaches for this.
+  //
+  // A `null` scope is never the default. It is a state worth getting out of
+  // — a refused custom entry, a port out of range, both transports off — and
+  // this is the one control that gets out of it in a keystroke.
+  //
+  // Unknowable while the networks are still arriving or after detection
+  // failed, because the defaults are the server's to advertise; Retry is the
+  // way back from that, and Reset would only ask the same question again.
+  const defaulted = data !== null && scope !== null
+    && scope.usb && scope.network && scope.subnets.length === 0
+    && scope.port === data.default_port && scope.timeoutMs === data.default_timeout_ms;
+  const resettable = data !== null && !defaulted;
 
   // A failed detection refuses the only button that starts a scan, so the
   // form opens itself to put the reason and its Retry in front of the reader
@@ -501,8 +519,8 @@ export function ScanOptions({ query, open, onOpenChange, onScopeChange, actions 
           phone width the two actions take a row of their own, still
           trailing. */}
       <footer class="flex flex-wrap items-center gap-2 border-t border-base-300 px-4 py-3">
-        <button type="button" class="btn btn-sm" onClick={reset}>Reset</button>
-        <span class="ml-auto flex gap-2">{actions}</span>
+        <button type="button" class="btn btn-sm" disabled={!resettable} onClick={reset}>Reset</button>
+        <span class="ml-auto flex gap-2">{actions(scope)}</span>
       </footer>
     </div>
   );

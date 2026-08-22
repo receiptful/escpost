@@ -74,9 +74,14 @@ function failureSentence(failure: UsbDiscoveryFailure) {
  * It renders into the `Discovery` section rather than owning one: the
  * section's heading already names this, and its one button starts, stops and
  * repeats the scan reported here.
+ *
+ * `usb` is the one fact about the scan that the stream does not carry: it
+ * reports progress, not the query that produced it, so whether the USB half
+ * ran at all has to come from the scope.
  */
-export function DiscoveryPanel({ scan, onAdd }: {
+export function DiscoveryPanel({ scan, usb, onAdd }: {
   scan: ScanState;
+  usb: boolean;
   onAdd: (printer: DiscoveredPrinter) => void;
 }) {
   // Keys seen on the previous render, or `null` until the first one: a panel
@@ -145,21 +150,49 @@ export function DiscoveryPanel({ scan, onAdd }: {
   // replying is still a printer replying. Rising from zero, so it says that
   // during the sweep rather than only at the end of one.
   //
-  // The already-configured half is stated while the sweep is still running
-  // too, because that is when a reader registers something: a printer added
-  // mid-scan leaves the results, and this line is the only place that says
-  // where it went. It is left out entirely at zero rather than stated as
-  // `0 already configured`, which is a fact about nothing.
+  // How many of those are worth acting on, in the same breath and from the
+  // same list, so the two numbers cannot come apart. The already-configured
+  // count is the difference between them and is not stated a third time.
+  //
+  // The new count is carried even when it equals the total, because a rule
+  // that hid it sometimes would make its absence mean two things — but not
+  // at zero, where nothing answered and `(0 new)` is noise. It is stated
+  // while the sweep is still running too, because that is when a reader
+  // registers something: a printer added mid-scan leaves the results, and
+  // this line is the only place that says where it went.
   const found = `${countOf(discovered.length, "printer")} found`;
-  const summary = configuredCount > 0 ? `${found} · ${configuredCount} already configured` : found;
-  // The other half of the line is the network rather than the printers: how
-  // much of it has been swept, and then how much of it was. It states probe
-  // counts, never networks or ports — the scan state carries what the stream
-  // reported, and the stream reports progress rather than the query that
-  // produced it.
-  const scanLine = running
-    ? scan.total > 0 ? `Scanning ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts` : "Scanning for printers…"
-    : scan.total > 0 ? `Scanned ${scan.total.toLocaleString()} addresses` : "Scan complete";
+  const summary = discovered.length === 0 ? found : `${found} (${unconfigured.length} new)`;
+  // The other half of the line is the scan rather than the printers: which
+  // halves of it ran, and how far the network one has got. Both transports
+  // selected with nothing plugged in used to read exactly like a scan where
+  // USB never ran, which is the one thing this states that nothing else can.
+  //
+  // `Checking` while running and `Checked` when done, because nothing on the
+  // stream says enumeration has finished — USB results simply arrive before
+  // the sweep does — so the past tense would be claiming knowledge the panel
+  // does not have.
+  //
+  // Deliberately no count of USB devices, ports or controllers. `list()` asks
+  // the OS to enumerate printer-class devices; there is no set of N things
+  // probed, so a number there would exist only to look symmetrical with the
+  // address count — which is there as a cost signal, and USB enumeration
+  // costs nothing.
+  //
+  // The network half states probe counts, never networks or ports: the scan
+  // state carries what the stream reported, and the stream reports progress
+  // rather than the query that produced it.
+  const usbLine = usb ? (running ? "checking USB" : "checked USB") : "";
+  const networkLine = scan.total === 0
+    ? ""
+    : running
+      ? `scanning ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts`
+      : `scanned ${scan.total.toLocaleString()} addresses`;
+  const halves = [usbLine, networkLine].filter((half) => half.length > 0).join(" · ");
+  // A scan with neither half to report is one whose targets have not arrived
+  // yet, or a network-only scan that resolved to none.
+  const scanLine = halves === ""
+    ? running ? "Scanning for printers…" : "Scan complete"
+    : `${halves[0]!.toUpperCase()}${halves.slice(1)}`;
 
   return (
     <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">

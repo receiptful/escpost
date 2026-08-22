@@ -332,10 +332,10 @@ describe("PrintersPage", () => {
     renderPage(fetchStub());
 
     await scan("Scan");
-    expect(screen.getByText("Scanning for printers…")).toBeTruthy();
+    expect(screen.getByText("Checking USB")).toBeTruthy();
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
-    expect(gone(screen.queryByText("Scanning for printers…"))).toBe(true);
+    expect(gone(screen.queryByText("Checking USB"))).toBe(true);
     expect(screen.getByRole("button", { name: "Scan" })).toBeTruthy();
   });
 
@@ -381,6 +381,36 @@ describe("PrintersPage", () => {
     fireEvent.click(screen.getByLabelText("USB Printers"));
     expect(statedScope()).toBe("Nothing to scan");
     expect(screen.getByRole("button", { name: "Scan" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  // The line and the button are drawn by one render from one value, so the
+  // moment the line changes the button has already changed with it.
+  //
+  // Raw DOM events rather than `fireEvent`, and microtasks rather than `act`,
+  // because `act` flushes renders and effects together — a coincidence no
+  // browser guarantees. Preact commits the DOM on a microtask and runs
+  // effects after paint, so between those two moments a button fed by an
+  // effect still carries the scope from before the change the line is already
+  // showing. That gap is how a sweep of 1,265 addresses went out under a line
+  // reading 254.
+  test("a scan started the moment the line changes sends the scope the line shows", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(fetchStub());
+    await act(async () => {});
+
+    expandOptions();
+    await screen.findByLabelText("10.42.0.0/24");
+
+    (screen.getByLabelText("192.168.1.0/24") as HTMLInputElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+    // The line has narrowed; effects have not run yet.
+    expect(statedScope()).toBe("USB · 1 of 2 networks · 253 probes");
+
+    (screen.getByRole("button", { name: "Scan" }) as HTMLButtonElement).click();
+    await act(async () => {});
+
+    expect(FakeEventSource.urls).toEqual(["/api/printers/discover?subnet=10.42.0.0%2F24&port=9100&timeout=1000"]);
   });
 
   // A dead button with no visible reason is the failure this replaces: the
@@ -456,7 +486,7 @@ describe("PrintersPage", () => {
 
     await scan("Scan");
     await act(async () => { stream().emit("printer", discovered()); });
-    expect(screen.getByText("1 printer found")).toBeTruthy();
+    expect(screen.getByText("1 printer found (1 new)")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Add 10.0.5.20:9100" }));
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
@@ -464,7 +494,7 @@ describe("PrintersPage", () => {
 
     // Recorded while the sweep is still running, which is when adding
     // actually happens.
-    expect(await screen.findByText("1 printer found · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("1 printer found (0 new)")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
     await expectFlash("warehouse", "printer-row-found");
   });
@@ -498,7 +528,7 @@ describe("PrintersPage", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
 
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
-    expect(screen.getByText("1 printer found · 1 already configured")).toBeTruthy();
+    expect(screen.getByText("1 printer found (0 new)")).toBeTruthy();
   });
 
   test("the chosen scan scope survives a route change, so Rescan repeats the same sweep", async () => {
@@ -616,7 +646,7 @@ describe("PrintersPage", () => {
 
     // The host typed here is the one the scan is listing, and nothing but
     // this dialog ever knew it.
-    expect(await screen.findByText("2 printers found · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("2 printers found (1 new)")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add 10.0.5.20:9100" }))).toBe(true);
     // The neighbour on the next address is a different printer and is still
     // offered: registering one endpoint may never claim another.
@@ -643,7 +673,7 @@ describe("PrintersPage", () => {
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
 
-    expect(await screen.findByText("1 printer found · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("1 printer found (0 new)")).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Add POS-58 Printer" }))).toBe(true);
   });
 
@@ -677,7 +707,7 @@ describe("PrintersPage", () => {
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add printer" })); });
 
-    expect(await screen.findByText("2 printers found · 1 already configured")).toBeTruthy();
+    expect(await screen.findByText("2 printers found (1 new)")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Add POS-58 Printer" })).toHaveLength(1);
   });
 
@@ -705,7 +735,7 @@ describe("PrintersPage", () => {
     // Counted, never listed, and the printer it already is lights up — proved
     // reachable by the scan rather than by waiting for the next poll.
     expect(gone(screen.queryByRole("button", { name: "Add 10.42.0.71:9100" }))).toBe(true);
-    expect(screen.getByText("1 printer found · 1 already configured")).toBeTruthy();
+    expect(screen.getByText("1 printer found (0 new)")).toBeTruthy();
     const [row, card] = screen.getAllByText("kitchen");
     expect(row?.closest("tr")?.classList.contains("printer-row-found")).toBe(true);
     expect(card?.closest("article")?.classList.contains("printer-row-found")).toBe(true);

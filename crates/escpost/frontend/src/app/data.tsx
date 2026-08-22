@@ -19,7 +19,6 @@ export type ScanState = {
   total: number;
   printers: DiscoveredPrinter[];
   failures: UsbDiscoveryFailure[];
-  finishedAt: number | null;
   error: string | null;
 };
 
@@ -99,7 +98,6 @@ const initialScan: ScanState = {
   total: 0,
   printers: [],
   failures: [],
-  finishedAt: null,
   error: null,
 };
 
@@ -248,11 +246,11 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
       },
       onCompleted: () => {
         scanCloser.current = null;
-        setScan((current) => ({ ...current, phase: "done", finishedAt: Date.now() }));
+        setScan((current) => ({ ...current, phase: "done" }));
       },
       onError: (message) => {
         scanCloser.current = null;
-        setScan((current) => ({ ...current, phase: "error", error: message, finishedAt: Date.now() }));
+        setScan((current) => ({ ...current, phase: "error", error: message }));
       },
     });
   }, [closeScan, handleDiscoveredPrinter]);
