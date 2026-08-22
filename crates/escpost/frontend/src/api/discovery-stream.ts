@@ -9,7 +9,7 @@ import type { DiscoveredPrinter, DiscoveryNetwork, SkippedNetwork } from "./type
 // the endpoint applies the very same defaults it advertises on
 // `discover/networks`. Restating a number the server owns would go stale
 // silently and scan the wrong port. They are carried even for a USB-only
-// scan, where the panel's fields are disabled rather than cleared, and
+// scan, where the card's fields are disabled rather than cleared, and
 // dropped on the wire — see `discoveryQueryString`.
 export type DiscoveryQuery = {
   usb: boolean;

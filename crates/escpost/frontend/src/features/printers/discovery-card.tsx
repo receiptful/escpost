@@ -187,13 +187,22 @@ export function DiscoveryCard({ query, open, onOpenChange, results, actions }: {
     }
   };
 
+  // Whether the next networks response should be seeded from the recorded
+  // scope. True for a mount and for Retry — both are the card arriving at a
+  // scan it has not configured yet — and false for exactly one reload, the
+  // one Reset asks for.
+  const reseed = useRef(true);
+
   useEffect(() => {
     const controller = new AbortController();
     setResource({ data: null, error: null });
     void getDiscoveryNetworks(controller.signal)
       .then((data) => {
         setResource({ data, error: null });
-        seed(data);
+        if (reseed.current) {
+          seed(data);
+        }
+        reseed.current = true;
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) {
@@ -281,7 +290,7 @@ export function DiscoveryCard({ query, open, onOpenChange, results, actions }: {
   //
   // The port is not in the line. It is one field of a form that is one click
   // away, and a line that outgrows its row states nothing at all.
-  const cost = networkSelected && data ? `${probes.toLocaleString()} probes` : "";
+  const cost = networkSelected && data ? countOf(probes, "probe") : "";
   const scopeSummary = !usb && !network
     ? "Nothing to scan"
     : !network
@@ -321,12 +330,17 @@ export function DiscoveryCard({ query, open, onOpenChange, results, actions }: {
       : [...current, subnet]);
   };
 
-  // Back to the card as it opened, adapters included: a network appears or
-  // vanishes with a cable or a VPN, and Reset is the only way back from a
-  // failed detection. These are the hard defaults rather than the recorded
-  // scope only for as long as the refetch takes — its response re-seeds the
-  // controls, so Reset lands on the scope the card opened with, which is
-  // what "as it opened" has to mean now that it opens configured.
+  // Back to the scope of a scan with no options set, which is the scope
+  // `resettable` below compares against and the only thing a lit Reset can
+  // honestly deliver. Adapters are re-detected with it, because a network
+  // appears or vanishes with a cable or a VPN and this is also the way back
+  // from a failed detection.
+  //
+  // The refetch that follows must not re-seed. Seeding applies the recorded
+  // scope, so a card opened on a narrowed scan would land straight back on
+  // it — Reset would leave the controls byte-identical and stay lit,
+  // inviting the same press again. Opening the card still seeds from the
+  // last scan; this is the one path out of it.
   const reset = () => {
     setUsb(true);
     setNetwork(true);
@@ -334,6 +348,7 @@ export function DiscoveryCard({ query, open, onOpenChange, results, actions }: {
     setCustom("");
     setPort(null);
     setTimeoutMs(null);
+    reseed.current = false;
     setReloads((count) => count + 1);
   };
 

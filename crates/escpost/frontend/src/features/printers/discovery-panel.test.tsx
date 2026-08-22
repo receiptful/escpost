@@ -95,7 +95,7 @@ describe("DiscoveryPanel", () => {
     });
 
     expect(screen.getByText("10.42.0.83:9100")).toBeTruthy();
-    expect(screen.queryByText("kitchen")).toBeNull();
+    expect(gone(screen.queryByText("kitchen"))).toBe(true);
     expect(view.container.textContent).not.toContain("10.42.0.71");
     // Both printers answered, so both are counted; only the unconfigured one
     // is a row.
@@ -388,7 +388,7 @@ describe("DiscoveryPanel", () => {
     });
 
     expect(screen.getByRole("alert").textContent).toContain("The discovery stream ended unexpectedly.");
-    expect(screen.queryByText("No printers discovered")).toBeNull();
+    expect(gone(screen.queryByText("No printers discovered"))).toBe(true);
   });
 
   // The page decides when to show the panel, but an idle scan has nothing to

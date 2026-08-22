@@ -381,6 +381,30 @@ describe("PrintersPage", () => {
   // sweep interrupted after it reached a printer has produced something worth
   // keeping, and the browser — unlike a terminated `printers discover` — is
   // still on screen to keep it.
+  // The scan line's USB clause is the one fact the stream cannot carry, so it
+  // comes from the scope the scan started with. Not from a constant, and not
+  // from the live checkbox: a reader who unticks USB while a scan runs has
+  // changed the next scan, not the one being reported.
+  test("the scan line reports the USB half of the scan that ran, not of the form", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(fetchStub());
+    await act(async () => {});
+
+    expandOptions();
+    await screen.findByLabelText("10.42.0.0/24");
+    fireEvent.click(screen.getByLabelText("USB Printers"));
+    await scan("Scan");
+    await act(async () => { stream().emit("progress", { completed: 12, total: 507 }); });
+
+    expect(screen.getByText("Scanning 12 / 507 IP addresses")).toBeTruthy();
+
+    // Reticking USB describes the next scan, and may not rewrite this one.
+    expandOptions();
+    fireEvent.click(screen.getByLabelText("USB Printers"));
+    expect(statedScope()).toBe("USB · 2 networks · 507 probes");
+    expect(screen.getByText("Scanning 12 / 507 IP addresses")).toBeTruthy();
+  });
+
   test("Cancel stops the scan, keeps its results, and says where it stopped", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());

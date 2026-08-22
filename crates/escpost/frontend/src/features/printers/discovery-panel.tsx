@@ -72,8 +72,9 @@ function failureSentence(failure: UsbDiscoveryFailure) {
  * in the inventory below, which the application data provider drives.
  *
  * It renders into the discovery card rather than owning one, between the
- * scan options above it and the controls below: the card's heading already
- * names this, and the button in that bar starts, stops and repeats the scan
+ * scan options above it and the controls below: the section around that
+ * card is already titled `Printer Discovery`, and the button in that bar
+ * starts, stops and repeats the scan
  * reported here. No card chrome of its own, or one block would read as two.
  *
  * `usb` is the one fact about the scan that the stream does not carry: it

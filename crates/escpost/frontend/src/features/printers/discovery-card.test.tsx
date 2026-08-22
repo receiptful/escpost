@@ -223,6 +223,13 @@ describe("DiscoveryCard", () => {
     fireEvent.input(custom, { target: { value: "10.0.0.0/16" } });
     expect(statedScope()).toBe("USB · 10.0.0.0/16 · 65,534 probes");
     expectScope({ usb: true, network: true, subnets: ["10.0.0.0/16"], port: 9100, timeoutMs: 1000 });
+
+    // A single host, which is what a `/32` is for and what `Subnet::hosts`
+    // counts as one address rather than as a subnet minus its network and
+    // broadcast. It read `1 probes` until the shared plural rule was applied
+    // here too.
+    fireEvent.input(custom, { target: { value: "10.0.5.7/32" } });
+    expect(statedScope()).toBe("USB · 10.0.5.7/32 · 1 probe");
   });
 
   // A field holding only separators is content, not emptiness. Reading it as
@@ -449,11 +456,46 @@ describe("DiscoveryCard", () => {
 
   // The scope a scan was configured with is a difference from the defaults,
   // and reopening on it is exactly when a reader wants the way back.
-  test("Reset is offered when the card opens on a narrowed scope", async () => {
-    renderOptions(twoNetworks, { usb: true, network: true, subnets: ["192.168.1.0/24"], port: 9100, timeoutMs: 1000 });
+  // The case Reset exists for, and the one it used to fail at: the card opens
+  // on the scope of the last scan, and pressing Reset has to escape it. It
+  // refetches, and the response may not re-seed the recorded scope back over
+  // the controls — that left the scope byte-identical and the button lit,
+  // asking to be pressed again.
+  test("Reset escapes the narrowed scope the card opened on", async () => {
+    renderOptions(twoNetworks, { usb: false, network: true, subnets: ["192.168.1.0/24"], port: 9101, timeoutMs: 500 });
     await screen.findByLabelText("10.42.0.0/24");
+    const reset = () => screen.getByRole("button", { name: "Reset" });
+    expect(statedScope()).toBe("1 of 2 networks · 254 probes");
+    expect(reset().hasAttribute("disabled")).toBe(false);
 
-    expect(screen.getByRole("button", { name: "Reset" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(reset());
+
+    // The scope of a scan with no options set: both transports, every
+    // detected network, and the port and timeout the server advertises.
+    await waitFor(() => expect(statedScope()).toBe("USB · 2 networks · 507 probes"));
+    expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
+    expect((screen.getByLabelText("USB Printers") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("192.168.1.0/24") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("RAW TCP port") as HTMLInputElement).value).toBe("9100");
+    // Nothing left to undo, so it stops asking.
+    expect(reset().hasAttribute("disabled")).toBe(true);
+  });
+
+  // Retry is the other reload, and it is the opposite case: detection failed
+  // before the card could seed, so its response still has to.
+  test("Retry after a failed detection still seeds the recorded scope", async () => {
+    const responses = [
+      json({ error: { code: "network_detection_failed", message: "Unable to detect this machine's networks." } }, 500),
+      json(twoNetworks),
+    ];
+    globalThis.fetch = (() => Promise.resolve(responses.shift()!)) as unknown as typeof globalThis.fetch;
+    render(<Options query={{ usb: true, network: true, subnets: ["192.168.1.0/24"], port: 9100, timeoutMs: 1000 }} />);
+    await screen.findByText("Unable to detect this machine's networks.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await screen.findByLabelText("10.42.0.0/24");
+    expect(statedScope()).toBe("USB · 1 of 2 networks · 254 probes");
   });
 
   test("Reset is reachable with the form shut, and re-detects from there", async () => {

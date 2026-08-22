@@ -14,9 +14,8 @@ type ResourcePhase = "loading" | "ready" | "refreshing" | "error";
 type ScanPhase = "idle" | "running" | "done" | "stopped" | "error";
 
 // Owns the discovery scan across page navigation: a scan started from the
-// Discover page keeps running (and this state keeps updating) even after the
-// user leaves the page, because it lives here rather than in a route
-// component.
+// printers page keeps running (and this state keeps updating) even after the
+// user leaves it, because it lives here rather than in a route component.
 export type ScanState = {
   phase: ScanPhase;
   completed: number;

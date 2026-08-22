@@ -78,6 +78,13 @@ function networkPrinter(): DiscoveredPrinter {
 // configured names and the profile catalog from, and records what it posts.
 // `add` overrides the registration response, which otherwise echoes the
 // posted name back the way the endpoint does.
+// Absence as a boolean. `expect(node).toBeNull()` prints the entire happy-dom
+// node graph when it fails — tens of megabytes for a node still attached to
+// the page — which buries every other failure in the run.
+function gone(element: Element | null) {
+  return element === null;
+}
+
 function renderDialog(printer: DiscoveredPrinter | null, options: {
   printers?: string[];
   profiles?: string[];
@@ -158,7 +165,7 @@ describe("AddPrinterDialog", () => {
     await screen.findByText('printer "kitchen" is already configured');
 
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Kitchen" } });
-    expect(screen.queryByText(/already configured/)).toBeNull();
+    expect(gone(screen.queryByText(/already configured/))).toBe(true);
     fireEvent.click(addButton());
 
     // The connection travels with the name because the owner cannot
@@ -208,7 +215,7 @@ describe("AddPrinterDialog", () => {
     expect(explanation.textContent).toBe(
       "You can only print to printers you have added to your list of configured printers.",
     );
-    expect(explanation.querySelector(".font-mono")).toBeNull();
+    expect(gone(explanation.querySelector(".font-mono"))).toBe(true);
     expect(view.container.textContent).not.toContain("stored in");
   });
 
@@ -229,7 +236,7 @@ describe("AddPrinterDialog", () => {
     // registers is still `network` on the wire and in the inventory column —
     // only what the reader is told to call it changed.
     expect(screen.getByRole("heading", { name: "Add IP printer" })).toBeTruthy();
-    expect(screen.queryByLabelText("OUT endpoint")).toBeNull();
+    expect(gone(screen.queryByLabelText("OUT endpoint"))).toBe(true);
     expect(view.container.textContent).not.toContain("USB");
     expect((screen.getByLabelText("Port") as HTMLInputElement).value).toBe("9100");
 
@@ -240,7 +247,7 @@ describe("AddPrinterDialog", () => {
     expect(addButton().hasAttribute("disabled")).toBe(true);
 
     // `max` binds the spinner, not typed or pasted text, so the upper bound
-    // has to be the panel's own — otherwise the value reaches serde, which
+    // has to be the dialog's own — otherwise the value reaches serde, which
     // answers with a generic body rejection instead of this sentence.
     fireEvent.input(screen.getByLabelText("Port"), { target: { value: "70000" } });
     expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
@@ -392,7 +399,7 @@ describe("AddPrinterDialog", () => {
   test("a discovered network printer registers the endpoint it answered on, read-only", async () => {
     const { posted } = renderDialog(networkPrinter(), { printers: [] });
 
-    expect(screen.queryByLabelText("Host")).toBeNull();
+    expect(gone(screen.queryByLabelText("Host"))).toBe(true);
     expect(screen.getByText(/10\.42\.0\.90:9100/)).toBeTruthy();
 
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "back-office" } });

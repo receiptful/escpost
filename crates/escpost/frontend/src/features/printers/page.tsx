@@ -62,7 +62,7 @@ export function PrintersPage() {
       <section aria-labelledby="discovery-heading" class="space-y-2">
         <h2 id="discovery-heading" class="font-medium">Printer Discovery</h2>
 
-        {/* The bar along the bottom of the options is the panel's; these two
+        {/* The bar along the bottom belongs to the card; these two
             buttons are the page's, because both act on things only the page
             has: the scan and the registration dialog.
 

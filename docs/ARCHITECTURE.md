@@ -331,7 +331,7 @@ error, retry, and stale-data states without introducing client-side filters or
 search parameters.
 
 Printer discovery and registration are three routes. `GET
-/api/printers/discover/networks` prepares the browser's scan-options panel: the
+/api/printers/discover/networks` prepares the browser's discovery card: the
 automatically detected networks with their interface name, subnet, and own host
 count; the skipped adapters with a machine-readable `reason` (`too_large` or
 `unusable_netmask`) and the shared layer's `description` of it; and
@@ -365,8 +365,15 @@ decision, not the endpoint's.
 A scan belongs to its request. Two tabs run two scans, there is no global scan
 and no shared scan state to reconcile, and cancellation needs no mechanism of
 its own: the response body owns the scan future, so dropping the response drops
-the `JoinSet` and aborts every outstanding probe. Cancelling discards what the
-run had found, exactly as interrupting `printers discover` does.
+the `JoinSet` and aborts every outstanding probe.
+
+Cancelling stops the probing without discarding what the run had found: the
+printers already reported stay listed and stay addable, and the scan ends in a
+`stopped` phase whose line says where it was interrupted rather than claiming a
+total it never reached. This does not diverge from `printers discover`, which
+prints nothing for a run you interrupt — the operation both interfaces drive is
+identical, and what differs is what each can do with results it already holds.
+A terminated process has nowhere to put them; a page still on screen does.
 
 `POST /api/printers/add` is the first write endpoint the API exposes. Its body
 carries the name, an optional profile, and one connection — a USB route (vendor,
