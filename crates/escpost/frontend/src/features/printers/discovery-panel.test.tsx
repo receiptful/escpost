@@ -163,10 +163,12 @@ describe("DiscoveryPanel", () => {
     expect(screen.getByText("Scanned 253 IP addresses")).toBeTruthy();
   });
 
-  // A stopped scan is not a finished one and may not read like it: the
-  // printers it reached stay listed and addable, and the line says where it
-  // stopped rather than reporting the total it never reached.
-  test("a stopped scan keeps its results and says where it stopped", () => {
+  // A stopped scan keeps the shape of the line the reader was already
+  // watching — only the verb settles from present to past — so the number
+  // they were tracking stays where it was. That it was cut short is legible
+  // from the count falling short of the total, the bar being gone and the
+  // button reading `Rescan`; the words do not have to carry it too.
+  test("a stopped scan keeps its results and the count it reached", () => {
     renderPanel({
       phase: "stopped",
       completed: 257,
@@ -174,7 +176,7 @@ describe("DiscoveryPanel", () => {
       printers: [networkPrinter("10.42.0.83")],
     });
 
-    expect(screen.getByText("Checked USB · stopped after 257 of 508 IP addresses")).toBeTruthy();
+    expect(screen.getByText("Checked USB · scanned 257 / 508 IP addresses")).toBeTruthy();
     expect(screen.getByText("1 printer found (1 new)")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add 10.42.0.83:9100" })).toBeTruthy();
     // The bar belongs to a scan in progress, and this one is over.

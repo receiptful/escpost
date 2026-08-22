@@ -182,8 +182,13 @@ export function DiscoveryPanel({ scan, usb, onAdd }: {
   // The network half states probe counts, never networks or ports: the scan
   // state carries what the stream reported, and the stream reports progress
   // rather than the query that produced it.
-  // A stopped scan says where it stopped rather than how far it got, because
-  // the total it was heading for is no longer a promise it kept.
+  // A stopped scan keeps the shape of the line the reader was already
+  // watching: same `N / M`, same place, only the verb settling from present
+  // to past. Saying it in words as well — "stopped after 514 of 1,012" —
+  // would change the verb, the preposition and the separator at once, and
+  // make the eye re-parse a line it had been tracking. That the sweep was
+  // cut short is already legible from the count falling short of the total,
+  // the progress bar being gone and the button reading `Rescan`.
   const stopped = scan.phase === "stopped";
   const usbLine = usb ? (running ? "checking USB" : "checked USB") : "";
   const networkLine = scan.total === 0
@@ -196,7 +201,7 @@ export function DiscoveryPanel({ scan, usb, onAdd }: {
       // has just printed the subnets it is about to sweep.
       ? `scanning ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} IP addresses`
       : stopped
-        ? `stopped after ${scan.completed.toLocaleString()} of ${scan.total.toLocaleString()} IP addresses`
+        ? `scanned ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} IP addresses`
         : `scanned ${scan.total.toLocaleString()} IP addresses`;
   const halves = [usbLine, networkLine].filter((half) => half.length > 0).join(" · ");
   // A scan with neither half to report is one whose targets have not arrived

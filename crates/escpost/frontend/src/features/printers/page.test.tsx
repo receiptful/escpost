@@ -376,7 +376,7 @@ describe("PrintersPage", () => {
     // and the line refuses to claim the sweep finished.
     expect(screen.getByRole("button", { name: "Add 10.0.5.20:9100" })).toBeTruthy();
     expect(screen.getByText("1 printer found (1 new)")).toBeTruthy();
-    expect(screen.getByText("Checked USB · stopped after 257 of 508 IP addresses")).toBeTruthy();
+    expect(screen.getByText("Checked USB · scanned 257 / 508 IP addresses")).toBeTruthy();
     expect(gone(screen.queryByRole("progressbar"))).toBe(true);
     expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Cancel" }))).toBe(true);
