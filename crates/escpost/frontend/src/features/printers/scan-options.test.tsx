@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
 import type { DiscoveryNetworksResponse } from "../../api/types";
 import { ScanOptions } from "./scan-options";
@@ -29,18 +29,43 @@ function json(body: unknown, status = 200) {
 // the provider hands the panel until one has: the CLI's no-flag behaviour.
 const noScanYet: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 
-function renderOptions(response: Response | DiscoveryNetworksResponse, query: DiscoveryQuery = noScanYet) {
+// Collapsed is how the panel sits on an idle page, so every test about the
+// form itself opens the disclosure first and only the ones about the
+// disclosure render it shut.
+function renderOptions(response: Response | DiscoveryNetworksResponse, query: DiscoveryQuery = noScanYet, expanded = true) {
   const onStart = jest.fn();
-  const onClose = jest.fn();
+  const onScopeChange = jest.fn();
   globalThis.fetch = (() => Promise.resolve(
     response instanceof Response ? response : json(response),
   )) as unknown as typeof globalThis.fetch;
-  const view = render(<ScanOptions query={query} onStart={onStart} onClose={onClose} />);
-  return { view, onStart, onClose };
+  const view = render(<ScanOptions query={query} onStart={onStart} onScopeChange={onScopeChange} />);
+  if (expanded) {
+    fireEvent.click(disclosure());
+  }
+  return { view, onStart, onScopeChange };
+}
+
+function disclosure() {
+  return screen.getByRole("button", { name: "Scan options" });
+}
+
+// The collapsed line, read through the element the disclosure describes
+// itself with. By id rather than by text, because the footer states some of
+// the same phrases and this is about the one that survives the form being
+// shut.
+function statedScope() {
+  return document.getElementById("scan-options-scope")?.textContent;
 }
 
 function startButton() {
   return screen.getByRole("button", { name: "Start scan" });
+}
+
+// Absence as a boolean. `expect(node).toBeNull()` prints the entire happy-dom
+// node graph when it fails — tens of megabytes for a node still attached to
+// the page — which buries every other failure in the run.
+function gone(element: Element | null) {
+  return element === null;
 }
 
 afterEach(cleanup);
@@ -73,7 +98,8 @@ describe("ScanOptions", () => {
 
     // Reset re-detects rather than restoring a remembered list: an adapter
     // appears or vanishes with a cable, and this is the only way back from a
-    // failed detection.
+    // failed detection. Reopened first, since starting a scan shuts the form.
+    fireEvent.click(disclosure());
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     expect(screen.getByLabelText("Detecting networks")).toBeTruthy();
     expect(await screen.findByText("507 probes")).toBeTruthy();
@@ -131,8 +157,10 @@ describe("ScanOptions", () => {
     fireEvent.click(startButton());
     expect(onStart).toHaveBeenCalledWith({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
 
+    // Reopened, since starting a scan shuts the form.
+    fireEvent.click(disclosure());
     fireEvent.click(screen.getByLabelText("USB"));
-    expect(screen.getByText("Nothing to scan")).toBeTruthy();
+    expect(statedScope()).toBe("Nothing to scan");
     expect(startButton().hasAttribute("disabled")).toBe(true);
   });
 
@@ -286,8 +314,12 @@ describe("ScanOptions", () => {
   test("keeps a skeleton network list until the networks response arrives", async () => {
     let resolveNetworks!: (response: Response) => void;
     globalThis.fetch = (() => new Promise<Response>((resolve) => { resolveNetworks = resolve; })) as unknown as typeof globalThis.fetch;
-    const view = render(<ScanOptions query={noScanYet} onStart={jest.fn()} onClose={jest.fn()} />);
+    const view = render(<ScanOptions query={noScanYet} onStart={jest.fn()} onScopeChange={jest.fn()} />);
+    fireEvent.click(disclosure());
 
+    // The collapsed line says as much as is known, which until the response
+    // lands is that the networks are still being counted.
+    expect(screen.getByText("USB · counting networks…")).toBeTruthy();
     expect(screen.getByLabelText("Detecting networks")).toBeTruthy();
     expect(view.container.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
     expect(screen.getByText("Counting…")).toBeTruthy();
@@ -305,10 +337,14 @@ describe("ScanOptions", () => {
       json(twoNetworks),
     ];
     globalThis.fetch = (() => Promise.resolve(responses.shift()!)) as unknown as typeof globalThis.fetch;
-    render(<ScanOptions query={noScanYet} onStart={jest.fn()} onClose={jest.fn()} />);
+    render(<ScanOptions query={noScanYet} onStart={jest.fn()} onScopeChange={jest.fn()} />);
+    fireEvent.click(disclosure());
 
     expect(await screen.findByText("Unable to detect this machine's networks.")).toBeTruthy();
     expect(screen.getByText("Networks unavailable")).toBeTruthy();
+    // A panel that cannot name a scope states that where the scope goes,
+    // rather than leaving the last thing it knew standing.
+    expect(screen.getByText("USB · networks unavailable")).toBeTruthy();
     expect(startButton().hasAttribute("disabled")).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -316,12 +352,107 @@ describe("ScanOptions", () => {
     expect(startButton().hasAttribute("disabled")).toBe(false);
   });
 
-  test("closes from the close button and from Escape", async () => {
-    const { onClose } = renderOptions(twoNetworks);
-    await screen.findByLabelText("10.42.0.0/24");
+  // The panel lives in the page now rather than over it, so an idle page is
+  // one row: the form is behind a disclosure and nothing about it overlays
+  // the results below.
+  test("renders collapsed, and the disclosure it announces is the form", async () => {
+    renderOptions(twoNetworks, noScanYet, false);
+    const button = disclosure();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close scan options" }));
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
+    expect(gone(screen.queryByRole("button", { name: "Start scan" }))).toBe(true);
+
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    const custom = await screen.findByLabelText("Custom network");
+    // `aria-controls` has to name the region that actually appeared, or the
+    // announcement is about something else.
+    expect(document.getElementById(button.getAttribute("aria-controls") ?? "")?.contains(custom)).toBe(true);
+
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
+  });
+
+  // The collapsed line is the only place an idle page states what a scan
+  // would cover, so it has to open on the recorded scope rather than on the
+  // default one.
+  test("states the recorded scope while collapsed", async () => {
+    renderOptions(twoNetworks, {
+      usb: true,
+      network: true,
+      subnets: ["192.168.1.0/24"],
+      port: 9101,
+      timeoutMs: 500,
+    }, false);
+
+    await screen.findByText("USB · 1 of 2 networks · port 9101");
+    expect(statedScope()).toBe("USB · 1 of 2 networks · port 9101");
+  });
+
+  test("the stated scope follows every control that changes it", async () => {
+    renderOptions(twoNetworks);
+    await screen.findByLabelText("10.42.0.0/24");
+    expect(statedScope()).toBe("USB · 2 networks · port 9100");
+
+    fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
+    expect(statedScope()).toBe("USB · 1 of 2 networks · port 9100");
+
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
+    expect(statedScope()).toBe("USB · 1 of 2 networks · port 9101");
+
+    // A single custom network is named outright; several are only counted,
+    // since the line has one row and a list of CIDRs has no end.
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "10.0.5.0/24" } });
+    expect(statedScope()).toBe("USB · 10.0.5.0/24 · port 9101");
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "10.0.5.0/24, 10.0.6.0/24" } });
+    expect(statedScope()).toBe("USB · 2 custom networks · port 9101");
+
+    // A refused entry is no scope at all, and the line says so rather than
+    // leaving the last one it could state standing.
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "enp5s0" } });
+    expect(statedScope()).toBe("USB · custom network refused · port 9101");
+
+    fireEvent.input(screen.getByLabelText("Custom network"), { target: { value: "" } });
+    fireEvent.click(screen.getByLabelText("Network"));
+    expect(statedScope()).toBe("USB only");
+
+    fireEvent.click(screen.getByLabelText("USB"));
+    expect(statedScope()).toBe("Nothing to scan");
+  });
+
+  // The page starts scans with what this reports, so the report is the same
+  // query `Start scan` sends — and is withdrawn the moment the controls stop
+  // naming a scannable scope.
+  test("publishes the scope it states, and nothing while it states none", async () => {
+    const { onScopeChange, onStart } = renderOptions(twoNetworks);
+    await screen.findByLabelText("10.42.0.0/24");
+    const stated = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
+    // Awaited, because publishing is an effect and the response that seeds
+    // the controls lands one render before the effects that follow it.
+    await waitFor(() => expect(onScopeChange).toHaveBeenLastCalledWith(stated));
+
+    fireEvent.click(startButton());
+    expect(onStart).toHaveBeenCalledWith(stated);
+
+    fireEvent.click(disclosure());
+    fireEvent.click(screen.getByLabelText("Network"));
+    fireEvent.click(screen.getByLabelText("USB"));
+    await waitFor(() => expect(onScopeChange).toHaveBeenLastCalledWith(null));
+  });
+
+  // The footer button is inside the form, so pressing it is done with the
+  // form — and the progress and results it just started need the room. The
+  // header's own button is not inside it and leaves it as the reader
+  // arranged it.
+  test("Start scan shuts the form it sits in, leaving its scope stated", async () => {
+    renderOptions(twoNetworks);
+    await screen.findByLabelText("10.42.0.0/24");
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
+
+    fireEvent.click(startButton());
+    expect(disclosure().getAttribute("aria-expanded")).toBe("false");
+    expect(statedScope()).toBe("USB · 2 networks · port 9101");
   });
 });

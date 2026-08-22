@@ -34,14 +34,21 @@ function json(body: unknown, status = 200) {
 }
 
 // Every endpoint the assembled page reaches for on its own, so a test only
-// has to state the one it is actually about.
+// has to state the one it is actually about. The networks are among them
+// now: the discovery panel is always mounted and states its scope from
+// them, so a stub that leaves them out breaks tests that are about
+// something else entirely.
+function shared(url: string) {
+  if (url === "/api/status") return json(status);
+  if (url === "/api/profiles/list") return json({ profiles: [] });
+  if (url === "/api/printers/discover/networks") return json(networks);
+  return null;
+}
+
 function fetchStub(printers: unknown = { printers: [] }) {
   return ((input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/status") return Promise.resolve(json(status));
-    if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
-    if (url === "/api/printers/discover/networks") return Promise.resolve(json(networks));
-    return Promise.resolve(json(printers));
+    const common = shared(String(input));
+    return Promise.resolve(common ?? json(printers));
   }) as typeof globalThis.fetch;
 }
 
@@ -172,6 +179,26 @@ function openMenu() {
   fireEvent.click(screen.getByRole("button", { name: "Discovery options" }));
 }
 
+function expandOptions() {
+  fireEvent.click(screen.getByRole("button", { name: "Scan options" }));
+}
+
+// The scope line under `Discovery`, read through the element the disclosure
+// describes itself with — by id, because the options footer states some of
+// the same phrases and this is about the one that stays visible.
+function statedScope() {
+  return document.getElementById("scan-options-scope")?.textContent;
+}
+
+// The header scans with the scope the discovery panel states, and the panel
+// can only state one once it knows this machine's networks — so pressing the
+// header means waiting for it to stand for something first.
+async function discover(name: "Discover printers" | "Rescan") {
+  const button = await screen.findByRole("button", { name });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  await act(async () => { fireEvent.click(button); });
+}
+
 afterEach(() => {
   cleanup();
   jest.useRealTimers();
@@ -183,21 +210,21 @@ afterEach(() => {
 describe("PrintersPage", () => {
   test("distinguishes initial loading, empty inventory, and initial API error", async () => {
     let resolvePrinters!: (response: Response) => void;
-    renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
-      ? Promise.resolve(json(status))
-      : String(input) === "/api/profiles/list"
-        ? Promise.resolve(json({ profiles: [] }))
-        : new Promise<Response>((resolve) => { resolvePrinters = resolve; })) as typeof globalThis.fetch);
+    renderPage(((input: RequestInfo | URL) => {
+      const common = shared(String(input));
+      return common
+        ? Promise.resolve(common)
+        : new Promise<Response>((resolve) => { resolvePrinters = resolve; });
+    }) as typeof globalThis.fetch);
     expect(screen.getByText("Loading printers…")).toBeTruthy();
     await act(async () => { resolvePrinters(json({ printers: [] })); });
     expect(await screen.findByText("No printers configured.")).toBeTruthy();
 
     cleanup();
-    renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
-      ? Promise.resolve(json(status))
-      : String(input) === "/api/profiles/list"
-        ? Promise.resolve(json({ profiles: [] }))
-        : Promise.resolve(json({ error: { code: "printer_inventory_unavailable", message: "Printer inventory is unavailable." } }, 500))) as typeof globalThis.fetch);
+    renderPage(((input: RequestInfo | URL) => Promise.resolve(
+      shared(String(input))
+      ?? json({ error: { code: "printer_inventory_unavailable", message: "Printer inventory is unavailable." } }, 500),
+    )) as typeof globalThis.fetch);
     expect(await screen.findByText("Printer inventory is unavailable.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
@@ -209,11 +236,9 @@ describe("PrintersPage", () => {
       json({ printers: [{ ...printer, name: "Bar" }] }),
       json({ error: { code: "printer_inventory_unavailable", message: "Printer inventory is unavailable." } }, 500),
     ];
-    renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
-      ? Promise.resolve(json(status))
-      : String(input) === "/api/profiles/list"
-        ? Promise.resolve(json({ profiles: [] }))
-        : Promise.resolve(inventories.shift()!)) as typeof globalThis.fetch);
+    renderPage(((input: RequestInfo | URL) => Promise.resolve(
+      shared(String(input)) ?? inventories.shift()!,
+    )) as typeof globalThis.fetch);
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
 
     expect(gone(screen.queryByRole("button", { name: "Refresh" }))).toBe(true);
@@ -232,11 +257,7 @@ describe("PrintersPage", () => {
   });
 
   test("renders matching desktop-table and mobile-card printer facts", async () => {
-    renderPage(((input: RequestInfo | URL) => String(input) === "/api/status"
-      ? Promise.resolve(json(status))
-      : String(input) === "/api/profiles/list"
-        ? Promise.resolve(json({ profiles: [] }))
-        : Promise.resolve(json({ printers: [printer] }))) as typeof globalThis.fetch);
+    renderPage(fetchStub({ printers: [printer] }));
     expect(await screen.findAllByText("Kitchen")).toHaveLength(2);
     expect(screen.getAllByText("Connected")).toHaveLength(2);
     expect(screen.getAllByText("Network")).toHaveLength(2);
@@ -244,28 +265,33 @@ describe("PrintersPage", () => {
     expect(screen.getAllByText("10.0.0.8:9100")).toHaveLength(2);
   });
 
-  test("the header offers discovery, scan options, and manual add, and no refresh button", async () => {
+  // Scan options is a section of the page now, not a menu entry and not a
+  // popover: an idle page shows the discovery block with the options shut,
+  // and the menu is left holding only the escape hatch.
+  test("the header offers discovery and manual add, with the scan options inline and shut", async () => {
     renderPage(fetchStub());
-    await act(async () => {});
+    expect(await screen.findByText("USB · 2 networks · port 9100")).toBeTruthy();
 
     expect(screen.getByRole("button", { name: "Discover printers" })).toBeTruthy();
-    expect(gone(screen.queryByRole("menuitem", { name: "Scan options…" }))).toBe(true);
+    expect(screen.getByRole("heading", { name: "Discovery" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("false");
 
     openMenu();
-    expect(screen.getByRole("menuitem", { name: "Scan options…" })).toBeTruthy();
+    expect(gone(screen.queryByRole("menuitem", { name: "Scan options…" }))).toBe(true);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
     expect(screen.getByRole("menuitem", { name: "Add network printer manually" })).toBeTruthy();
     expect(gone(screen.queryByRole("button", { name: "Refresh" }))).toBe(true);
   });
 
-  test("Discover printers scans with the current settings, and Cancel discards the scan", async () => {
+  test("Discover printers scans with the scope the options state, and Cancel discards the scan", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());
-    await act(async () => {});
 
-    // No port and no timeout: nobody has chosen either, and the endpoint owns
-    // both defaults. The page never states a number it does not own.
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
-    expect(FakeEventSource.urls).toEqual(["/api/printers/discover"]);
+    // Both transports and every network, which is the CLI's no-flag scope,
+    // with the port and timeout the panel asked the server for and is
+    // showing — the same query `Start scan` would send.
+    await discover("Discover printers");
+    expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9100&timeout=1000"]);
     expect(screen.getByRole("heading", { name: "Discovering printers" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
 
@@ -279,17 +305,42 @@ describe("PrintersPage", () => {
     renderPage(fetchStub());
     await act(async () => {});
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
     expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9101&timeout=1000"]);
-    expect(gone(screen.queryByRole("heading", { name: "Scan options" }))).toBe(true);
+    expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("false");
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rescan" })); });
     expect(FakeEventSource.urls[1]).toBe("/api/printers/discover?port=9101&timeout=1000");
+  });
+
+  // The line under `Discovery` is the only place an idle page says what a
+  // scan will cover, so the header may not scan something else — including
+  // when the options have been changed and never started.
+  test("the header scans the scope the options state, and refuses when they state none", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(fetchStub());
+    await act(async () => {});
+
+    expandOptions();
+    await screen.findByLabelText("10.42.0.0/24");
+    fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
+    expect(screen.getByText("USB · 2 networks · port 9101")).toBeTruthy();
+
+    await discover("Discover printers");
+    expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9101&timeout=1000"]);
+
+    // Nothing left to scan refuses in both places at once, or the header
+    // would run a sweep the panel is refusing to start. The form is still
+    // open: the header does not reach into it, only its own footer does.
+    fireEvent.click(screen.getByLabelText("Network"));
+    fireEvent.click(screen.getByLabelText("USB"));
+    expect(statedScope()).toBe("Nothing to scan");
+    expect(screen.getByRole("button", { name: "Start scan" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Rescan" }).hasAttribute("disabled")).toBe(true);
   });
 
   test("a manually registered printer lands in the inventory with the found highlight", async () => {
@@ -303,8 +354,8 @@ describe("PrintersPage", () => {
     };
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         added = true;
         return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
@@ -335,8 +386,8 @@ describe("PrintersPage", () => {
     };
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         added = true;
         return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
@@ -345,7 +396,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await discover("Discover printers");
     await act(async () => { stream().emit("printer", discovered()); });
     expect(screen.getByText("1 new so far")).toBeTruthy();
 
@@ -364,8 +415,8 @@ describe("PrintersPage", () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
       }
@@ -379,7 +430,7 @@ describe("PrintersPage", () => {
     render(<AppDataProvider><Navigable /></AppDataProvider>);
     await act(async () => {});
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await discover("Discover printers");
     await act(async () => { stream().emit("printer", discovered()); });
     fireEvent.click(screen.getByRole("button", { name: "Add 10.0.5.20:9100" }));
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "warehouse" } });
@@ -402,8 +453,7 @@ describe("PrintersPage", () => {
     render(<AppDataProvider><Navigable /></AppDataProvider>);
     await act(async () => {});
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
@@ -413,18 +463,19 @@ describe("PrintersPage", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rescan" })); });
+    // The line the page comes back showing is the narrowed scope, and
+    // `Rescan` sends exactly it.
+    expect(await screen.findByText("USB · 1 of 2 networks · port 9100")).toBeTruthy();
+    await discover("Rescan");
     expect(FakeEventSource.urls[1]).toBe(narrowed);
   });
 
   test("the scan options panel reopens showing the scope the last scan ran with", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-    globalThis.fetch = fetchStub();
     renderPage(fetchStub());
     await act(async () => {});
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
     fireEvent.input(screen.getByLabelText("RAW TCP port"), { target: { value: "9101" } });
@@ -432,8 +483,7 @@ describe("PrintersPage", () => {
 
     // The panel is where a reader goes to answer "what will Rescan do?", so
     // it may not answer with the default when the last scan was narrowed.
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     expect(checkbox("10.42.0.0/24").checked).toBe(true);
     expect(checkbox("192.168.1.0/24").checked).toBe(false);
@@ -441,33 +491,36 @@ describe("PrintersPage", () => {
     expect(screen.getByText("253 probes")).toBeTruthy();
   });
 
-  test("a network that has since disappeared reopens in the custom field", async () => {
+  // The panel detects the networks once per mount, so this is the case a
+  // route change produces: the page comes back, asks again, and the subnet
+  // the last scan ran on is gone.
+  test("a network that has since disappeared comes back in the custom field", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     let detections = 0;
-    renderPage(((input: RequestInfo | URL) => {
+    globalThis.fetch = ((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
       if (url === "/api/printers/discover/networks") {
         detections += 1;
-        // The cable came out between the two openings, so the subnet the
-        // scan ran on is no longer one of this machine's adapters.
+        // The cable came out while the reader was on another route, so the
+        // subnet the scan ran on is no longer one of this machine's adapters.
         return Promise.resolve(json(detections === 1
           ? networks
           : { ...networks, networks: networks.networks.slice(1) }));
       }
-      return Promise.resolve(json({ printers: [] }));
-    }) as typeof globalThis.fetch);
+      return Promise.resolve(shared(url) ?? json({ printers: [] }));
+    }) as typeof globalThis.fetch;
+    render(<AppDataProvider><Navigable /></AppDataProvider>);
     await act(async () => {});
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    expandOptions();
     await screen.findByLabelText("10.42.0.0/24");
     fireEvent.click(screen.getByLabelText("192.168.1.0/24"));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start scan" })); });
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Leave the printers page" })); });
+
+    expandOptions();
     await screen.findByLabelText("192.168.1.0/24");
     // A chosen subnet with no adapter behind it has no row to be checked in,
     // so it lands where the reader would have to retype it rather than
@@ -480,8 +533,8 @@ describe("PrintersPage", () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
       }
@@ -489,7 +542,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await discover("Discover printers");
     await act(async () => {
       stream().emit("printer", discovered());
       stream().emit("printer", discovered({ connection: { type: "network", host: "10.0.5.21", port: 9100 } }));
@@ -514,8 +567,8 @@ describe("PrintersPage", () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         return Promise.resolve(json({ name: "counter", transport: "usb", profile: null, warnings: [] }));
       }
@@ -523,7 +576,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await discover("Discover printers");
     await act(async () => { stream().emit("printer", discoveredUsb()); });
 
     fireEvent.click(screen.getByRole("button", { name: "Add POS-58 Printer" }));
@@ -542,8 +595,8 @@ describe("PrintersPage", () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         return Promise.resolve(json({ name: "counter", transport: "usb", profile: null, warnings: [] }));
       }
@@ -551,7 +604,7 @@ describe("PrintersPage", () => {
     }) as typeof globalThis.fetch);
     await act(async () => {});
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await discover("Discover printers");
     await act(async () => {
       stream().emit("printer", discoveredUsb());
       // Same vendor, product, interface and (absent) serial: only the port it
@@ -581,7 +634,7 @@ describe("PrintersPage", () => {
     }));
     expect(await screen.findAllByText("kitchen")).toHaveLength(2);
 
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover printers" })); });
+    await discover("Discover printers");
     await act(async () => {
       stream().emit("printer", discovered({
         configured_names: ["kitchen"],
@@ -612,8 +665,8 @@ describe("PrintersPage", () => {
     };
     renderPage(((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/status") return Promise.resolve(json(status));
-      if (url === "/api/profiles/list") return Promise.resolve(json({ profiles: [] }));
+      const common = shared(url);
+      if (common) return Promise.resolve(common);
       if (url === "/api/printers/add") {
         added = true;
         return Promise.resolve(json({ name: "warehouse", transport: "network", profile: null, warnings: [] }));
@@ -642,7 +695,9 @@ describe("PrintersPage", () => {
     expect(listCalls).toBe(2);
   });
 
-  test("the discovery menu holds focus, moves it with the arrow keys, and hands it back on Escape", async () => {
+  // One item is still a menu, and an arrow key in a one-item menu has
+  // nowhere to go but the item it is on.
+  test("the discovery menu holds focus, survives the arrow keys, and hands it back on Escape", async () => {
     renderPage(fetchStub());
     await act(async () => {});
 
@@ -654,32 +709,30 @@ describe("PrintersPage", () => {
     expect(focused()).toBe(0);
 
     fireEvent.keyDown(document, { key: "ArrowDown" });
-    expect(focused()).toBe(1);
-    fireEvent.keyDown(document, { key: "ArrowDown" });
     expect(focused()).toBe(0);
     fireEvent.keyDown(document, { key: "ArrowUp" });
-    expect(focused()).toBe(1);
+    expect(focused()).toBe(0);
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(gone(screen.queryByRole("menuitem"))).toBe(true);
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Discovery options");
   });
 
-  test("a pointer press outside the menu closes it, and opening it closes the scan options", async () => {
+  test("a pointer press outside the menu closes it, and leaves the scan options alone", async () => {
     renderPage(fetchStub());
     await act(async () => {});
 
-    openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scan options…" }));
-    expect(await screen.findByRole("heading", { name: "Scan options" })).toBeTruthy();
+    // The options are part of the page now rather than a second thing
+    // anchored to the same corner, so opening the menu cannot displace them.
+    expandOptions();
+    expect(await screen.findByLabelText("Custom network")).toBeTruthy();
 
-    // The menu and the panel are anchored to the same corner, so the menu may
-    // never open behind the panel.
     openMenu();
-    expect(gone(screen.queryByRole("heading", { name: "Scan options" }))).toBe(true);
+    expect(screen.getByLabelText("Custom network")).toBeTruthy();
 
     fireEvent.pointerDown(document.body);
     expect(gone(screen.queryByRole("menuitem"))).toBe(true);
+    expect(screen.getByLabelText("Custom network")).toBeTruthy();
   });
 
   test("a printer that has just become unavailable carries the lost highlight", async () => {
@@ -687,8 +740,9 @@ describe("PrintersPage", () => {
     const availabilities = ["connected", "unavailable"];
     let poll = 0;
     renderPage(((input: RequestInfo | URL) => {
-      if (String(input) !== "/api/printers/list") {
-        return Promise.resolve(json(status));
+      const common = shared(String(input));
+      if (common) {
+        return Promise.resolve(common);
       }
       const availability = availabilities[Math.min(poll, availabilities.length - 1)];
       poll += 1;

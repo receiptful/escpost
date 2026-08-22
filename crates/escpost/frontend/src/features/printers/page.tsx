@@ -17,7 +17,11 @@ export function PrintersPage() {
   const menu = useRef<HTMLUListElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [optionsOpen, setOptionsOpen] = useState(false);
+  // The scope the scan options currently state, or `null` while they state
+  // none. It is where `Discover printers` gets its query, so the header and
+  // the options footer cannot start two different sweeps — and neither can
+  // start one the panel's summary line is not showing.
+  const [scope, setScope] = useState<DiscoveryQuery | null>(null);
   // `null` while nothing is being registered, and `{ printer: null }` for the
   // manual dialog — `AddPrinterDialog` closes the native element in its
   // unmount cleanup, so dismissing it has to unmount it rather than blank a
@@ -72,12 +76,11 @@ export function PrintersPage() {
     };
   }, [menuOpen, closeMenu]);
 
-  // A scan is started from two places with the same settings: the split
-  // button repeats the last ones, the options panel supplies new ones and
-  // `startScan` makes those the last ones.
+  // A scan is started from two places with one scope: the split button and
+  // the options footer both send what the options state, and `startScan`
+  // makes it the scope a route change comes back to.
   const beginScan = (next: DiscoveryQuery) => {
     setMenuOpen(false);
-    setOptionsOpen(false);
     startScan(next);
   };
 
@@ -109,10 +112,14 @@ export function PrintersPage() {
         {/* One action, with everything that changes it attached to it. Full
             width on a phone, where it is the only thing in the header. */}
         <div class="join w-full sm:w-auto">
+          {/* Refused exactly when `Start scan` is refused, since both send
+              the same scope: a header that scanned anyway would be scanning
+              something other than what the panel below is stating. */}
           <button
             type="button"
             class="btn btn-primary join-item grow sm:grow-0"
-            onClick={() => beginScan(scanQuery)}
+            disabled={scope === null}
+            onClick={() => scope && beginScan(scope)}
           >
             {scan.phase === "idle" ? "Discover printers" : "Rescan"}
           </button>
@@ -123,42 +130,23 @@ export function PrintersPage() {
             aria-label="Discovery options"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            onClick={() => {
-              // The menu and the options panel are anchored to the same
-              // corner, so one has to give way rather than render behind the
-              // other, open and invisible.
-              setOptionsOpen(false);
-              setMenuOpen((open) => !open);
-            }}
+            onClick={() => setMenuOpen((open) => !open)}
           >
             ▾
           </button>
         </div>
 
         {menuOpen && (
-          // Each item's subtitle sits inside its button so the whole row stays
+          // The item's subtitle sits inside its button so the whole row stays
           // one target, and is hidden from the accessible name — which stays
           // the command — while `aria-describedby` still reads it out, since a
           // reference is followed into hidden content.
+          //
+          // One entry, since the scan options are a section of the page now
+          // rather than something to summon. Manual registration stays here:
+          // it is the escape hatch for a printer the scan cannot reach, not
+          // the normal path.
           <ul ref={menu} role="menu" class="absolute right-0 top-full z-20 mt-2 w-72 rounded-box bg-base-100 p-1 shadow-lg">
-            <li role="none">
-              <button
-                type="button"
-                role="menuitem"
-                class="w-full rounded-box px-3 py-2 text-left text-sm hover:bg-base-200"
-                aria-describedby="discovery-menu-options-hint"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setOptionsOpen(true);
-                }}
-              >
-                Scan options…
-                <span id="discovery-menu-options-hint" aria-hidden="true" class="block text-xs text-base-content/60">
-                  Transports, networks, port, timeout
-                </span>
-              </button>
-            </li>
-            <li role="separator" class="my-1 border-t border-base-300" />
             <li role="none">
               <button
                 type="button"
@@ -178,30 +166,36 @@ export function PrintersPage() {
             </li>
           </ul>
         )}
-
-        {optionsOpen && (
-          <div class="absolute right-0 top-full z-20 mt-2 flex w-full max-w-sm justify-end">
-            <ScanOptions query={scanQuery} onStart={beginScan} onClose={() => setOptionsOpen(false)} />
-          </div>
-        )}
       </div>
 
-      {/* Deliberately unwrapped: the panel renders nothing at all while the
-          scan is idle, and a heading or spacing box around it would leave an
-          empty block above the inventory on first load. */}
-      <DiscoveryPanel
-        scan={scan}
-        onAdd={(printer) => setRegistering({ printer })}
-        onCancel={() => {
-          // Cancel discards the results along with the sweep: `cancelScan`
-          // resets the scan to idle, so the panel unmounts and every printer
-          // found so far goes with it. That is what Ctrl-C does to `printers
-          // discover`, which also prints nothing for the run it interrupted,
-          // and the alternative — stopping but keeping a partial list — is a
-          // state the CLI has no equivalent of.
-          cancelScan();
-        }}
-      />
+      {/* Always present, unlike the results it grows: a scan's scope is
+          something a reader can ask about before there is a scan, so the
+          options need a place to live on an idle page — and progress and
+          results then extend the block they were configured in rather than
+          appearing from nowhere.
+
+          The results panel stays a sibling and keeps rendering nothing while
+          the scan is idle: this section supplies the continuity, so neither
+          component has to know about the other. */}
+      <section aria-labelledby="discovery-section-heading" class="space-y-2">
+        <h2 id="discovery-section-heading" class="font-medium">Discovery</h2>
+
+        <ScanOptions query={scanQuery} onStart={beginScan} onScopeChange={setScope} />
+
+        <DiscoveryPanel
+          scan={scan}
+          onAdd={(printer) => setRegistering({ printer })}
+          onCancel={() => {
+            // Cancel discards the results along with the sweep: `cancelScan`
+            // resets the scan to idle, so the panel unmounts and every printer
+            // found so far goes with it. That is what Ctrl-C does to `printers
+            // discover`, which also prints nothing for the run it interrupted,
+            // and the alternative — stopping but keeping a partial list — is a
+            // state the CLI has no equivalent of.
+            cancelScan();
+          }}
+        />
+      </section>
 
       <PrinterList />
 
