@@ -192,9 +192,11 @@ function sameBar(one: string, other: string) {
 }
 
 function below(first: string, second: string) {
-  const position = screen.getByRole("button", { name: first })
-    .compareDocumentPosition(screen.getByRole("button", { name: second }));
-  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  return precedes(screen.getByRole("button", { name: first }), screen.getByRole("button", { name: second }));
+}
+
+function precedes(first: Element, second: Element) {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
 // The scope line under `Discovery`, read through the element the disclosure
@@ -306,6 +308,31 @@ describe("PrintersPage", () => {
     expect(gone(screen.queryByRole("button", { name: "Refresh" }))).toBe(true);
   });
 
+  // Options, then what happened, then what to do next. The button that starts
+  // a scan sits after the results it produced rather than above them, and the
+  // three are one card rather than two with a bar floating between.
+  test("the discovery card reads options, then results, then controls", async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderPage(fetchStub());
+    await scan("Scan");
+    await act(async () => { stream().emit("printer", discovered()); });
+
+    const options = screen.getByRole("button", { name: "Scan options" });
+    const count = screen.getByText("1 printer found (1 new)");
+    const add = screen.getByRole("button", { name: "Add 10.0.5.20:9100" });
+    const reset = screen.getByRole("button", { name: "Reset" });
+
+    expect(precedes(options, count)).toBe(true);
+    expect(precedes(count, add)).toBe(true);
+    expect(precedes(add, reset)).toBe(true);
+
+    // The element the disclosure sits in is the card, and it holds the
+    // results and the bar as well — one container, not a stack of them.
+    const card = options.parentElement!;
+    expect(card.contains(add)).toBe(true);
+    expect(card.contains(reset)).toBe(true);
+  });
+
   // One slot, three jobs: start, stop, repeat. A separate Cancel down in the
   // progress line would be a second place to look for the same scan.
   test("the one scan button becomes Cancel while scanning and Rescan afterwards", async () => {
@@ -327,16 +354,32 @@ describe("PrintersPage", () => {
     expect(gone(screen.queryByRole("button", { name: "Cancel" }))).toBe(true);
   });
 
-  test("Cancel discards the scan and hands the slot back to Scan", async () => {
+  // Cancel stops the probing; it does not un-find what was already found. A
+  // sweep interrupted after it reached a printer has produced something worth
+  // keeping, and the browser — unlike a terminated `printers discover` — is
+  // still on screen to keep it.
+  test("Cancel stops the scan, keeps its results, and says where it stopped", async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     renderPage(fetchStub());
 
     await scan("Scan");
-    expect(screen.getByText("Checking USB")).toBeTruthy();
+    await act(async () => {
+      stream().emit("prepared", { targets: [], skipped: [], total_probes: 508 });
+      stream().emit("printer", discovered());
+      stream().emit("progress", { completed: 257, total: 508 });
+    });
+    expect(screen.getByText("Checking USB · scanning 257 / 508 IP addresses")).toBeTruthy();
 
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
-    expect(gone(screen.queryByText("Checking USB"))).toBe(true);
-    expect(screen.getByRole("button", { name: "Scan" })).toBeTruthy();
+
+    // The row is still listed and still addable, the count still counts it,
+    // and the line refuses to claim the sweep finished.
+    expect(screen.getByRole("button", { name: "Add 10.0.5.20:9100" })).toBeTruthy();
+    expect(screen.getByText("1 printer found (1 new)")).toBeTruthy();
+    expect(screen.getByText("Checked USB · stopped after 257 of 508 IP addresses")).toBeTruthy();
+    expect(gone(screen.queryByRole("progressbar"))).toBe(true);
+    expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
+    expect(gone(screen.queryByRole("button", { name: "Cancel" }))).toBe(true);
   });
 
   test("scanning shuts the options, and the next scan reuses the settings it was configured with", async () => {
@@ -352,8 +395,9 @@ describe("PrintersPage", () => {
     expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9101&timeout=1000"]);
     expect(screen.getByRole("button", { name: "Scan options" }).getAttribute("aria-expanded")).toBe("false");
 
+    // Stopping leaves a scan behind, so the slot reads `Rescan` from here on.
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
-    await scan("Scan");
+    await scan("Rescan");
     expect(FakeEventSource.urls[1]).toBe("/api/printers/discover?port=9101&timeout=1000");
   });
 
@@ -380,7 +424,7 @@ describe("PrintersPage", () => {
     fireEvent.click(screen.getByLabelText("Network (IP) Printers"));
     fireEvent.click(screen.getByLabelText("USB Printers"));
     expect(statedScope()).toBe("Nothing to scan");
-    expect(screen.getByRole("button", { name: "Scan" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Rescan" }).hasAttribute("disabled")).toBe(true);
   });
 
   // The line and the button are drawn by one render from one value, so the

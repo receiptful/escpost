@@ -43,6 +43,7 @@ function Options({ query }: { query: DiscoveryQuery }) {
       query={query}
       open={open}
       onOpenChange={setOpen}
+      results={<p>what the last scan found</p>}
       actions={(scope) => (
         <button type="button" data-scope={scope === null ? "" : JSON.stringify(scope)}>Scan</button>
       )}
@@ -401,6 +402,14 @@ describe("ScanOptions", () => {
     fireEvent.click(button);
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(gone(screen.queryByLabelText("Custom network"))).toBe(true);
+
+    // Options, then results, then the bar — one card in the order a reader
+    // works through it, whether the form is open or shut.
+    const follows = (first: Element, second: Element) =>
+      (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const results = screen.getByText("what the last scan found");
+    expect(follows(button, results)).toBe(true);
+    expect(follows(results, screen.getByRole("button", { name: "Reset" }))).toBe(true);
   });
 
   // A Reset that would do nothing may not look available — and because the

@@ -124,7 +124,7 @@ describe("DiscoveryPanel", () => {
     const progress = screen.getByRole("progressbar") as HTMLProgressElement;
     expect(progress.value).toBe(312);
     expect(progress.max).toBe(508);
-    expect(screen.getByText("Checking USB · scanning 312 / 508 hosts")).toBeTruthy();
+    expect(screen.getByText("Checking USB · scanning 312 / 508 IP addresses")).toBeTruthy();
     expect(screen.getByText("2 printers found (2 new)")).toBeTruthy();
 
     // USB before network regardless of arrival order: an enumerated device is
@@ -142,10 +142,10 @@ describe("DiscoveryPanel", () => {
   // done, so `Checking` stands until the whole scan is.
   test("the scan line states which halves of the scan ran", () => {
     const { rerender } = renderPanel({ phase: "running", completed: 129, total: 253 });
-    expect(screen.getByText("Checking USB · scanning 129 / 253 hosts")).toBeTruthy();
+    expect(screen.getByText("Checking USB · scanning 129 / 253 IP addresses")).toBeTruthy();
 
     rerender({ phase: "done", completed: 253, total: 253 });
-    expect(screen.getByText("Checked USB · scanned 253 addresses")).toBeTruthy();
+    expect(screen.getByText("Checked USB · scanned 253 IP addresses")).toBeTruthy();
 
     cleanup();
     // A USB-only scan has no addresses to count. It used to fall back to
@@ -158,9 +158,27 @@ describe("DiscoveryPanel", () => {
     cleanup();
     // Network only: no USB half to mention, and the address count leads.
     const networkOnly = renderPanel({ phase: "running", completed: 129, total: 253 }, false);
-    expect(screen.getByText("Scanning 129 / 253 hosts")).toBeTruthy();
+    expect(screen.getByText("Scanning 129 / 253 IP addresses")).toBeTruthy();
     networkOnly.rerender({ phase: "done", completed: 253, total: 253 });
-    expect(screen.getByText("Scanned 253 addresses")).toBeTruthy();
+    expect(screen.getByText("Scanned 253 IP addresses")).toBeTruthy();
+  });
+
+  // A stopped scan is not a finished one and may not read like it: the
+  // printers it reached stay listed and addable, and the line says where it
+  // stopped rather than reporting the total it never reached.
+  test("a stopped scan keeps its results and says where it stopped", () => {
+    renderPanel({
+      phase: "stopped",
+      completed: 257,
+      total: 508,
+      printers: [networkPrinter("10.42.0.83")],
+    });
+
+    expect(screen.getByText("Checked USB · stopped after 257 of 508 IP addresses")).toBeTruthy();
+    expect(screen.getByText("1 printer found (1 new)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add 10.42.0.83:9100" })).toBeTruthy();
+    // The bar belongs to a scan in progress, and this one is over.
+    expect(gone(screen.queryByRole("progressbar"))).toBe(true);
   });
 
   // `1 printers found` shipped on this branch once already, in the empty
@@ -301,7 +319,7 @@ describe("DiscoveryPanel", () => {
     });
 
     expect(screen.getByText("No printers discovered")).toBeTruthy();
-    expect(screen.getByText("Checked USB · scanned 508 addresses")).toBeTruthy();
+    expect(screen.getByText("Checked USB · scanned 508 IP addresses")).toBeTruthy();
 
     rerender({
       phase: "done",

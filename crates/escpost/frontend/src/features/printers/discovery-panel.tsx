@@ -71,9 +71,10 @@ function failureSentence(failure: UsbDiscoveryFailure) {
  * hits are counted here and reported by flashing the row they already occupy
  * in the inventory below, which the application data provider drives.
  *
- * It renders into the `Discovery` section rather than owning one: the
- * section's heading already names this, and its one button starts, stops and
- * repeats the scan reported here.
+ * It renders into the discovery card rather than owning one, between the
+ * scan options above it and the controls below: the card's heading already
+ * names this, and the button in that bar starts, stops and repeats the scan
+ * reported here. No card chrome of its own, or one block would read as two.
  *
  * `usb` is the one fact about the scan that the stream does not carry: it
  * reports progress, not the query that produced it, so whether the USB half
@@ -181,21 +182,31 @@ export function DiscoveryPanel({ scan, usb, onAdd }: {
   // The network half states probe counts, never networks or ports: the scan
   // state carries what the stream reported, and the stream reports progress
   // rather than the query that produced it.
+  // A stopped scan says where it stopped rather than how far it got, because
+  // the total it was heading for is no longer a promise it kept.
+  const stopped = scan.phase === "stopped";
   const usbLine = usb ? (running ? "checking USB" : "checked USB") : "";
   const networkLine = scan.total === 0
     ? ""
     : running
-      ? `scanning ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} hosts`
-      : `scanned ${scan.total.toLocaleString()} addresses`;
+      // `IP addresses` in both phases and both interfaces of this line: one
+      // quantity said two ways — hosts here, addresses there — is drift a
+      // reader has to translate. `IP` because this panel also counts USB
+      // devices and printers, and the CLI does not need the word because it
+      // has just printed the subnets it is about to sweep.
+      ? `scanning ${scan.completed.toLocaleString()} / ${scan.total.toLocaleString()} IP addresses`
+      : stopped
+        ? `stopped after ${scan.completed.toLocaleString()} of ${scan.total.toLocaleString()} IP addresses`
+        : `scanned ${scan.total.toLocaleString()} IP addresses`;
   const halves = [usbLine, networkLine].filter((half) => half.length > 0).join(" · ");
   // A scan with neither half to report is one whose targets have not arrived
   // yet, or a network-only scan that resolved to none.
   const scanLine = halves === ""
-    ? running ? "Scanning for printers…" : "Scan complete"
+    ? running ? "Scanning for printers…" : stopped ? "Scan stopped" : "Scan complete"
     : `${halves[0]!.toUpperCase()}${halves.slice(1)}`;
 
   return (
-    <div class="overflow-hidden rounded-box bg-base-100 shadow-sm">
+    <div class="border-t border-base-300">
       <div class="space-y-2 px-4 py-3 text-sm">
         {/* One line, two halves: the network on the left, the printers on the
             right. They used to be two displays saying overlapping things —

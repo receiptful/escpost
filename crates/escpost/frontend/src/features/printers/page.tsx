@@ -54,10 +54,11 @@ export function PrintersPage() {
     <section aria-labelledby="printers-heading" class="space-y-6">
       <h1 id="printers-heading" class="sr-only">Printers</h1>
 
-      {/* One section for the whole of discovery: what a scan would do, the
-          controls that do it, and what it found. The results panel renders
-          nothing at all while the scan is idle, and the title, options and
-          bar above it stand on their own. */}
+      {/* One section for the whole of discovery, and one card inside it
+          reading options, then results, then controls — what a scan would
+          do, what the last one did, and what to do next. The results render
+          nothing at all while the scan is idle, and the bar moves up to meet
+          the accordion rather than leaving a hole. */}
       <section aria-labelledby="discovery-heading" class="space-y-2">
         <h2 id="discovery-heading" class="font-medium">Printer Discovery</h2>
 
@@ -73,6 +74,13 @@ export function PrintersPage() {
           query={scanQuery}
           open={optionsOpen}
           onOpenChange={setOptionsOpen}
+          results={
+            /* Whether USB was swept is the scope's fact, not the stream's:
+               the stream reports progress, and only the query says which
+               halves ran. `scanQuery` is the scope of the scan on screen,
+               since it changes only when one starts. */
+            <DiscoveryPanel scan={scan} usb={scanQuery.usb} onAdd={(printer) => setRegistering({ printer })} />
+          }
           actions={(scope) => <>
             {/* The escape hatch for a printer no scan can reach. `IP` rather
                 than `network` is the reader's word for it here and in the
@@ -93,16 +101,19 @@ export function PrintersPage() {
               <button
                 type="button"
                 class="btn btn-primary btn-sm"
-                onClick={() => {
-                  // Cancel discards the results along with the sweep:
-                  // `cancelScan` resets the scan to idle, so the panel
-                  // unmounts and every printer found so far goes with it.
-                  // That is what Ctrl-C does to `printers discover`, which
-                  // also prints nothing for the run it interrupted, and the
-                  // alternative — stopping but keeping a partial list — is a
-                  // state the CLI has no equivalent of.
-                  cancelScan();
-                }}
+                // Stops the probing and keeps what it found: the rows stay
+                // listed and stay addable, and the line says where the sweep
+                // was interrupted rather than claiming it finished.
+                //
+                // `printers discover` prints nothing for a run you Ctrl-C,
+                // and this does not diverge from it: the operation both
+                // interfaces drive is the same, and the difference is what
+                // each can do with results it already holds. A terminated
+                // process has nowhere left to put them; a page still on
+                // screen does. Same shape as the reason/remedy rule — the
+                // shared layer owns the fact, each interface owns what it
+                // makes of it.
+                onClick={cancelScan}
               >
                 Cancel
               </button>
@@ -118,12 +129,6 @@ export function PrintersPage() {
             )}
           </>}
         />
-
-        {/* Whether USB was swept is the scope's fact, not the stream's: the
-            stream reports progress, and only the query says which halves ran.
-            `scanQuery` is the scope of the scan on screen, since it changes
-            only when one starts. */}
-        <DiscoveryPanel scan={scan} usb={scanQuery.usb} onAdd={(printer) => setRegistering({ printer })} />
       </section>
 
       {/* The other named block. The heading belongs to the page rather than

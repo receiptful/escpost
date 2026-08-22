@@ -114,14 +114,21 @@ function checkboxId(value: string) {
  * whether the form is open or shut because everything in it acts on the
  * scope the line states rather than on the fields.
  *
+ * `results` sits between the form and that bar, which makes this the whole
+ * discovery card rather than only its options: what a scan would do, what it
+ * did, and what to do next, in that order and in one container. It renders
+ * nothing at all until there is a scan, and the bar simply moves up to meet
+ * the accordion — no placeholder, no gap.
+ *
  * The networks are fetched once per mount, and again on Reset: adapters
  * change with a cable or a VPN, so the server stays the authority on which
  * networks exist while `query` says which of them were chosen.
  */
-export function ScanOptions({ query, open, onOpenChange, actions }: {
+export function ScanOptions({ query, open, onOpenChange, results, actions }: {
   query: DiscoveryQuery;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  results: ComponentChildren;
   actions: (scope: DiscoveryQuery | null) => ComponentChildren;
 }) {
   const [resource, setResource] = useState<NetworksResource>({ data: null, error: null });
@@ -510,10 +517,14 @@ export function ScanOptions({ query, open, onOpenChange, actions }: {
         </div>
       )}
 
-      {/* Outside the disclosure, so the controls that act on the scope are
-          there whether or not the fields are. Reset holds the left because
-          the probe count it used to share the bar with is up on the line,
-          where it is readable without opening anything.
+      {results}
+
+      {/* Outside the disclosure, and below the results, so the reader meets
+          the button that starts a scan after what the last one produced.
+          The controls that act on the scope are there whether or not the
+          fields are. Reset holds the left because the probe count it used
+          to share the bar with is up on the line, where it is readable
+          without opening anything.
 
           Wraps rather than crushes: the manual-add label is long, and at
           phone width the two actions take a row of their own, still

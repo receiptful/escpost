@@ -7,7 +7,11 @@ import type { AddPrinterBody, DiscoveredPrinter, PrintersResponse, ProfilesRespo
 
 type ConnectionState = "loading" | "ready" | "disconnected";
 type ResourcePhase = "loading" | "ready" | "refreshing" | "error";
-type ScanPhase = "idle" | "running" | "done" | "error";
+// `stopped` is its own phase rather than a flag on `done`, because it is a
+// different fact about the same results: a scan that was interrupted knows
+// how far it got, and every reader of this state has to be able to tell that
+// from one that ran out of addresses.
+type ScanPhase = "idle" | "running" | "done" | "stopped" | "error";
 
 // Owns the discovery scan across page navigation: a scan started from the
 // Discover page keeps running (and this state keeps updating) even after the
@@ -255,9 +259,14 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
     });
   }, [closeScan, handleDiscoveredPrinter]);
 
+  // Stopping the probing, not forgetting what it found. Closing the stream is
+  // still the whole of cancellation on the wire; what changes is that the
+  // printers and failures already in hand stay in hand, because a sweep that
+  // reached a printer before it was interrupted has produced something worth
+  // keeping.
   const cancelScan = useCallback(() => {
     closeScan();
-    setScan(initialScan);
+    setScan((current) => current.phase === "running" ? { ...current, phase: "stopped" } : current);
   }, [closeScan]);
 
   // Records that a scan result has just been registered under `name`. The
