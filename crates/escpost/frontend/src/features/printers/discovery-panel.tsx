@@ -270,18 +270,27 @@ export function DiscoveryPanel({ scan, usb, onAdd }: {
         const key = printerKey(printer);
         const title = printerTitle(printer);
         return (
+          // Three columns: the badge, the two lines about one printer, and
+          // the button. The badge used to sit inside the first line, which
+          // left the second line starting under it rather than under the
+          // host it describes.
+          //
+          // `items-start` keeps the badge against the first line however
+          // many lines the middle column grows to, and no width is fixed for
+          // it: the badge is text, and a hard column would either clip a
+          // longer word or leave a gap beside a shorter one. The middle
+          // column takes what is left and truncates inside itself, so a long
+          // interface name or a hostname cannot push the button off the row.
           <div
             key={key}
-            class={`flex items-center justify-between gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
+            class={`flex items-start gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
           >
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="badge badge-primary badge-sm">New</span>
-                <h3 class="truncate font-medium">{title}</h3>
-              </div>
+            <span class="badge badge-primary badge-sm mt-0.5 shrink-0">New</span>
+            <div class="min-w-0 grow">
+              <h3 class="truncate font-medium">{title}</h3>
               <p class="truncate font-mono text-xs text-base-content/60">{printerFacts(printer)}</p>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" aria-label={`Add ${title}`} onClick={() => onAdd(printer)}>Add</button>
+            <button type="button" class="btn btn-primary btn-sm shrink-0" aria-label={`Add ${title}`} onClick={() => onAdd(printer)}>Add</button>
           </div>
         );
       })}
