@@ -275,17 +275,24 @@ export function DiscoveryPanel({ scan, usb, onAdd }: {
           // left the second line starting under it rather than under the
           // host it describes.
           //
-          // `items-start` keeps the badge against the first line however
-          // many lines the middle column grows to, and no width is fixed for
-          // it: the badge is text, and a hard column would either clip a
-          // longer word or leave a gap beside a shorter one. The middle
-          // column takes what is left and truncates inside itself, so a long
-          // interface name or a hostname cannot push the button off the row.
+          // The badge and the button both centre against the row rather than
+          // sitting against its first line: they label and act on the whole
+          // result, not on the host line, and one centred beside the other
+          // aligned to the top would read as an accident. Centring is safe
+          // here because the middle column is always exactly two lines — both
+          // of its lines truncate rather than wrap — so the badge can never
+          // drift away from the printer it labels, however narrow the row.
+          //
+          // No width is fixed for the badge: it is text, and a hard column
+          // would either clip a longer word or leave a gap beside a shorter
+          // one. The middle column takes what is left and truncates inside
+          // itself, so a long interface name or hostname cannot push the
+          // button off the row.
           <div
             key={key}
-            class={`flex items-start gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
+            class={`flex items-center gap-3 border-t border-base-300 px-4 py-3 ${flashing.includes(key) ? "printer-row-found" : ""}`}
           >
-            <span class="badge badge-primary badge-sm mt-0.5 shrink-0">New</span>
+            <span class="badge badge-primary badge-sm shrink-0">New</span>
             <div class="min-w-0 grow">
               <h3 class="truncate font-medium">{title}</h3>
               <p class="truncate font-mono text-xs text-base-content/60">{printerFacts(printer)}</p>
