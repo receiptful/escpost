@@ -230,13 +230,21 @@ async fn discover(
     Ok(response)
 }
 
-/// Why `prepare` refused, in HTTP terms. A subnet too large to scan is the
-/// caller's mistake and the caller can fix it, so it is a bad request; an
-/// unreadable configuration or an unenumerable interface list is the
-/// server's problem.
+/// Why `prepare` refused, in HTTP terms.
+///
+/// A subnet too large to scan is a bad query: the caller named it. A
+/// network-only scan with nothing to sweep is also the caller's to fix — by
+/// naming a subnet or including USB — but the query itself is well formed,
+/// so it answers 422 and carries the shared error's reasons instead of being
+/// flattened into a generic server failure. Everything else — an unreadable
+/// configuration, an unenumerable interface list — is the server's problem
+/// and stays a 500.
 fn rejected_discovery(error: ApplicationError) -> ApiError {
     match error {
         ApplicationError::SubnetTooLargeToScan(_) => ApiError::invalid_query(),
+        ApplicationError::NoDiscoverableSubnets(_) => {
+            ApiError::no_discoverable_networks(error.to_string())
+        }
         _ => ApiError::discovery_failure(),
     }
 }
@@ -468,6 +476,49 @@ mod tests {
             .map(Subnet::to_string)
             .collect::<Vec<_>>();
         assert_eq!(subnets, ["10.42.0.0/24", "10.43.0.0/24"]);
+    }
+
+    #[test]
+    fn nothing_to_sweep_is_the_callers_to_fix_and_keeps_the_shared_reasons() {
+        let error = rejected_discovery(ApplicationError::NoDiscoverableSubnets(
+            ": docker0 (172.17.0.0/16): larger than /24".to_owned(),
+        ));
+
+        assert_eq!(error.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(error.code(), "no_discoverable_networks");
+        assert!(
+            error.message().contains("docker0 (172.17.0.0/16)"),
+            "the browser must be told which adapter was skipped, found {:?}",
+            error.message()
+        );
+        assert!(
+            !error.message().contains("--subnet"),
+            "the shared reason carries no terminal advice, found {:?}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn a_failure_the_server_owns_stays_a_server_failure() {
+        let error = rejected_discovery(ApplicationError::EnumerateNetworkInterfaces(
+            std::io::Error::other("interfaces are unreadable"),
+        ));
+
+        assert_eq!(
+            error.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(error.code(), "discovery_unavailable");
+    }
+
+    #[test]
+    fn an_oversized_subnet_stays_a_bad_query() {
+        let error = rejected_discovery(ApplicationError::SubnetTooLargeToScan(
+            "10.0.0.0/15".to_owned(),
+        ));
+
+        assert_eq!(error.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(error.code(), "invalid_query");
     }
 
     #[cfg(target_os = "linux")]

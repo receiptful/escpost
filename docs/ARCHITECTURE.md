@@ -356,7 +356,12 @@ enumeration failure with its stage, reason, `permission_denied` flag, and
 Linux-only `printers grant-usb-permissions` subcommand at all). The stream ends
 with a `completed` marker carrying an empty payload, or with `error` carrying a
 message when the scan failed after the stream had opened; a failure before it
-opens is an ordinary JSON API error instead. `completed` needs no payload
+opens is an ordinary JSON API error instead, and each such failure keeps its
+own code: a subnet wider than the explicit limit is `invalid_query` with
+`400`, a network-only scan on a machine with no automatically scannable
+adapter is `no_discoverable_networks` with `422`, carrying the shared error's
+reasons for every adapter it left out, and only a failure the server owns is
+the `500` `discovery_unavailable`. `completed` needs no payload
 because the client already holds every `printer` event and counts them itself.
 The stream reports every discovered printer,
 configured or not; hiding the already-configured ones is the printers page's

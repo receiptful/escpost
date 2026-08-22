@@ -69,15 +69,31 @@ impl ApiError {
         )
     }
 
-    /// Discovery could not even be prepared — the configuration is unreadable
-    /// or the requested scope leaves nothing to scan. Raised before the stream
-    /// opens, so the browser gets a plain JSON error rather than an event
-    /// stream whose first event is a failure.
+    /// Discovery could not even be prepared, because the server could not do
+    /// its part — an unreadable configuration, an unenumerable interface
+    /// list. Raised before the stream opens, so the browser gets a plain JSON
+    /// error rather than an event stream whose first event is a failure.
     pub(crate) fn discovery_failure() -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "discovery_unavailable",
             "Printer discovery could not be started.",
+        )
+    }
+
+    /// A network-only scan on a machine with no automatically scannable
+    /// adapter. Not a server fault: the caller can name a subnet or include
+    /// USB, so it answers 422 rather than 500.
+    ///
+    /// `reason` is the shared error's own wording, which already names the
+    /// adapters that were left out and why. The remedy is not appended here:
+    /// the terminal's answer is `--subnet`, the browser's is its own
+    /// custom-network field (DD-035).
+    pub(crate) fn no_discoverable_networks(reason: String) -> Self {
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no_discoverable_networks",
+            reason,
         )
     }
 
@@ -151,6 +167,24 @@ impl ApiError {
             ),
         };
         Self::new(status, code, error.to_string())
+    }
+}
+
+/// Readers for the two fields a mapping test asserts on. Test-only: nothing
+/// in the running server needs to inspect an error it is about to send, and
+/// a public reader would invite exactly that.
+#[cfg(test)]
+impl ApiError {
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
     }
 }
 

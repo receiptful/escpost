@@ -317,6 +317,9 @@ fn discovery_streams_prepared_progress_and_completion() {
     // addresses before the first probe, in a stretch of code with no await
     // point for a disconnecting client to cancel.
     let unbounded_subnet = http_get_bytes(port, "/api/printers/discover?subnet=0.0.0.0/0");
+    // One bit wider than the explicit limit, which is what proves the limit
+    // is the /16 it claims: a /0 would be refused by a far looser bound.
+    let subnet_past_the_limit = http_get_bytes(port, "/api/printers/discover?subnet=10.0.0.0/15");
     stop(&mut child);
     drop(printer);
     fs::remove_dir_all(&configuration_directory)
@@ -351,6 +354,7 @@ fn discovery_streams_prepared_progress_and_completion() {
         &undeclared_parameter,
         &network_option_for_usb,
         &unbounded_subnet,
+        &subnet_past_the_limit,
     ] {
         assert_eq!(response_status(response), "HTTP/1.1 400 Bad Request");
         let body: serde_json::Value = serde_json::from_slice(response_body(response))
