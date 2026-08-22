@@ -390,8 +390,9 @@ opened or inspected (for example, an operating-system permission error) is
 reported as a `Warning:` line on stderr and skipped, and the sweep still
 reports every other USB and network printer it found, exiting successfully.
 Only a failure to enumerate USB devices at all is fatal, exactly like
-`list`. On Linux, when at least one of those warnings is a permission error,
-stderr prints one additional line after the warnings: `Fix USB permissions
+`list`. On Linux, the first of those warnings that is a permission error is
+followed on stderr by one additional line, printed once however many devices
+are affected: `Fix USB permissions
 with: sudo escpost printers grant-usb-permissions` (see `printers grant-usb-permissions` below). The
 same line follows any other command's fatal USB permission error too — for
 example `print` sending to a USB printer, or `printers add`'s interactive or
@@ -484,13 +485,24 @@ A network carries the interface name of the local adapter it belongs to
 whenever this machine sits on it, for a subnet named with `--subnet` exactly
 as for an automatically detected one; a subnet for a network this machine is
 not on gets no label. A progress bar then follows on stderr during the network
-sweep when stderr is attached to a terminal. Interrupting the sweep with
-`Ctrl+C` abandons it and prints nothing: results are reported only by a run
-that finishes.
+sweep when stderr is attached to a terminal.
 
-USB results are listed first, then network results, numbered continuously
-across both; network results are ordered by ascending IPv4 address,
-regardless of the order `--subnet` was given. Each entry uses the same block
+Results are printed on stdout the moment they are found, not held back until
+the sweep finishes, so a USB printer appears immediately instead of waiting
+behind a network sweep that may take seconds. Interrupting the sweep with
+`Ctrl+C` therefore keeps everything already printed: it stops the scan, clears
+the progress bar, prints the registration hint for what was found so far, and
+exits `130` (the shell's status for an interrupt), so a script can still tell
+a stopped scan from a completed one. An interrupted sweep that had found
+nothing prints no results and no `No printers discovered.` line — that line is
+a completed sweep's answer, not an abandoned one's.
+
+USB results are printed first, then network results, numbered continuously
+across both in the order they were discovered. USB order is stable, but a
+network host is printed when it answers, so the network results of two runs
+over the same subnet may be numbered differently; the `[N]` numbers count the
+results this run printed, and nothing more. Parse the `network:` and `usb:`
+lines rather than the numbering. Each entry uses the same block
 format as `printers list` so the commands cannot drift apart. A connected
 USB printer matching a saved
 identity heads its block with that name, `status: configured`, a `model:`

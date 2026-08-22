@@ -426,7 +426,10 @@ pub(crate) async fn scan(
             total,
         });
     }
-    // The returned ordering is what the CLI renders and must not change.
+    // The stable ordering every caller that reads the return value renders —
+    // `printers add --discover`'s picker and the workbench's saved list. The
+    // CLI's `discover` prints from `Found` instead and is therefore in probe
+    // order, which is why the two orderings must both be described, not merged.
     hosts.sort_by_key(|host| u32::from(host.address));
     hosts.dedup_by_key(|host| host.address);
     hosts

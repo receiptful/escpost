@@ -3,7 +3,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
 use std::net::TcpListener;
 #[cfg(unix)]
@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(unix)]
-use std::process::Output;
+use std::process::{Output, Stdio};
 #[cfg(unix)]
 use std::thread;
 #[cfg(unix)]
@@ -1070,6 +1070,192 @@ fn printers_discover_finds_a_listening_loopback_printer() {
         "stderr should hint at registering the new printer:\n{stderr}"
     );
     fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+/// Results are printed as they answer, so two hosts can be reported in either
+/// order from one run to the next. What the command still guarantees is that
+/// every host appears exactly once and that the `[N]` numbers run 1, 2, … over
+/// the results actually printed — so this asserts the set and the numbering
+/// rather than pinning a sequence the program no longer promises.
+#[cfg(unix)]
+#[test]
+fn printers_discover_streams_each_answering_host_exactly_once() {
+    let (_first, _second, port) = loopback_pair_on_one_port();
+    let directory = temporary_directory("discover-two-hosts");
+    let config = directory.join("printers.toml");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["--non-interactive", "printers", "--config"])
+        .arg(&config)
+        .args([
+            "discover",
+            "--transport",
+            "network",
+            "--subnet",
+            "127.0.0.2/32",
+            "--subnet",
+            "127.0.0.3/32",
+            "--port",
+            &port.to_string(),
+        ])
+        .output()
+        .expect("the escpost command should finish");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "command failed:\n{stdout}");
+    for address in ["127.0.0.2", "127.0.0.3"] {
+        let endpoint = format!("    network: {address}:{port}\n");
+        assert_eq!(
+            stdout.matches(&endpoint).count(),
+            1,
+            "{address} should be reported exactly once:\n{stdout}"
+        );
+    }
+    assert_eq!(
+        stdout.matches("status: new").count(),
+        2,
+        "both hosts should be reported as new:\n{stdout}"
+    );
+    for number in ["[1] ", "[2] "] {
+        assert_eq!(
+            stdout.matches(number).count(),
+            1,
+            "streamed results should be numbered continuously:\n{stdout}"
+        );
+    }
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+/// The point of streaming: a sweep stopped with Ctrl+C keeps every result it
+/// already printed, still tells the user how to register it, and still reports
+/// an interrupt to whatever started it.
+#[cfg(unix)]
+#[test]
+fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
+    let listener = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
+    let port = listener
+        .local_addr()
+        .expect("the listener should report its address")
+        .port();
+    let directory = temporary_directory("discover-interrupt");
+    let config = directory.join("printers.toml");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["--non-interactive", "printers", "--config"])
+        .arg(&config)
+        .args([
+            "discover",
+            "--transport",
+            "network",
+            "--subnet",
+            "127.0.0.2/32",
+            // The RFC 5737 documentation ranges, probed after the loopback
+            // host that answers at once. Whether they time out or fail, 762
+            // further addresses keep the sweep busy long enough to interrupt
+            // it — which is the state this test needs.
+            "--subnet",
+            "192.0.2.0/24",
+            "--subnet",
+            "198.51.100.0/24",
+            "--subnet",
+            "203.0.113.0/24",
+            "--port",
+            &port.to_string(),
+            "--timeout",
+            "30000",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost command should start");
+
+    // Armed before the sweep is watched, so interrupting costs one pipe write
+    // rather than a process spawn: the smaller that gap, the less of the sweep
+    // can finish inside it. `sh`'s builtin `kill` sends the signal, so the
+    // test needs no libc binding of its own.
+    let mut interrupter = Command::new("sh")
+        .args(["-c", &format!("read ready; kill -INT {}", child.id())])
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("the interrupter should start");
+    let mut trigger = interrupter.stdin.take().expect("stdin should be piped");
+
+    let mut results = BufReader::new(child.stdout.take().expect("stdout should be piped"));
+    let endpoint = format!("127.0.0.2:{port}");
+    let mut streamed = String::new();
+    loop {
+        let mut line = String::new();
+        let read = results
+            .read_line(&mut line)
+            .expect("the streamed results should be readable");
+        assert!(
+            read > 0,
+            "the sweep ended before streaming its first result:\n{streamed}"
+        );
+        streamed.push_str(&line);
+        // The heading arrives only after its whole block has been written and
+        // flushed, so reaching it means a complete result is already in the
+        // pipe — while the sweep is still probing.
+        if line.starts_with('[') && line.trim_end().ends_with(&endpoint) {
+            break;
+        }
+    }
+
+    writeln!(trigger).expect("the interrupt should be triggerable");
+    drop(trigger);
+    let interrupted = interrupter.wait().expect("the interrupter should finish");
+    assert!(interrupted.success(), "the interrupt should be delivered");
+
+    results
+        .read_to_string(&mut streamed)
+        .expect("the remaining results should be readable");
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .expect("stderr should be piped")
+        .read_to_string(&mut stderr)
+        .expect("the diagnostics should be readable");
+    let status = child.wait().expect("the escpost command should finish");
+
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "an interrupted sweep must still report the interrupt (128 + SIGINT):\n{stderr}"
+    );
+    assert!(
+        streamed.contains(&format!("    network: {endpoint}\n")),
+        "the printed result must survive the interrupt intact:\n{streamed}"
+    );
+    assert!(
+        !streamed.contains("No printers discovered."),
+        "an interrupted sweep must not claim it found nothing:\n{streamed}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "Register a new network printer with: escpost printers add <NAME> --transport network --discover --port {port}"
+        )),
+        "an interrupted sweep should still name the command that registers what it found:\n{stderr}"
+    );
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+/// Two loopback addresses listening on one port, so a single sweep has two
+/// hosts to report. The port is chosen by binding the first address and then
+/// claiming the same number on the second, retrying until one is free on both.
+#[cfg(unix)]
+fn loopback_pair_on_one_port() -> (TcpListener, TcpListener, u16) {
+    for _ in 0..16 {
+        let first = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
+        let port = first
+            .local_addr()
+            .expect("the listener should report its address")
+            .port();
+        if let Ok(second) = TcpListener::bind(("127.0.0.3", port)) {
+            return (first, second, port);
+        }
+    }
+    panic!("no ephemeral port was free on both loopback addresses");
 }
 
 #[test]
