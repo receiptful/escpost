@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -248,6 +250,301 @@ profile = "REFERENCE"
 }
 
 #[test]
+fn discovery_networks_lists_detected_and_skipped_adapters() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/printers/discover/networks");
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 200 OK");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    let body = String::from_utf8_lossy(response_body(&response));
+    assert!(body.contains("\"networks\":"));
+    assert!(body.contains("\"skipped\":"));
+    assert!(body.contains("\"default_port\":9100"));
+    assert!(body.contains("\"default_timeout_ms\":1000"));
+}
+
+#[test]
+fn discovery_streams_prepared_progress_and_completion() {
+    let configuration_directory = temporary_directory("discovery-stream");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    // A /30 with a 1 ms timeout is two probes that both give up immediately,
+    // so the stream reaches `completed` and closes without the suite waiting
+    // on a real sweep. TEST-NET-1 (RFC 5737) is never a machine's own subnet,
+    // so no local address is excluded from it and the probe count is exactly
+    // two wherever this runs.
+    let stream = http_get_event_stream(
+        port,
+        "/api/printers/discover?transport=network&subnet=192.0.2.0/30&timeout=1",
+    );
+    let unparsable_subnet = http_get_bytes(
+        port,
+        "/api/printers/discover?transport=network&subnet=192.0.2.0",
+    );
+    // A listener on a loopback address that is not this machine's own
+    // 127.0.0.1 stands in for a network printer: `explicit_scan_targets`
+    // excludes the scanning host's addresses, and 127.0.0.2 is not one.
+    let printer = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 2), 0))
+        .expect("a stand-in network printer should bind");
+    let printer_port = printer
+        .local_addr()
+        .expect("the stand-in printer should report its address")
+        .port();
+    let found = http_get_event_stream(
+        port,
+        &format!(
+            "/api/printers/discover?transport=network&subnet=127.0.0.2/32&port={printer_port}&timeout=500"
+        ),
+    );
+    let undeclared_parameter = http_get_bytes(port, "/api/printers/discover?scan=1");
+    let network_option_for_usb =
+        http_get_bytes(port, "/api/printers/discover?transport=usb&timeout=1");
+    // The exact query the workbench's scan-options panel sends when Network
+    // is unchecked: a USB-only scan carries no network option at all, because
+    // restating the defaults is the rejection directly above.
+    let usb_only = http_get_event_stream(port, "/api/printers/discover?transport=usb");
+    // Answered, not swept: a /0 would allocate its four billion candidate
+    // addresses before the first probe, in a stretch of code with no await
+    // point for a disconnecting client to cancel.
+    let unbounded_subnet = http_get_bytes(port, "/api/printers/discover?subnet=0.0.0.0/0");
+    // One bit wider than the explicit limit, which is what proves the limit
+    // is the /16 it claims: a /0 would be refused by a far looser bound.
+    let subnet_past_the_limit = http_get_bytes(port, "/api/printers/discover?subnet=10.0.0.0/15");
+    stop(&mut child);
+    drop(printer);
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert!(stream.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(stream.contains("content-type: text/event-stream"));
+    assert!(stream.contains("cache-control: no-store"));
+    assert!(stream.contains("event: prepared"));
+    assert!(stream.contains("event: progress"));
+    assert!(stream.contains("event: completed"));
+    assert!(stream.contains("\"total_probes\":2"));
+    assert!(stream.contains("\"completed\":2,\"total\":2"));
+
+    assert!(found.contains("event: printer"));
+    assert!(found.contains("\"transport\":\"network\""));
+    assert!(found.contains(&format!(
+        "\"connection\":{{\"type\":\"network\",\"host\":\"127.0.0.2\",\"port\":{printer_port}}}"
+    )));
+    assert!(found.contains("\"configured_names\":[]"));
+    assert!(found.contains("event: completed"));
+
+    assert!(usb_only.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(usb_only.contains("content-type: text/event-stream"));
+    assert!(usb_only.contains("event: prepared"));
+    // Nothing to sweep, so the stream reaches its end marker whether or not
+    // this machine has a USB printer attached.
+    assert!(usb_only.contains("event: completed"));
+
+    for response in [
+        &unparsable_subnet,
+        &undeclared_parameter,
+        &network_option_for_usb,
+        &unbounded_subnet,
+        &subnet_past_the_limit,
+    ] {
+        assert_eq!(response_status(response), "HTTP/1.1 400 Bad Request");
+        let body: serde_json::Value = serde_json::from_slice(response_body(response))
+            .expect("the rejected discovery query should answer with JSON");
+        assert_eq!(body["error"]["code"], "invalid_query");
+    }
+}
+
+#[test]
+fn adding_a_printer_rejects_a_blank_name() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let body = "{\"name\":\"\",\"connection\":{\"type\":\"network\",\"host\":\"10.42.0.71\",\"port\":9100}}";
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 400 Bad Request");
+    let payload = String::from_utf8_lossy(response_body(&response));
+    assert!(payload.contains("\"code\":\"blank_printer_name\""));
+}
+
+#[test]
+fn adding_a_network_printer_persists_it_and_returns_saved_facts() {
+    // An isolated config directory: this test writes a real printer
+    // registration, and must never touch a developer's own printer list.
+    let configuration_directory = temporary_directory("add-network");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    let body = r#"{"name":"kitchen","profile":"REFERENCE","connection":{"type":"network","host":"10.42.0.71","port":9100}}"#;
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+    let saved = fs::read_to_string(configuration_directory.join("printers.toml"))
+        .expect("the printer registration should have been written");
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert_eq!(response_status(&response), "HTTP/1.1 201 Created");
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the add response should be JSON");
+    assert_eq!(payload["name"], "kitchen");
+    assert_eq!(payload["transport"], "network");
+    assert_eq!(payload["profile"], "REFERENCE");
+    assert_eq!(payload["warnings"].as_array().map(Vec::len), Some(0));
+
+    assert!(saved.contains("[kitchen]"));
+    assert!(saved.contains("host = \"10.42.0.71\""));
+    assert!(saved.contains("port = 9100"));
+}
+
+#[test]
+fn adding_a_usb_printer_without_a_serial_number_carries_the_ambiguity_warning() {
+    let configuration_directory = temporary_directory("add-usb-ambiguous");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    // 1046/20497 is 0x0416/0x5011, the vendor/product pair used by the
+    // NT-5890K fixtures elsewhere in this suite; JSON has no hex literals.
+    let body = r#"{"name":"counter","connection":{"type":"usb","vendor_id":1046,"product_id":20497,"interface_number":0,"out_endpoint":1}}"#;
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert_eq!(response_status(&response), "HTTP/1.1 201 Created");
+    let payload: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the add response should be JSON");
+    assert_eq!(payload["transport"], "usb");
+    let warnings = payload["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0]
+            .as_str()
+            .expect("the warning should be a string")
+            .contains("ambiguous while another device with the same USB identity is connected")
+    );
+}
+
+#[test]
+fn adding_a_printer_whose_name_is_already_configured_is_a_conflict() {
+    let configuration_directory = temporary_directory("add-conflict");
+    fs::write(
+        configuration_directory.join("printers.toml"),
+        "[kitchen]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = 9100\n",
+    )
+    .expect("the printer fixture should be writable");
+    let port = unused_loopback_port();
+    let mut child =
+        start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
+
+    wait_until_listening(&mut child, port);
+    let body =
+        r#"{"name":"kitchen","connection":{"type":"network","host":"10.42.0.99","port":9100}}"#;
+    let response = http_post_json(port, "/api/printers/add", body);
+    stop(&mut child);
+    fs::remove_dir_all(&configuration_directory)
+        .expect("the configuration fixture should be removable");
+
+    assert_eq!(response_status(&response), "HTTP/1.1 409 Conflict");
+    let payload: serde_json::Value = serde_json::from_slice(response_body(&response))
+        .expect("the conflict response should be JSON");
+    assert_eq!(payload["error"]["code"], "printer_already_configured");
+}
+
+#[test]
+fn adding_a_printer_rejects_invalid_facts_and_malformed_requests() {
+    // None of these requests reach a valid, writable registration, so a
+    // plain unconfigured directory is fine here: nothing should be written.
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let invalid_port = http_post_json(
+        port,
+        "/api/printers/add",
+        r#"{"name":"kitchen","connection":{"type":"network","host":"10.42.0.71","port":0}}"#,
+    );
+    let invalid_out_endpoint = http_post_json(
+        port,
+        "/api/printers/add",
+        r#"{"name":"counter","connection":{"type":"usb","vendor_id":1046,"product_id":20497,"serial_number":"B1","interface_number":0,"out_endpoint":129}}"#,
+    );
+    let malformed_json = http_post_json(port, "/api/printers/add", "not json");
+    stop(&mut child);
+
+    assert_eq!(response_status(&invalid_port), "HTTP/1.1 400 Bad Request");
+    let invalid_port: serde_json::Value = serde_json::from_slice(response_body(&invalid_port))
+        .expect("the invalid port response should be JSON");
+    assert_eq!(invalid_port["error"]["code"], "invalid_printer_port");
+
+    assert_eq!(
+        response_status(&invalid_out_endpoint),
+        "HTTP/1.1 400 Bad Request"
+    );
+    let invalid_out_endpoint: serde_json::Value =
+        serde_json::from_slice(response_body(&invalid_out_endpoint))
+            .expect("the invalid endpoint response should be JSON");
+    assert_eq!(
+        invalid_out_endpoint["error"]["code"],
+        "invalid_usb_out_endpoint"
+    );
+
+    assert_eq!(response_status(&malformed_json), "HTTP/1.1 400 Bad Request");
+    let malformed_json: serde_json::Value = serde_json::from_slice(response_body(&malformed_json))
+        .expect("the malformed body response should be JSON");
+    assert_eq!(malformed_json["error"]["code"], "invalid_request_body");
+}
+
+#[test]
+fn getting_the_add_printer_route_is_not_allowed() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/printers/add");
+    stop(&mut child);
+
+    assert_eq!(
+        response_status(&response),
+        "HTTP/1.1 405 Method Not Allowed"
+    );
+    assert_eq!(
+        response_header(&response, "cache-control"),
+        Some("no-store")
+    );
+    // This route only ever registers a POST handler, so unlike the other
+    // (GET/HEAD) routes, its 405 must not claim GET is accepted.
+    assert_eq!(response_header(&response, "allow"), Some("POST"));
+    let response: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("method failures should be JSON");
+    assert_eq!(response["error"]["code"], "method_not_allowed");
+    assert_eq!(
+        response["error"]["message"],
+        "This API endpoint only accepts POST requests."
+    );
+}
+
+#[test]
 fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
@@ -256,6 +553,8 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
     let paths = [
         "/api/status",
         "/api/printers/list",
+        "/api/printers/discover",
+        "/api/printers/discover/networks",
         "/api/profiles/list",
         "/api/jobs/current",
         "/api/jobs/1/sheets/1",
@@ -390,6 +689,20 @@ fn api_status_has_no_virtual_printer_for_render_web_mode() {
     ));
     assert_eq!(status["virtual_printer"], serde_json::Value::Null);
     assert_eq!(status["jobs_processed"], 0);
+}
+
+#[test]
+fn api_status_reports_the_resolved_configuration_path() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let response = http_get_bytes(port, "/api/status");
+    stop(&mut child);
+
+    let body = String::from_utf8_lossy(response_body(&response));
+    assert!(body.contains("\"config_path\":"));
+    assert!(body.contains("printers.toml"));
 }
 
 #[test]
@@ -956,12 +1269,39 @@ fn start_file_web(input_path: &Path, port: u16, watch: bool) -> Child {
         .expect("the escpost command should start")
 }
 
+/// An ephemeral port no other test in this process has been handed.
+///
+/// Binding port 0 and dropping the listener returns the port to the pool
+/// immediately, so two tests starting at once could be handed the same one:
+/// the second child then fails to bind while the first is still starting, and
+/// whichever test connects first gets a refusal or the wrong server. These
+/// tests run in parallel threads, so that race is ordinary, not exotic.
+/// Remembering every port already issued removes it within the process, which
+/// is where all 31 callers live.
 fn unused_loopback_port() -> u16 {
-    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-        .expect("an ephemeral loopback port should be available")
-        .local_addr()
-        .expect("the listener should have a local address")
-        .port()
+    static ISSUED: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
+    let mut issued = ISSUED.lock().expect("the issued-port set should be usable");
+    let issued = issued.get_or_insert_with(HashSet::new);
+    // The OS hands out a different port while the previous candidate's
+    // listener is still open, so a collision resolves on the next turn rather
+    // than spinning. The bound is only here to fail loudly instead of hanging
+    // if the ephemeral range is somehow exhausted.
+    let mut held = Vec::new();
+    for _ in 0..64 {
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("an ephemeral loopback port should be available");
+        let port = listener
+            .local_addr()
+            .expect("the listener should have a local address")
+            .port();
+        if issued.insert(port) {
+            return port;
+        }
+        // Keep the duplicate bound so the next attempt cannot be handed it
+        // again; every listener drops when this function returns.
+        held.push(listener);
+    }
+    panic!("no unissued ephemeral loopback port was available after 64 attempts");
 }
 
 fn wait_until_listening(child: &mut Child, port: u16) {
@@ -995,12 +1335,73 @@ fn http_get(port: u16, path: &str) -> String {
     String::from_utf8(http_get_bytes(port, path)).expect("the HTTP response should be UTF-8")
 }
 
+/// How long an event stream has to reach its end before the test declares
+/// the stream broken. Generous next to the milliseconds a /30 scan needs.
+const EVENT_STREAM_PATIENCE: Duration = Duration::from_secs(20);
+
+/// Read an event-stream response until the server closes it. Success is end
+/// of stream and nothing else: a per-read timeout alone would not do, because
+/// the endpoint's 15-second keep-alive comments make every read succeed, so a
+/// stream that stayed open forever would spin here rather than fail. The
+/// deadline is absolute, and tripping it panics — a stream that never ends is
+/// exactly the regression this helper exists to catch, not something to
+/// return partial output for.
+fn http_get_event_stream(port: u16, path: &str) -> String {
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .expect("the HTTP request should be writable");
+    let deadline = Instant::now() + EVENT_STREAM_PATIENCE;
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .unwrap_or_else(|| {
+                panic!("the event stream for {path} did not end within {EVENT_STREAM_PATIENCE:?}")
+            });
+        stream
+            .set_read_timeout(Some(remaining))
+            .expect("the event stream socket should accept a read timeout");
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error) => panic!("the event stream for {path} stalled: {error}"),
+        }
+    }
+    String::from_utf8(response).expect("the event stream should be UTF-8")
+}
+
 fn http_get_bytes(port: u16, path: &str) -> Vec<u8> {
     http_request_bytes(port, "GET", path)
 }
 
 fn http_post_bytes(port: u16, path: &str) -> Vec<u8> {
     http_request_bytes(port, "POST", path)
+}
+
+/// Send a JSON body over a raw connection, the same way the SPA's `fetch`
+/// call will: `Content-Type: application/json` and an exact `Content-Length`,
+/// since `Connection: close` alone does not tell the server how many body
+/// bytes to expect before it starts reading a request.
+fn http_post_json(port: u16, path: &str, body: &str) -> Vec<u8> {
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
+    write!(
+        stream,
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("the HTTP request should be writable");
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .expect("the HTTP response should be readable");
+    response
 }
 
 fn http_request_bytes(port: u16, method: &str, path: &str) -> Vec<u8> {

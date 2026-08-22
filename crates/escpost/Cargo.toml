@@ -21,6 +21,7 @@ clap.workspace = true
 directories.workspace = true
 escpost-render = { version = "0.1.0", path = "../escpost-render" }
 escpost-profiles = { version = "0.1.0", path = "../escpost-profiles" }
+futures-core.workspace = true
 if-addrs.workspace = true
 indicatif.workspace = true
 inquire.workspace = true
@@ -36,6 +37,12 @@ webbrowser.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
+
+# test-util unlocks tokio's mock clock (`start_paused`/`time::pause`), used to
+# drive retry-delay tests deterministically instead of waiting on real time.
+# Dev-only, so it never reaches the shipped binary.
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

@@ -37,6 +37,41 @@
   image-rendering: auto;
 }
 
+/* One highlight treatment for every printer that changed: a newly discovered
+   printer arriving in the results panel, a scan re-finding one that is
+   already configured, and a printer that has just been added. The error
+   colour marks the opposite transition, a printer that has become
+   unavailable, so both directions are visible. The flash is never the only
+   signal, so dropping it under reduced motion loses nothing.
+
+   Longer and differently shaped than `receipt-paper-flash` above, which is a
+   deliberate divergence rather than an inconsistency to tidy away: that one
+   confirms something the reader just did to a thing they are already looking
+   at, while these mark rows arriving in a list that may be moving under a
+   live scan. A row nobody was watching yet has to survive being glanced at,
+   so the tint holds at full strength through the first quarter and only then
+   fades — a flash rather than a blink, which a straight `from`/`to` decay
+   cannot be, since it peaks in the first frame.
+
+   1200ms is `FLASH_DURATION` in `discovery-panel.tsx` and `app/data.tsx`,
+   which is how long the class stays applied. Matching them means the fade
+   finishes exactly as the class is removed, rather than leaving the row
+   classed and inert for half a second. */
+.printer-row-found {
+  animation: printer-row-found 1200ms ease-out;
+}
+
+.printer-row-lost {
+  animation: printer-row-lost 1200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .printer-row-found,
+  .printer-row-lost {
+    animation: none;
+  }
+}
+
 .trace-group {
   --trace-color: oklch(55% 0 0);
   --trace-fill: oklch(70% 0 0 / 28%);
@@ -112,4 +147,16 @@
 @keyframes receipt-paper-flash {
   from { box-shadow: 0 0 0 0.4rem oklch(70% 0.17 160 / 45%); }
   to { box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%); }
+}
+
+/* A tint of the theme colour rather than the colour itself: the row keeps its
+   own text, which has to stay readable in both themes while it fades. */
+@keyframes printer-row-found {
+  0%, 25% { background-color: color-mix(in oklch, var(--color-primary) 22%, transparent); }
+  100% { background-color: transparent; }
+}
+
+@keyframes printer-row-lost {
+  0%, 25% { background-color: color-mix(in oklch, var(--color-error) 22%, transparent); }
+  100% { background-color: transparent; }
 }

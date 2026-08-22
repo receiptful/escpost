@@ -138,8 +138,18 @@ labels in the production bundle, asset MIME and cache headers, missing assets,
 and traversal rejection. They also cover the read-only `/api/status`,
 `/api/printers/list`, `/api/profiles/list`, and current-job resource contracts,
 while confirming that unknown API routes stay JSON rather than falling back to
-HTML. Job-resource tests verify that a replaced job identifier cannot resolve
-to a newer job. The existing viewer at `/` remains covered separately as a
+HTML. They also cover the discovery routes: `/api/printers/discover/networks`
+lists detected and skipped adapters, and `/api/printers/discover` streams
+`prepared`, `progress`, and `completed` server-sent events over a two-address
+subnet that answers immediately, finds a stand-in printer on a loopback
+address the scanning host does not hold, and refuses a malformed subnet, an
+undeclared parameter, a network option on a USB-only scan, and a subnet wider
+than the explicit `/16` limit. The first write route, `POST
+/api/printers/add`, is covered too: it persists a printer and returns the
+saved facts, carries the USB ambiguity advisory, answers `409` for a name
+already configured, `400` for invalid facts and malformed bodies, and `405`
+with an `Allow` header for a GET. Job-resource tests verify that a replaced
+job identifier cannot resolve to a newer job. The existing viewer at `/` remains covered separately as a
 behavioral reference during the SPA transition.
 
 ### Robustness tests
@@ -151,6 +161,32 @@ allocating without bounds.
 Fuzzing targets command framing and state-machine execution. A discovered
 failure becomes a permanent minimal regression case before the implementation
 is fixed.
+
+### Network discovery without hardware
+
+`printers discover` needs something on the network to find. A Compose profile
+provides a RAW TCP printer for that, so the scan can be exercised without a
+physical device:
+
+```sh
+docker compose --profile dummy-printer up -d dummy-printer
+docker compose run --rm test cargo run -p escpost -- printers discover --transport network
+```
+
+It answers on `172.31.42.2:9100` and reports as reachable via `escpost-dummy`.
+Stop it with `docker compose --profile dummy-printer down`.
+
+The service is the one place in `compose.yaml` that does not use host
+networking, and that is deliberate rather than incidental: a scan never probes
+the scanning machine's own addresses, so a listener sharing the host's network
+namespace is excluded by design and could never be discovered. Giving the
+printer a bridge of its own puts the host on the gateway address and the
+printer on another, which is the shape discovery expects of a real printer on
+a real segment. A scan of that subnet reports 253 addresses rather than 254,
+because the gateway is the scanning machine and is correctly left out.
+
+It is a real `escpost serve` listener, not a stub, so it also accepts jobs
+printed to it.
 
 ### Physical-printer calibration
 

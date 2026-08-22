@@ -1,5 +1,6 @@
 //! Structured `printers list` operation.
 
+use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -16,6 +17,10 @@ use super::{Availability, Transport};
 pub(crate) mod cli;
 
 const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long to wait before confirming a failed probe. RAW TCP is frequently
+/// single-session, so a printer busy with a job refuses one connection while
+/// being perfectly healthy; only a second refusal means unavailable.
+const PROBE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Request {
@@ -211,19 +216,59 @@ fn structured_printers(
     printers
 }
 
+async fn probe_once(host: &str, port: u16, probe_timeout: Duration) -> bool {
+    timeout(probe_timeout, TcpStream::connect((host, port)))
+        .await
+        .is_ok_and(|result| result.is_ok())
+}
+
+/// The retry decision, generic over how a single attempt is made. Pulling
+/// this out of `probe_with_confirmation` lets the decision — confirm after
+/// one delayed retry, never retry on success — be driven by a scripted
+/// sequence of outcomes in tests, without opening sockets or waiting on
+/// real time.
+async fn confirm_with_retry<Attempt, AttemptFuture>(
+    retry_delay: Duration,
+    mut attempt: Attempt,
+) -> bool
+where
+    Attempt: FnMut() -> AttemptFuture,
+    AttemptFuture: Future<Output = bool>,
+{
+    if attempt().await {
+        return true;
+    }
+    tokio::time::sleep(retry_delay).await;
+    attempt().await
+}
+
+/// Probes once, and if that fails, waits `retry_delay` and probes again
+/// before declaring the printer unavailable. See `PROBE_RETRY_DELAY` for why
+/// a single refusal is not conclusive for RAW TCP printers.
+///
+/// Worst case this costs `NETWORK_PROBE_TIMEOUT` + `retry_delay` +
+/// `NETWORK_PROBE_TIMEOUT` (4 s at the current constants) — reached only
+/// when both attempts time out rather than being refused, e.g. against a
+/// host that silently drops packets. A refused connection returns near-
+/// instantly, so the typical cost of confirming an unreachable printer is
+/// close to `retry_delay` alone (~2 s).
+async fn probe_with_confirmation(host: &str, port: u16, retry_delay: Duration) -> bool {
+    confirm_with_retry(retry_delay, || {
+        probe_once(host, port, NETWORK_PROBE_TIMEOUT)
+    })
+    .await
+}
+
 async fn probe_network_printers(configuration: &PrinterConfiguration) -> Vec<bool> {
     let mut probes = JoinSet::new();
     for (index, printer) in configuration.network_printers().iter().enumerate() {
         let host = printer.host.clone();
         let port = printer.port;
         probes.spawn(async move {
-            let connected = timeout(
-                NETWORK_PROBE_TIMEOUT,
-                TcpStream::connect((host.as_str(), port)),
+            (
+                index,
+                probe_with_confirmation(&host, port, PROBE_RETRY_DELAY).await,
             )
-            .await
-            .is_ok_and(|result| result.is_ok());
-            (index, connected)
         });
     }
     let mut statuses = vec![false; configuration.network_printers().len()];
@@ -465,5 +510,81 @@ port = 9100
         assert_eq!(usb.printers.len(), 1);
         assert_eq!(usb.printers[0].name, "counter");
         assert_eq!(usb.printers[0].transport, Transport::Usb);
+    }
+
+    // The retry decision (`confirm_with_retry`) is exercised deterministically
+    // below through a scripted sequence of outcomes, with the tokio clock
+    // paused so the real `retry_delay` sleep resolves instantly instead of
+    // costing wall-clock time. Only one test below touches a real socket, to
+    // prove `probe_with_confirmation` itself wires that seam up correctly.
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_attempt_followed_by_a_success_confirms_the_printer_as_connected() {
+        let attempts = std::cell::Cell::new(0);
+        let outcomes = [false, true];
+
+        let connected = confirm_with_retry(Duration::from_secs(2), || {
+            let this_attempt = attempts.get();
+            attempts.set(this_attempt + 1);
+            std::future::ready(outcomes[this_attempt])
+        })
+        .await;
+
+        assert!(connected);
+        assert_eq!(
+            attempts.get(),
+            2,
+            "a retry that succeeds should have made exactly two attempts"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn two_failed_attempts_report_the_printer_as_unavailable() {
+        let attempts = std::cell::Cell::new(0);
+
+        let connected = confirm_with_retry(Duration::from_secs(2), || {
+            attempts.set(attempts.get() + 1);
+            std::future::ready(false)
+        })
+        .await;
+
+        assert!(!connected);
+        assert_eq!(
+            attempts.get(),
+            2,
+            "an unavailable printer should have been given exactly two attempts"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_successful_first_attempt_confirms_the_printer_without_a_second_attempt() {
+        let attempts = std::cell::Cell::new(0);
+
+        let connected = confirm_with_retry(Duration::from_secs(2), || {
+            attempts.set(attempts.get() + 1);
+            std::future::ready(true)
+        })
+        .await;
+
+        assert!(connected);
+        assert_eq!(
+            attempts.get(),
+            1,
+            "a healthy printer should pay no retry cost: only one attempt should have been made"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_printer_that_never_answers_is_unavailable() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener has an address")
+            .port();
+        drop(listener);
+
+        let connected = probe_with_confirmation("127.0.0.1", port, Duration::from_millis(50)).await;
+
+        assert!(!connected);
     }
 }

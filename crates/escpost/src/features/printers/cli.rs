@@ -21,7 +21,10 @@ pub(super) mod output;
 pub(super) fn scan_announcement(targets: &[crate::discovery::ScanTarget], port: u16) -> String {
     let count = targets.len();
     let noun = if count == 1 { "network" } else { "networks" };
-    let mut announcement = format!("Scanning {count} {noun} on port {port}:");
+    let probes = crate::discovery::probe_count(targets);
+    let probe_noun = if probes == 1 { "address" } else { "addresses" };
+    let mut announcement =
+        format!("Scanning {count} {noun} on port {port} ({probes} {probe_noun}):");
     for target in targets {
         announcement.push_str("\n  - ");
         announcement.push_str(&target.subnet.to_string());

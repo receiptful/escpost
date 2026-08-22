@@ -15,12 +15,13 @@ use inquire::{CustomType, Select, Text};
 use super::super::cli::output::{format_network_endpoint, usb_printer_label_parts};
 use super::super::cli::scan_announcement;
 use super::super::cli::{AddPrinterArgs, PrinterTransport};
+use super::super::discover::cli::skipped_line;
 use super::super::discover::{
     DiscoveryEvent, DiscoveryScope, NetworkDiscovery, NetworkScan, execute as execute_discovery,
     prepare as prepare_discovery,
 };
-use super::super::inventory::{UsbInventory, UsbPrinter, configuration_matches};
-use super::{Connection, Request, Response, execute};
+use super::super::inventory::{NusbInventory, UsbInventory, UsbPrinter, configuration_matches};
+use super::{AMBIGUOUS_USB_WARNING, Connection, DEFAULT_RAW_PORT, Request, Response, execute};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UsbAddTarget {
@@ -161,9 +162,7 @@ fn save_and_report_printer(
         response.config_path.display()
     );
     if ambiguous_without_serial {
-        eprintln!(
-            "Warning: this USB printer has no serial number; printing will be ambiguous while another device with the same USB identity is connected."
-        );
+        eprintln!("Warning: {AMBIGUOUS_USB_WARNING}");
     }
     Ok(response.printer_name)
 }
@@ -237,7 +236,7 @@ fn resolve_add(
             let port = match port {
                 Some(port) => port,
                 None if can_prompt => prompter.port()?,
-                None => 9100,
+                None => DEFAULT_RAW_PORT,
             };
             if port == 0 {
                 return Err(ApplicationError::InvalidPrinterPort.into());
@@ -395,7 +394,7 @@ impl AddPrompter for InquireAddPrompter {
 
     fn port(&mut self) -> Result<u16, CliError> {
         CustomType::<u16>::new("Network port")
-            .with_default(9100)
+            .with_default(DEFAULT_RAW_PORT)
             .with_error_message("Enter a port between 1 and 65535")
             .with_validator(|port: &u16| {
                 Ok(if *port == 0 {
@@ -519,28 +518,44 @@ async fn discover_printer_for_add(
     );
     bar.set_message("Scanning for network printers");
     let mut length_set = false;
-    let response = execute_discovery(prepared, |event| match event {
-        DiscoveryEvent::Prepared {
-            scope,
-            scan_targets,
-            ..
-        } => {
-            let scan = scope
-                .network_scan()
-                .expect("add discovery always prepares a network scope");
-            eprintln!("{}", scan_announcement(scan_targets, scan.port()));
-            if scan.uses_automatic_subnets() {
-                eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+    let response = execute_discovery(
+        prepared,
+        |event| match event {
+            DiscoveryEvent::Prepared {
+                scope,
+                scan_targets,
+                skipped,
+                ..
+            } => {
+                let scan = scope
+                    .network_scan()
+                    .expect("add discovery always prepares a network scope");
+                // The same scan as `printers discover`, so the same
+                // omissions are reported, in the same words: an adapter left
+                // out silently reads as a network that holds no printer.
+                for adapter in skipped {
+                    eprintln!("{}", skipped_line(adapter));
+                }
+                eprintln!("{}", scan_announcement(scan_targets, scan.port()));
+                if scan.uses_automatic_subnets() {
+                    eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");
+                }
             }
-        }
-        DiscoveryEvent::NetworkScanProgress { completed, total } => {
-            if !length_set {
-                bar.set_length(total);
-                length_set = true;
+            // Discovery for `add` is always network-only, so USB events
+            // never fire here; the final `Response` is what selection reads.
+            DiscoveryEvent::UsbPrinter(_)
+            | DiscoveryEvent::UsbFailure(_)
+            | DiscoveryEvent::NetworkPrinter(_) => {}
+            DiscoveryEvent::NetworkScanProgress { completed, total } => {
+                if !length_set {
+                    bar.set_length(total);
+                    length_set = true;
+                }
+                bar.set_position(completed);
             }
-            bar.set_position(completed);
-        }
-    })
+        },
+        &mut NusbInventory,
+    )
     .await;
     bar.finish_and_clear();
     let response = response?;
@@ -1433,7 +1448,11 @@ out_endpoint = "0x01"
 
     #[tokio::test]
     async fn add_discovery_uses_shared_correlation_before_concrete_add() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port should bind");
+        // 127.0.0.2 rather than 127.0.0.1: the whole 127.0.0.0/8 block routes
+        // to loopback, but only 127.0.0.1 is the machine's own address, so an
+        // explicit /32 on 127.0.0.2 is not self-excluded and this stand-in
+        // "printer" stays discoverable.
+        let listener = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
         let port = listener
             .local_addr()
             .expect("the listener should have an address")
@@ -1442,7 +1461,7 @@ out_endpoint = "0x01"
         let config = directory.join("printers.toml");
         fs::write(
             &config,
-            format!("[existing]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = {port}\n"),
+            format!("[existing]\ntransport = \"network\"\nhost = \"127.0.0.2\"\nport = {port}\n"),
         )
         .expect("the existing configuration should be writable");
         let mut arguments = AddPrinterArgs {
@@ -1455,7 +1474,7 @@ out_endpoint = "0x01"
             serial: None,
             profile: None,
             discover: true,
-            subnet: vec![Subnet::parse("127.0.0.1/32").expect("valid subnet")],
+            subnet: vec![Subnet::parse("127.0.0.2/32").expect("valid subnet")],
             timeout: Some(50),
         };
 

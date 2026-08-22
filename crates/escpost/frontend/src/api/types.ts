@@ -13,6 +13,7 @@ export type VirtualPrinterStatus = {
 export type StatusResponse = {
   virtual_printer: VirtualPrinterStatus | null;
   jobs_processed: number;
+  config_path: string;
 };
 
 export type UsbConnection = {
@@ -45,6 +46,71 @@ export type Printer = {
 
 export type PrintersResponse = {
   printers: Printer[];
+};
+
+// A network the scan can sweep, or the target list a `prepared` event
+// reports for the scan it is about to run. Both `discover/networks` and the
+// discovery stream's `prepared` event serialize `NetworkResponse` the same
+// way, so one type covers both.
+export type DiscoveryNetwork = {
+  subnet: string;
+  interface: string | null;
+  hosts: number;
+};
+
+// A network adapter the automatic sweep left out, with the shared layer's own
+// reason for why (`description`) — the reason only. What to do about it is
+// each interface's own wording: the terminal names `--subnet`, while the scan
+// options panel points at its custom-network field.
+export type SkippedNetwork = {
+  interface: string;
+  subnet: string | null;
+  reason: "too_large" | "unusable_netmask";
+  description: string;
+};
+
+export type DiscoveryNetworksResponse = {
+  networks: DiscoveryNetwork[];
+  skipped: SkippedNetwork[];
+  default_port: number;
+  default_timeout_ms: number;
+};
+
+// A printer reported by the discovery stream's `printer` event. Its
+// `connection` is the same `UsbConnection | NetworkConnection` shape a
+// listed `Printer` carries, since the server serializes both through the
+// same `ConnectionResponse`. `interface` is present only for a network
+// printer that answered on a known adapter — the server omits the field
+// entirely rather than sending `null`.
+export type DiscoveredPrinter = {
+  transport: "usb" | "network";
+  configured_names: string[];
+  configured_profile: string | null;
+  interface?: string;
+  connection: UsbConnection | NetworkConnection;
+};
+
+export type AddPrinterBody = {
+  name: string;
+  profile: string | null;
+  connection:
+    | { type: "network"; host: string; port: number }
+    | {
+        type: "usb";
+        vendor_id: number;
+        product_id: number;
+        serial_number: string | null;
+        interface_number: number;
+        out_endpoint: number;
+        in_endpoint: number | null;
+      };
+};
+
+export type AddPrinterResponse = {
+  name: string;
+  transport: "usb" | "network";
+  profile: string | null;
+  warnings: string[];
 };
 
 export type Profile = {

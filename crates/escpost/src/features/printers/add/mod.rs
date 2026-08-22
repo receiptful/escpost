@@ -1,15 +1,38 @@
 //! Persist a fully resolved printer registration request.
 
 pub(crate) mod cli;
+pub(crate) mod http;
 mod operation;
 
-pub(crate) use operation::{Connection, Request, Response, execute};
+pub(crate) use operation::{
+    AMBIGUOUS_USB_WARNING, Connection, DEFAULT_RAW_PORT, Request, Response, execute,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::application::ApplicationError;
     use crate::features::printers::test_support::temporary_configuration;
+
+    /// The workbench's manual registration dialog offers the same port before
+    /// anything is typed, as a TypeScript literal it has no way to import.
+    /// This is the link between the two copies, and it is the one duplicated
+    /// registration constant worth a mechanical guard: a wrong warning or a
+    /// wrong hint is visible on screen, while a wrong default port is
+    /// accepted by every layer and saved. The printer then lists as
+    /// unavailable long afterwards, with nothing pointing back at a number
+    /// nobody chose.
+    #[test]
+    fn the_workbench_dialog_offers_the_same_default_port() {
+        let dialog =
+            include_str!("../../../../frontend/src/features/printers/add-printer-dialog.tsx");
+        let declaration = format!("const DEFAULT_RAW_PORT = {DEFAULT_RAW_PORT};");
+
+        assert!(
+            dialog.contains(&declaration),
+            "add-printer-dialog.tsx must declare `{declaration}`"
+        );
+    }
 
     #[test]
     fn request_constructor_rejects_a_blank_printer_name() {

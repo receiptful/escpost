@@ -12,10 +12,13 @@ use super::list::{self, ConnectionFacts, Printer};
 use super::{Availability, Transport};
 
 pub(crate) fn router() -> Router<WebState> {
-    Router::new().route(
-        "/api/printers/list",
-        get(list_printers).fallback(crate::web::error::method_not_allowed),
-    )
+    Router::new()
+        .route(
+            "/api/printers/list",
+            get(list_printers).fallback(crate::web::error::method_not_allowed),
+        )
+        .merge(super::discover::http::router())
+        .merge(super::add::http::router())
 }
 
 #[derive(Deserialize)]
@@ -85,9 +88,12 @@ struct PrinterResponse {
     connection: ConnectionResponse,
 }
 
+/// The one connection shape the printers API speaks, shared by the listing
+/// here and by the discovery stream's `printer` events so a client parses a
+/// printer's connection the same way wherever it arrives.
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ConnectionResponse {
+pub(super) enum ConnectionResponse {
     Usb {
         vendor_id: u16,
         product_id: u16,

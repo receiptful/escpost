@@ -3,10 +3,15 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+#[derive(Debug)]
 pub(crate) struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    /// The `Allow` header value for a 405, e.g. `"GET, HEAD"`. Only ever set
+    /// by `method_not_allowed`, which is the only constructor that produces
+    /// `StatusCode::METHOD_NOT_ALLOWED`.
+    allow: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -29,6 +34,17 @@ impl ApiError {
         )
     }
 
+    /// The request body was not JSON, or did not match the expected shape.
+    /// Raised in place of axum's built-in `JsonRejection` response, which
+    /// speaks `text/plain` rather than this API's error envelope.
+    pub(crate) fn invalid_request_body() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_body",
+            "The request body is invalid.",
+        )
+    }
+
     pub(crate) fn printer_inventory_failure() -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -45,6 +61,42 @@ impl ApiError {
         )
     }
 
+    pub(crate) fn network_detection_failure() -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "network_detection_unavailable",
+            "The machine's network interfaces could not be read.",
+        )
+    }
+
+    /// Discovery could not even be prepared, because the server could not do
+    /// its part — an unreadable configuration, an unenumerable interface
+    /// list. Raised before the stream opens, so the browser gets a plain JSON
+    /// error rather than an event stream whose first event is a failure.
+    pub(crate) fn discovery_failure() -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "discovery_unavailable",
+            "Printer discovery could not be started.",
+        )
+    }
+
+    /// A network-only scan on a machine with no automatically scannable
+    /// adapter. Not a server fault: the caller can name a subnet or include
+    /// USB, so it answers 422 rather than 500.
+    ///
+    /// `reason` is the shared error's own wording, which already names the
+    /// adapters that were left out and why. The remedy is not appended here:
+    /// the terminal's answer is `--subnet`, the browser's is its own
+    /// custom-network field (DD-035).
+    pub(crate) fn no_discoverable_networks(reason: String) -> Self {
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no_discoverable_networks",
+            reason,
+        )
+    }
+
     pub(crate) fn not_found() -> Self {
         Self::new(
             StatusCode::NOT_FOUND,
@@ -53,12 +105,20 @@ impl ApiError {
         )
     }
 
-    pub(crate) fn method_not_allowed() -> Self {
-        Self::new(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "method_not_allowed",
-            "This API endpoint only accepts GET and HEAD requests.",
-        )
+    /// `methods` are the methods the route's own handlers actually accept
+    /// (e.g. `&["GET", "HEAD"]` or `&["POST"]`), so the message and the
+    /// `Allow` header stay truthful per route instead of a single sentence
+    /// that was only ever true back when every route was a GET.
+    pub(crate) fn method_not_allowed(methods: &[&str]) -> Self {
+        Self {
+            status: StatusCode::METHOD_NOT_ALLOWED,
+            code: "method_not_allowed",
+            message: format!(
+                "This API endpoint only accepts {} requests.",
+                describe_methods(methods)
+            ),
+            allow: Some(methods.join(", ")),
+        }
     }
 
     pub(crate) fn job_not_found() -> Self {
@@ -74,7 +134,57 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            allow: None,
         }
+    }
+
+    /// Translate a failure from `add::Request::new` or `add::execute` into
+    /// its own stable code, one `ApplicationError` variant at a time, so the
+    /// browser can tell a name collision (409) from a bad endpoint (400)
+    /// instead of parsing prose out of a single generic 400.
+    pub(crate) fn from_application(error: crate::application::ApplicationError) -> Self {
+        use crate::application::ApplicationError as Application;
+        let (status, code) = match error {
+            Application::BlankPrinterName => (StatusCode::BAD_REQUEST, "blank_printer_name"),
+            Application::BlankPrinterHost => (StatusCode::BAD_REQUEST, "blank_printer_host"),
+            Application::BlankPrinterProfile => (StatusCode::BAD_REQUEST, "blank_printer_profile"),
+            Application::BlankUsbSerialNumber => {
+                (StatusCode::BAD_REQUEST, "blank_usb_serial_number")
+            }
+            Application::InvalidPrinterPort => (StatusCode::BAD_REQUEST, "invalid_printer_port"),
+            Application::InvalidUsbOutEndpoint(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_usb_out_endpoint")
+            }
+            Application::InvalidUsbInEndpoint(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_usb_in_endpoint")
+            }
+            Application::PrinterAlreadyConfigured(_) => {
+                (StatusCode::CONFLICT, "printer_already_configured")
+            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "printer_registration_failed",
+            ),
+        };
+        Self::new(status, code, error.to_string())
+    }
+}
+
+/// Readers for the two fields a mapping test asserts on. Test-only: nothing
+/// in the running server needs to inspect an error it is about to send, and
+/// a public reader would invite exactly that.
+#[cfg(test)]
+impl ApiError {
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -92,12 +202,26 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response();
-        if status == StatusCode::METHOD_NOT_ALLOWED {
-            response
-                .headers_mut()
-                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+        if status == StatusCode::METHOD_NOT_ALLOWED
+            && let Some(allow) = &self.allow
+        {
+            response.headers_mut().insert(
+                header::ALLOW,
+                HeaderValue::from_str(allow)
+                    .expect("method names are valid header value characters"),
+            );
         }
         response
+    }
+}
+
+/// English-join method names for the 405 message, e.g. `["POST"] ->
+/// "POST"` and `["GET", "HEAD"] -> "GET and HEAD"`.
+fn describe_methods(methods: &[&str]) -> String {
+    match methods {
+        [] => String::new(),
+        [only] => (*only).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -105,6 +229,15 @@ pub(crate) async fn not_found() -> ApiError {
     ApiError::not_found()
 }
 
+/// Fallback for every route whose only handlers are GET (with axum's
+/// implicit HEAD).
 pub(crate) async fn method_not_allowed() -> ApiError {
-    ApiError::method_not_allowed()
+    ApiError::method_not_allowed(&["GET", "HEAD"])
+}
+
+/// Fallback for `POST /api/printers/add`, the one write route: it has no
+/// GET handler, so the shared GET/HEAD message would lie about what this
+/// route accepts.
+pub(crate) async fn method_not_allowed_post() -> ApiError {
+    ApiError::method_not_allowed(&["POST"])
 }

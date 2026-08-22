@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render, screen, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
+import { LocationProvider } from "preact-iso";
 import { locationStub } from "preact-iso/prerender";
 import { App } from "../app";
+import type { DiscoveryQuery } from "../api/discovery-stream";
+import { AppDataProvider, useAppData } from "./data";
+import { AppShell } from "./shell";
 
 const originalFetch = globalThis.fetch;
+const originalEventSource = globalThis.EventSource;
 
 beforeEach(() => {
   globalThis.fetch = ((input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
@@ -18,11 +23,78 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  globalThis.EventSource = originalEventSource;
 });
 
 function renderAt(path: string) {
   locationStub(path);
   return render(<App />);
+}
+
+// Neither Bun's runtime nor the happy-dom registrator provides a global
+// `EventSource`, so the shell's scan progress is driven through the same
+// kind of stand-in `discovery-stream.test.ts` uses: it records listeners and
+// lets a test dispatch a named event with a JSON payload.
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>();
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(name: string, handler: (event: Event) => void) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]);
+  }
+
+  close() {}
+
+  emit(name: string, data: unknown) {
+    const event = new MessageEvent(name, { data: JSON.stringify(data) });
+    for (const handler of this.listeners.get(name) ?? []) {
+      handler(event);
+    }
+  }
+}
+
+const scanQuery: DiscoveryQuery = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
+
+// The printers page does not start scans yet, so the shell is rendered
+// around a child that reaches for `startScan` the way that page eventually
+// will.
+function ScanProbe() {
+  const { startScan } = useAppData();
+  return <button type="button" onClick={() => startScan(scanQuery)}>Scan</button>;
+}
+
+async function startScanInShell(path: string) {
+  FakeEventSource.instances = [];
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  locationStub(path);
+  const view = render(
+    <AppDataProvider>
+      <LocationProvider scope="/app">
+        <AppShell><ScanProbe /></AppShell>
+      </LocationProvider>
+    </AppDataProvider>,
+  );
+  await act(async () => {});
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+  return { view, stream: FakeEventSource.instances[0]! };
+}
+
+// Both responsive variants render the progress block, and every assertion
+// about it is made against both: returning the pair (and failing here when
+// either one is missing) keeps a variant from silently disappearing behind a
+// test that only ever looked at the other.
+function discoveryRegions() {
+  const regions = screen.getAllByRole("region", { name: "Printer discovery" });
+  const sidebar = regions.find((region) => region.closest("aside"));
+  const compact = regions.find((region) => region.closest("header"));
+  expect(regions).toHaveLength(2);
+  expect(sidebar).toBeTruthy();
+  expect(compact).toBeTruthy();
+  return [sidebar!, compact!];
 }
 
 describe("App", () => {
@@ -147,5 +219,107 @@ describe("App", () => {
     expect(
       screen.queryByText("The new web workbench is under construction."),
     ).toBeNull();
+  });
+
+  test("a running scan shows progress in both responsive status variants on any page", async () => {
+    const { stream } = await startScanInShell("/app/profiles");
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+
+    for (const region of discoveryRegions()) {
+      expect(within(region).getByText("Scanning printers")).toBeTruthy();
+      expect(within(region).getByText("312 / 508")).toBeTruthy();
+      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/app/printers");
+      expect(region.querySelector("progress")?.getAttribute("value")).toBe("312");
+    }
+  });
+
+  test("renders the sidebar variant as a card and the compact variant as an inline pill", async () => {
+    const { stream } = await startScanInShell("/app/profiles");
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+
+    const [sidebar, compact] = discoveryRegions();
+    expect(sidebar.getAttribute("class")).toContain("text-sm");
+    expect(compact.getAttribute("class")).toContain("text-xs");
+    expect(compact.getAttribute("class")).toContain("inline-flex");
+    expect(compact.getAttribute("class")).toContain("rounded-full");
+    expect(sidebar.getAttribute("class")).not.toContain("rounded-full");
+  });
+
+  test("scan progress stays indeterminate until the probe total is known", async () => {
+    await startScanInShell("/app/printers");
+
+    for (const region of discoveryRegions()) {
+      expect(region.querySelector("progress")?.hasAttribute("value")).toBe(false);
+      expect(within(region).queryByText("0 / 0")).toBeNull();
+      expect(within(region).getByText("In progress…")).toBeTruthy();
+    }
+  });
+
+  // A USB-only scope resolves to no scan targets, so the server sends
+  // `prepared` with a zero probe total and never sends a `progress` event.
+  // The readout has to stay honest for the whole life of that scan.
+  test("a USB-only scan never claims to be preparing or to have zero of zero probes", async () => {
+    const { stream } = await startScanInShell("/app/printers");
+    act(() => { stream.emit("prepared", { targets: [], skipped: [], total_probes: 0 }); });
+
+    for (const region of discoveryRegions()) {
+      expect(within(region).queryByText("Preparing…")).toBeNull();
+      expect(within(region).queryByText("0 / 0")).toBeNull();
+      expect(within(region).getByText("In progress…")).toBeTruthy();
+    }
+  });
+
+  // A rescan started while one is already running resets the probe total to
+  // zero without unmounting the bar, which is the only way the determinate
+  // to indeterminate direction is ever exercised.
+  test("a rescan drops the probe total back to an indeterminate bar", async () => {
+    const { stream } = await startScanInShell("/app/printers");
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+    for (const region of discoveryRegions()) {
+      expect(region.querySelector("progress")?.getAttribute("value")).toBe("312");
+    }
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+
+    for (const region of discoveryRegions()) {
+      expect(region.querySelector("progress")?.hasAttribute("value")).toBe(false);
+    }
+  });
+
+  test("announces a scan starting and ending without announcing every probe", async () => {
+    const { view, stream } = await startScanInShell("/app/printers");
+    const announcers = [...view.container.querySelectorAll('[aria-live="polite"].sr-only')];
+    expect(announcers).toHaveLength(2);
+    for (const announcer of announcers) {
+      expect(announcer.textContent).toBe("Scanning printers");
+    }
+
+    act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
+    for (const announcer of announcers) {
+      expect(announcer.textContent).toBe("Scanning printers");
+    }
+    // The ticking readout must never sit inside a live region, or every probe
+    // is announced on its own.
+    for (const region of discoveryRegions()) {
+      expect(region.closest("[aria-live]")).toBeNull();
+    }
+
+    act(() => { stream.emit("completed", {}); });
+    expect(screen.queryAllByRole("region", { name: "Printer discovery" })).toHaveLength(0);
+    for (const announcer of announcers) {
+      expect(announcer.textContent).toBe("");
+    }
+  });
+
+  test("keeps the sidebar status pair anchored to the bottom while a scan runs", async () => {
+    const { stream } = await startScanInShell("/app/jobs");
+    act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
+
+    const status = screen.getAllByRole("status", { name: "Server status" }).find((section) => section.closest("aside"));
+    const anchored = status?.parentElement;
+    expect(anchored?.getAttribute("class")).toContain("mt-auto");
+    expect(anchored?.parentElement?.tagName).toBe("ASIDE");
+    expect(anchored?.nextElementSibling).toBeNull();
+    expect(status?.previousElementSibling?.getAttribute("aria-label")).toBe("Printer discovery");
   });
 });
