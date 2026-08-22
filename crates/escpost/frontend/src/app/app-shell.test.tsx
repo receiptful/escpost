@@ -1,19 +1,26 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { LocationProvider } from "preact-iso";
 import { locationStub } from "preact-iso/prerender";
 import { App } from "../app";
 import type { DiscoveryQuery } from "../api/discovery-stream";
+import type { VirtualPrinterStatus } from "../api/types";
 import { AppDataProvider, useAppData } from "./data";
 import { AppShell } from "./shell";
 
 const originalFetch = globalThis.fetch;
 const originalEventSource = globalThis.EventSource;
 
+// What `/api/status` reports for the virtual printer, read on every poll
+// rather than captured at render, so a test can move the printer between
+// `ready` and `receiving` and let the next poll pick the change up.
+let virtualPrinter: VirtualPrinterStatus | null = null;
+
 beforeEach(() => {
+  virtualPrinter = null;
   globalThis.fetch = ((input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
     String(input) === "/api/status"
-      ? { virtual_printer: null, jobs_processed: 0 }
+      ? { virtual_printer: virtualPrinter, jobs_processed: 0 }
       : String(input) === "/api/jobs/current"
         ? { receiving: false, profile: "REFERENCE", error: null, job: null }
         : { printers: [] },
@@ -22,9 +29,22 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  jest.useRealTimers();
   globalThis.fetch = originalFetch;
   globalThis.EventSource = originalEventSource;
 });
+
+const receiving: VirtualPrinterStatus = { state: "receiving", address: "127.0.0.1:9100" };
+const ready: VirtualPrinterStatus = { state: "ready", address: "127.0.0.1:9100" };
+
+// Drains the status request's promise chain (fetch -> json -> the provider's
+// `.then` -> `.finally`), which takes more microtask turns than a single
+// await gives it.
+async function flush() {
+  for (let i = 0; i < 6; i += 1) {
+    await Promise.resolve();
+  }
+}
 
 function renderAt(path: string) {
   locationStub(path);
@@ -67,9 +87,7 @@ function ScanProbe() {
   return <button type="button" onClick={() => startScan(scanQuery)}>Scan</button>;
 }
 
-async function startScanInShell(path: string) {
-  FakeEventSource.instances = [];
-  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+async function renderShell(path: string) {
   locationStub(path);
   const view = render(
     <AppDataProvider>
@@ -78,7 +96,14 @@ async function startScanInShell(path: string) {
       </LocationProvider>
     </AppDataProvider>,
   );
-  await act(async () => {});
+  await act(async () => { await flush(); });
+  return view;
+}
+
+async function startScanInShell(path: string) {
+  FakeEventSource.instances = [];
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  const view = await renderShell(path);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
   return { view, stream: FakeEventSource.instances[0]! };
 }
@@ -88,13 +113,27 @@ async function startScanInShell(path: string) {
 // either one is missing) keeps a variant from silently disappearing behind a
 // test that only ever looked at the other.
 function discoveryRegions() {
-  const regions = screen.getAllByRole("region", { name: "Printer discovery" });
+  return responsivePair("Printer discovery");
+}
+
+// The same pairing rule for the incoming-job block, which is rendered by the
+// same component in the same two places.
+function jobRegions() {
+  return responsivePair("Print job");
+}
+
+function responsivePair(name: string) {
+  const regions = screen.getAllByRole("region", { name });
   const sidebar = regions.find((region) => region.closest("aside"));
   const compact = regions.find((region) => region.closest("header"));
   expect(regions).toHaveLength(2);
   expect(sidebar).toBeTruthy();
   expect(compact).toBeTruthy();
   return [sidebar!, compact!];
+}
+
+function announcers(container: Element) {
+  return [...container.querySelectorAll('[aria-live="polite"].sr-only')];
 }
 
 describe("App", () => {
@@ -321,5 +360,151 @@ describe("App", () => {
     expect(anchored?.parentElement?.tagName).toBe("ASIDE");
     expect(anchored?.nextElementSibling).toBeNull();
     expect(status?.previousElementSibling?.getAttribute("aria-label")).toBe("Printer discovery");
+  });
+
+  test("an arriving print job shows in both responsive status variants on any page", async () => {
+    virtualPrinter = receiving;
+    await renderShell("/app/profiles");
+
+    for (const region of jobRegions()) {
+      expect(within(region).getByText("Incoming print job")).toBeTruthy();
+      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/app/jobs");
+      // No readout beside the bar: nothing measures a job's size, so the only
+      // thing it could say is that the job is in progress, which the label
+      // and the indeterminate bar already say.
+      expect(region.textContent).toBe("Incoming print jobView");
+    }
+  });
+
+  test("shows no job block while the virtual printer is idle or absent", async () => {
+    virtualPrinter = ready;
+    await renderShell("/app/jobs");
+    expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
+
+    cleanup();
+    virtualPrinter = null;
+    await renderShell("/app/jobs");
+    expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
+  });
+
+  // Nothing announces the size of an incoming job — not the status payload and
+  // not the current-job endpoint — so the bar has no value to show and must
+  // never invent one.
+  test("an incoming job's bar stays indeterminate, with no invented total", async () => {
+    virtualPrinter = receiving;
+    await renderShell("/app/jobs");
+
+    for (const region of jobRegions()) {
+      const bar = region.querySelector("progress");
+      expect(bar?.hasAttribute("value")).toBe(false);
+      expect(bar?.hasAttribute("max")).toBe(false);
+    }
+  });
+
+  test("renders the job's sidebar variant as a card and its compact variant as an inline pill", async () => {
+    virtualPrinter = receiving;
+    await renderShell("/app/jobs");
+
+    const [sidebar, compact] = jobRegions();
+    expect(sidebar.getAttribute("class")).toContain("text-sm");
+    expect(compact.getAttribute("class")).toContain("text-xs");
+    expect(compact.getAttribute("class")).toContain("inline-flex");
+    expect(compact.getAttribute("class")).toContain("rounded-full");
+    expect(sidebar.getAttribute("class")).not.toContain("rounded-full");
+  });
+
+  // Both activities are independent and can overlap. The order they appear in
+  // is fixed rather than most-recent-first, so neither pill moves under the
+  // reader when the other one comes or goes.
+  test("stacks a scan and an incoming job in a fixed order in both variants", async () => {
+    virtualPrinter = receiving;
+    const { stream } = await startScanInShell("/app/jobs");
+    act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
+
+    const [sidebarScan, compactScan] = discoveryRegions();
+    const [sidebarJob, compactJob] = jobRegions();
+    const position = (region: Element) => [...(region.parentElement?.children ?? [])].indexOf(region);
+    for (const [scan, job] of [[sidebarScan, sidebarJob], [compactScan, compactJob]]) {
+      expect(scan!.parentElement).toBe(job!.parentElement);
+      expect(position(scan!)).toBeLessThan(position(job!));
+    }
+
+    // The status block stays where it was: last, and still anchored to the
+    // bottom of the sidebar column with two blocks above it rather than one.
+    const status = screen.getAllByRole("status", { name: "Server status" }).find((section) => section.closest("aside"));
+    expect(status?.parentElement?.getAttribute("class")).toContain("mt-auto");
+    expect(status?.nextElementSibling).toBeNull();
+    expect(status?.previousElementSibling?.getAttribute("aria-label")).toBe("Print job");
+  });
+
+  // The header is a thin bar and the pills are inline, so they share a row
+  // wherever there is width for one — only wrapping to a second line on a
+  // narrow screen. The sidebar cards are full width and can only stack, so
+  // they stay direct children of the anchored column.
+  test("lays the compact pills out as a wrapping row and the sidebar pills as a stack", async () => {
+    virtualPrinter = receiving;
+    const { stream } = await startScanInShell("/app/printers");
+    act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
+
+    const [sidebarScan, compactScan] = discoveryRegions();
+    const [sidebarJob, compactJob] = jobRegions();
+    expect(compactScan.parentElement).toBe(compactJob.parentElement);
+    expect(compactScan.parentElement?.getAttribute("class")).toContain("flex-wrap");
+    expect(sidebarScan.parentElement).toBe(sidebarJob.parentElement);
+    expect(sidebarScan.parentElement?.getAttribute("class")).toContain("mt-auto");
+  });
+
+  test("announces an arriving job, and both activities while they overlap", async () => {
+    virtualPrinter = receiving;
+    const view = await renderShell("/app/jobs");
+
+    expect(announcers(view.container)).toHaveLength(2);
+    for (const announcer of announcers(view.container)) {
+      expect(announcer.textContent).toBe("Incoming print job");
+    }
+    // The pill itself must stay out of any live region, or a screen reader
+    // reads the whole shell again on every poll that changes nothing.
+    for (const region of jobRegions()) {
+      expect(region.closest("[aria-live]")).toBeNull();
+    }
+
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+
+    for (const announcer of announcers(view.container)) {
+      expect(announcer.textContent).toBe("Scanning printers. Incoming print job");
+    }
+  });
+
+  // The provider keeps the last status response while the server is
+  // unreachable, so an unguarded pill would go on claiming a job is arriving
+  // at a server nobody can reach — and would say so directly above a status
+  // block reading "Disconnected".
+  test("stops claiming a job is arriving once the server is unreachable", async () => {
+    jest.useFakeTimers();
+    virtualPrinter = receiving;
+    await renderShell("/app/jobs");
+    expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
+
+    globalThis.fetch = (() => Promise.reject(new TypeError("failed to fetch"))) as unknown as typeof globalThis.fetch;
+    await act(async () => { jest.advanceTimersByTime(2_000); await flush(); });
+
+    expect(screen.getAllByText("Disconnected")).toHaveLength(2);
+    expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
+  });
+
+  test("drops the job block and its announcement once the job stops arriving", async () => {
+    jest.useFakeTimers();
+    virtualPrinter = receiving;
+    const view = await renderShell("/app/jobs");
+    expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
+
+    virtualPrinter = ready;
+    await act(async () => { jest.advanceTimersByTime(2_000); await flush(); });
+
+    expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
+    for (const announcer of announcers(view.container)) {
+      expect(announcer.textContent).toBe("");
+    }
   });
 });
