@@ -97,8 +97,15 @@ services:
       - ${ESCPOST_CONFIG_HOST_DIR:-./.config}:/home/developer/.config/escpost
       - cargo-home:/home/developer/.cargo
       - cargo-target:/home/developer/target
-    devices:
+      # A bind mount, so device files appear and disappear as printers are
+      # plugged in and out. The `devices:` key passes through only what is
+      # connected when the container starts, which leaves a printer plugged
+      # in later visible in /sys but impossible to open.
       - /dev/bus/usb:/dev/bus/usb
+    # Lets the container read and write USB devices. A bind mount makes the
+    # device files visible but grants no access to them.
+    device_cgroup_rules:
+      - "c 189:* rmw"
     group_add:
       - "${USB_GROUP_ID:-7}"
     entrypoint:
