@@ -15,6 +15,7 @@ use inquire::{CustomType, Select, Text};
 use super::super::cli::output::{format_network_endpoint, usb_printer_label_parts};
 use super::super::cli::scan_announcement;
 use super::super::cli::{AddPrinterArgs, PrinterTransport};
+use super::super::discover::cli::skipped_line;
 use super::super::discover::{
     DiscoveryEvent, DiscoveryScope, NetworkDiscovery, NetworkScan, execute as execute_discovery,
     prepare as prepare_discovery,
@@ -523,11 +524,18 @@ async fn discover_printer_for_add(
             DiscoveryEvent::Prepared {
                 scope,
                 scan_targets,
+                skipped,
                 ..
             } => {
                 let scan = scope
                     .network_scan()
                     .expect("add discovery always prepares a network scope");
+                // The same scan as `printers discover`, so the same
+                // omissions are reported, in the same words: an adapter left
+                // out silently reads as a network that holds no printer.
+                for adapter in skipped {
+                    eprintln!("{}", skipped_line(adapter));
+                }
                 eprintln!("{}", scan_announcement(scan_targets, scan.port()));
                 if scan.uses_automatic_subnets() {
                     eprintln!("Tip: pass --subnet <CIDR> to scan a different network.");

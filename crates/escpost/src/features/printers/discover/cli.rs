@@ -47,7 +47,10 @@ impl TryFrom<DiscoverPrintersArgs> for DiscoveryScope {
 /// flag that scans it anyway. The remedy is composed here rather than carried
 /// by `SkippedInterface` because it is the terminal's alone — the workbench
 /// answers the same omission by pointing at its custom-network field.
-fn skipped_line(adapter: &SkippedInterface) -> String {
+///
+/// Shared with `printers add --discover`, which runs the same scan and so
+/// must report the same omissions in the same words.
+pub(in crate::features::printers) fn skipped_line(adapter: &SkippedInterface) -> String {
     match adapter.cli_hint() {
         Some(hint) => format!("Skipped {}, {hint}", adapter.describe()),
         None => format!("Skipped {}", adapter.describe()),

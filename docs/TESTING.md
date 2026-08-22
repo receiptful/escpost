@@ -138,8 +138,18 @@ labels in the production bundle, asset MIME and cache headers, missing assets,
 and traversal rejection. They also cover the read-only `/api/status`,
 `/api/printers/list`, `/api/profiles/list`, and current-job resource contracts,
 while confirming that unknown API routes stay JSON rather than falling back to
-HTML. Job-resource tests verify that a replaced job identifier cannot resolve
-to a newer job. The existing viewer at `/` remains covered separately as a
+HTML. They also cover the discovery routes: `/api/printers/discover/networks`
+lists detected and skipped adapters, and `/api/printers/discover` streams
+`prepared`, `progress`, and `completed` server-sent events over a two-address
+subnet that answers immediately, finds a stand-in printer on a loopback
+address the scanning host does not hold, and refuses a malformed subnet, an
+undeclared parameter, a network option on a USB-only scan, and a subnet wider
+than the explicit `/16` limit. The first write route, `POST
+/api/printers/add`, is covered too: it persists a printer and returns the
+saved facts, carries the USB ambiguity advisory, answers `409` for a name
+already configured, `400` for invalid facts and malformed bodies, and `405`
+with an `Allow` header for a GET. Job-resource tests verify that a replaced
+job identifier cannot resolve to a newer job. The existing viewer at `/` remains covered separately as a
 behavioral reference during the SPA transition.
 
 ### Robustness tests

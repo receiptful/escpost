@@ -463,17 +463,22 @@ own output rather than scanning for it.
 bounds each per-host connection attempt and defaults to `1000`. Probes run
 concurrently and send zero bytes; a reachable port is reported as-is and is
 never assumed to be a printer. Before the sweep starts, stderr prints a
-`Scanning <N> network(s) on port <port> (<count> addresses):` header, whose
+`Scanning <N> network(s) on port <port> (<count> address(es)):` header, whose
 address count is exactly how many probes the sweep will make, followed by one
 indented line per network being scanned and, only when no `--subnet` was
 given, a trailing tip pointing at `--subnet` to scan a different network:
 
 ```text
-Scanning 2 networks on port 9100 (507 addresses):
+Scanning 2 networks on port 9100 (506 addresses):
   - 10.42.0.0/24 (enx0)
-  - 192.168.50.0/24
+  - 192.168.50.0/24 (wlp3s0)
 Tip: pass --subnet <CIDR> to scan a different network.
 ```
+
+Both networks are labelled because both were detected automatically, which
+only happens for a network a local adapter sits on. The count is 506 rather
+than 508 because each adapter's own address is excluded from the sweep of its
+network.
 
 A network carries the interface name of the local adapter it belongs to
 whenever this machine sits on it, for a subnet named with `--subnet` exactly
