@@ -82,14 +82,20 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
   printers?: string[];
   profiles?: string[];
   add?: (body: AddPrinterBody) => Response;
+  configPath?: string;
 } = {}) {
   const posted: AddPrinterBody[] = [];
+  // Every path the dialog asked for, so a test about something the server
+  // said can wait for the answer rather than for a repaint that may never
+  // come — an empty configuration path changes nothing on screen.
+  const requested: string[] = [];
   const onClose = jest.fn();
   const onAdded = jest.fn();
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
+    requested.push(path);
     if (path === "/api/status") {
-      return Promise.resolve(json(status));
+      return Promise.resolve(json({ ...status, config_path: options.configPath ?? status.config_path }));
     }
     if (path === "/api/profiles/list") {
       return Promise.resolve(json({ profiles: (options.profiles ?? []).map(catalogued) }));
@@ -118,7 +124,7 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
       <AddPrinterDialog printer={next} onClose={onClose} onAdded={onAdded} />
     </AppDataProvider>,
   );
-  return { view, hand, posted, onClose, onAdded };
+  return { view, hand, posted, requested, onClose, onAdded };
 }
 
 function addButton() {
@@ -164,6 +170,56 @@ describe("AddPrinterDialog", () => {
       profile: null,
       connection: { type: "network", host: "10.0.5.20", port: 9100 },
     });
+  });
+
+  // Why adding exists at all. Printing goes through the configured list, and
+  // nothing else in this dialog says so — a reader who has just found a
+  // printer on the network could otherwise reasonably expect to print to it.
+  // The wording never mentions discovery, so the manual dialog says the same
+  // thing for the same reason.
+  test("both dialogs explain that printing needs a configured printer, and name the file", async () => {
+    renderDialog(usbPrinter());
+    // Awaited through the path itself: the sentence renders before the status
+    // response lands, so finding the sentence proves nothing about the path.
+    await screen.findByText("/home/dev/.config/escpost/printers.toml");
+    const explanation = screen.getByText(/^You can only print to printers/);
+    expect(explanation.textContent).toBe(
+      "You can only print to printers you have added to your list of configured printers, stored in /home/dev/.config/escpost/printers.toml.",
+    );
+    // The path in the same monospace the Overview page gives it.
+    expect(explanation.querySelector(".font-mono")?.textContent).toBe("/home/dev/.config/escpost/printers.toml");
+
+    cleanup();
+    renderDialog(null);
+    await screen.findByText("/home/dev/.config/escpost/printers.toml");
+    expect(screen.getByText(/^You can only print to printers/).textContent).toBe(
+      "You can only print to printers you have added to your list of configured printers, stored in /home/dev/.config/escpost/printers.toml.",
+    );
+  });
+
+  // `config_path` is empty when the configuration cannot be resolved, which
+  // is deliberate — a config problem must not present as "server down" — so
+  // the clause that would name it goes rather than dangling.
+  test("an unresolvable configuration drops the clause naming the file", async () => {
+    const { view, requested } = renderDialog(null, { configPath: "" });
+    await waitFor(() => expect(requested).toContain("/api/status"));
+
+    const explanation = screen.getByText(/^You can only print to printers/);
+    expect(explanation.textContent).toBe(
+      "You can only print to printers you have added to your list of configured printers.",
+    );
+    expect(explanation.querySelector(".font-mono")).toBeNull();
+    expect(view.container.textContent).not.toContain("stored in");
+  });
+
+  // The command reference is gone: nothing else in the browser teaches CLI
+  // usage, and the line above already says what a name is for.
+  test("the name hint carries the constraint and nothing else", async () => {
+    const { view } = renderDialog(null);
+    await screen.findByText("/home/dev/.config/escpost/printers.toml");
+
+    expect(screen.getByText("(must be unique)")).toBeTruthy();
+    expect(view.container.textContent).not.toContain("escpost print");
   });
 
   test("the manual dialog is IP-only, defaults to port 9100, and refuses a port the shared layer cannot take", async () => {

@@ -105,7 +105,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
   onClose: () => void;
   onAdded: (name: string, connection: AddPrinterBody["connection"]) => void;
 }) {
-  const { printers, profiles, ensureProfiles } = useAppData();
+  const { printers, profiles, ensureProfiles, status } = useAppData();
   const connection = printer?.connection ?? null;
   const usb = connection?.type === "usb" ? connection : null;
   const discoveredNetwork = connection?.type === "network" ? connection : null;
@@ -257,6 +257,24 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
           <button type="button" class="btn btn-ghost btn-sm btn-square" aria-label="Close" onClick={onClose}>✕</button>
         </header>
 
+        {/* Why adding exists at all. Printing goes through the configured
+            list, so a printer the scan just found is not yet something this
+            machine can print to — and nothing else in the dialog says so.
+            The wording names no discovery, because a manually added printer
+            needs exactly the same explanation.
+
+            The path degrades to an empty string when the configuration
+            cannot be resolved, which is deliberate in `GET /api/status`: a
+            configuration problem must not present as a server that is down.
+            The clause that would name the file goes with it rather than
+            dangling over an empty code span. */}
+        <p class="text-xs text-base-content/60">
+          You can only print to printers you have added to your list of configured printers
+          {status?.config_path
+            ? <>, stored in <span class="font-mono">{status.config_path}</span></>
+            : ""}.
+        </p>
+
         <div class="space-y-1">
           <label class={FIELD_LABEL} for="add-printer-name">Name</label>
           <input
@@ -269,7 +287,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
           />
           {collision
             ? <p role="alert" class="text-xs text-warning">{`printer "${name}" is already configured`}</p>
-            : <p class="text-xs text-base-content/60">Names the printer in <code class="font-mono">escpost print --printer</code>. Must be unique.</p>}
+            : <p class="text-xs text-base-content/60">(must be unique)</p>}
         </div>
 
         <div class="space-y-1">
