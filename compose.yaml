@@ -54,7 +54,7 @@ services:
       ESCPOST_CONFIG_DIR: /home/developer/.config/escpost
     volumes:
       - .:/workspace
-      - ${ESCPOST_CONFIG_HOST_DIR:-./.config}:/home/developer/.config/escpost
+      - escpost-config:/home/developer/.config/escpost
       - cargo-home:/home/developer/.cargo
       - cargo-target:/home/developer/target
     devices:
@@ -96,6 +96,7 @@ services:
       - --no-open
 
 volumes:
+  escpost-config:
   cargo-home:
   cargo-target:
   python-venv:

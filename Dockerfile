@@ -68,6 +68,7 @@ RUN groupadd --gid "${GROUP_ID}" developer \
         developer \
     && mkdir -p \
         /home/developer/.cargo \
+        /home/developer/.config/escpost \
         /home/developer/target \
         /workspace/.venv \
     && chown -R developer:developer /home/developer /workspace

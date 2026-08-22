@@ -18,17 +18,14 @@ chmod +x "$test_directory/bin/docker"
 output=$(
   cd "$test_directory"
   PATH="$test_directory/bin:/usr/bin:/bin" \
-    ESCPOST_CONFIG_HOST_DIR= \
     ./escpost printers list
 )
 
-test -d "$test_directory/.config"
 test "$output" = 'docker: compose run --rm escpost printers list'
 
 output=$(
   cd "$test_directory"
   PATH="$test_directory/bin:/usr/bin:/bin" \
-    ESCPOST_CONFIG_HOST_DIR= \
     ./escpost serve
 )
 

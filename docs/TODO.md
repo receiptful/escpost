@@ -383,7 +383,7 @@ rules are specified in `CLI.md`.
       (`CLI-M09`)
 - [x] Merge connected and configured records, retain unavailable printers, and
       apply the stable status-first display-name order. (`CLI-M10`)
-- [x] Isolate Docker checkout configuration at `.config/printers.toml`
+- [x] Isolate Docker checkout configuration in a Compose-managed named volume
       instead of mounting a host installation's potentially different data.
 - [x] Add safe manual RAW network registration through `printers add`, with
       terminal prompts, strict non-interactive behavior, and atomic TOML

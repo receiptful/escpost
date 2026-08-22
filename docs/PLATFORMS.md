@@ -109,12 +109,10 @@ precedence. Read-only commands accept a missing implicit file without creating
 anything.
 
 Docker development does not mount the host's installed ESCPost configuration.
-The wrapper creates `<checkout>/.config` as the host user and Compose
-mounts it at `/home/developer/.config/escpost`. A developer can deliberately
-share another host directory by setting `ESCPOST_CONFIG_HOST_DIR`; the
-container still sees its conventional user path. Commands report that factual
-process-local path; when run in Docker, this is the container path rather than
-the backing host path.
+Compose stores configuration in a project-scoped named volume mounted at
+`/home/developer/.config/escpost`. The volume persists across one-off commands
+and `docker compose down`; `docker compose down --volumes` removes it.
+Commands report the factual container path.
 
 ## Transport strategy
 

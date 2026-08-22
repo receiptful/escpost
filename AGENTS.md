@@ -48,8 +48,8 @@ to Rust and build the frontend before invoking Cargo.
 
 ### Running the CLI
 
-The `escpost` service builds and runs the compiled binary, and maps USB devices plus
-a checkout-local config directory:
+The `escpost` service builds and runs the compiled binary, maps USB devices,
+and persists printer configuration in a Compose-managed named volume:
 
 ```bash
 docker compose run --rm escpost render example-jobs/cafe-order-voucher.hex --output-dir .test-output/out

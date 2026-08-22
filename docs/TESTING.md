@@ -413,7 +413,13 @@ that can resolve and write to a developer's configured physical printer.
 ## Local printer configuration
 
 When commands run through the development wrapper, connection details belong
-in the ignored `.config/printers.toml`:
+in the Compose-managed configuration volume. Add them through the CLI:
+
+```bash
+./escpost printers add
+```
+
+The resulting `printers.toml` has this shape:
 
 ```toml
 [netum-usb]
@@ -429,9 +435,9 @@ in_endpoint = "0x81"
 
 Use `escpost printers add` for new USB and network entries. It preserves
 comments and other printer entries and shares the legacy calibration CLI's
-resolved configuration path. The wrapper creates the local directory before
-Compose mounts it, preventing Docker from creating a root-owned bind source.
-Real machine configuration and local captures remain ignored.
+resolved configuration path. The named volume keeps Docker configuration
+separate from the host and avoids bind-mount ownership differences. Local
+captures remain ignored.
 
 An installed native CLI instead uses the platform user-configuration
 directory. Tests and automation can select an isolated directory with

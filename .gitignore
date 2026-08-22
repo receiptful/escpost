@@ -16,8 +16,7 @@ __pycache__/
 /crates/escpost/frontend/dist/
 /crates/escpost/frontend/node_modules/
 
-# Checkout-local printer configuration and generated test output
-/.config/
+# Generated test output
 /.test-output/
 
 # Editors and operating systems

@@ -236,12 +236,11 @@ system may change them after reconnection. A serial number is stored when
 available; without one, simultaneously connected devices with equal VID/PID
 cannot be distinguished reliably and are reported as ambiguous.
 
-The Docker Compose `escpost` service mounts the checkout-local `.config` directory at
+The Docker Compose `escpost` service mounts a project-scoped named volume at
 the container user's normal ESCPost configuration path. This isolates
 configuration used by a checkout from an independently installed binary while
 keeping Docker-specific paths out of the Rust implementation. Commands and
-errors report the factual path used by the running process; Docker does not
-rewrite it to a host path.
+errors report the factual path used by the running process.
 
 ## Rust render command
 
