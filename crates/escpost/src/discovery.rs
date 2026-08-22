@@ -191,6 +191,23 @@ pub(crate) fn describe_skipped(skipped: &[SkippedInterface]) -> String {
         .join("; ")
 }
 
+/// The local addresses a subnet covers, in the order the operating system
+/// reported them. Every scan target's exclusions come from here, so automatic
+/// and explicit targets exclude exactly the same addresses.
+///
+/// Membership is decided by the subnet being scanned, not by the netmask an
+/// address was reported with: an alias carrying a /32 netmask on a scanned
+/// /24 is still this machine's address inside that /24.
+fn local_addresses_within(
+    subnet: Subnet,
+    addresses: &[InterfaceAddress],
+) -> Vec<&InterfaceAddress> {
+    addresses
+        .iter()
+        .filter(|interface| subnet.contains(interface.address))
+        .collect()
+}
+
 /// Automatic detection with its omissions kept. Loopback is not reported: it is
 /// never a candidate, so naming it would be noise.
 pub(crate) fn detect_networks(
@@ -198,13 +215,13 @@ pub(crate) fn detect_networks(
 ) -> (Vec<ScanTarget>, Vec<SkippedInterface>) {
     let mut targets: Vec<ScanTarget> = Vec::new();
     let mut skipped = Vec::new();
-    for interface in addresses {
+    for interface in &addresses {
         if interface.address.is_loopback() {
             continue;
         }
         let Some(subnet) = Subnet::from_interface(interface.address, interface.netmask) else {
             skipped.push(SkippedInterface {
-                name: interface.name,
+                name: interface.name.clone(),
                 subnet: None,
                 reason: SkipReason::UnusableNetmask,
             });
@@ -212,22 +229,32 @@ pub(crate) fn detect_networks(
         };
         if subnet.prefix() < AUTO_SCAN_MINIMUM_PREFIX {
             skipped.push(SkippedInterface {
-                name: interface.name,
+                name: interface.name.clone(),
                 subnet: Some(subnet),
                 reason: SkipReason::TooLarge,
             });
             continue;
         }
-        match targets.iter_mut().find(|target| target.subnet == subnet) {
-            // A second address on a known subnet adds an exclusion rather than
-            // a duplicate target; the first interface still names the target.
-            Some(target) => target.excluded.push(interface.address),
-            None => targets.push(ScanTarget {
+        // A second address on a known subnet adds no target; the first
+        // interface on it names the one target this subnet gets.
+        if !targets.iter().any(|target| target.subnet == subnet) {
+            targets.push(ScanTarget {
                 subnet,
-                interface: Some(interface.name),
-                excluded: vec![interface.address],
-            }),
+                interface: Some(interface.name.clone()),
+                excluded: Vec::new(),
+            });
         }
+    }
+    // Exclusions are filled in once the targets are known, from every local
+    // address the target subnet covers rather than from the addresses that
+    // derived it. An address whose own netmask names a different subnet — a
+    // /32 alias, a virtual address — still sits inside the target and must
+    // not be probed.
+    for target in &mut targets {
+        target.excluded = local_addresses_within(target.subnet, &addresses)
+            .into_iter()
+            .map(|interface| interface.address)
+            .collect();
     }
     (targets, skipped)
 }
@@ -284,10 +311,7 @@ pub(crate) fn explicit_scan_targets(
             if subnet.prefix() < EXPLICIT_SCAN_MINIMUM_PREFIX {
                 return Err(ApplicationError::SubnetTooLargeToScan(subnet.to_string()));
             }
-            let local = addresses
-                .iter()
-                .filter(|interface| subnet.contains(interface.address))
-                .collect::<Vec<_>>();
+            let local = local_addresses_within(*subnet, addresses);
             Ok(ScanTarget {
                 subnet: *subnet,
                 interface: local.first().map(|interface| interface.name.clone()),
@@ -560,6 +584,27 @@ mod tests {
     }
 
     #[test]
+    fn automatic_targets_exclude_a_local_address_whose_own_netmask_names_another_subnet() {
+        // A /32 alias — a virtual address, a failover address — derives its
+        // own single-address subnet, but it is still this machine's address
+        // inside the /24 the sweep covers.
+        let (targets, _) = detect_networks(vec![
+            interface("eth0", [10, 42, 0, 1], [255, 255, 255, 0]),
+            interface("eth0:1", [10, 42, 0, 9], [255, 255, 255, 255]),
+        ]);
+
+        let swept = targets
+            .iter()
+            .find(|target| target.subnet.prefix() == 24)
+            .expect("the /24 should be a scan target");
+        assert_eq!(
+            swept.excluded,
+            vec![Ipv4Addr::new(10, 42, 0, 1), Ipv4Addr::new(10, 42, 0, 9)]
+        );
+        assert_eq!(probe_count(std::slice::from_ref(swept)), 252);
+    }
+
+    #[test]
     fn detection_reports_an_adapter_whose_subnet_is_too_large_to_sweep() {
         let (targets, skipped) = detect_networks(vec![
             InterfaceAddress {
@@ -756,6 +801,22 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "subnet 0.0.0.0/0 is too large to scan (at most /16)"
+        );
+    }
+
+    #[test]
+    fn an_explicit_subnet_one_bit_wider_than_the_limit_is_refused() {
+        // The bound is only doing its job if the subnet just outside it is
+        // refused: a /0 would also be refused by a far looser limit.
+        let subnets = vec![Subnet::parse("10.0.0.0/15").expect("a valid CIDR should parse")];
+
+        let error = explicit_scan_targets(&subnets, &[])
+            .expect_err("a /15 is wider than the explicit scan limit");
+
+        assert!(matches!(error, ApplicationError::SubnetTooLargeToScan(_)));
+        assert_eq!(
+            error.to_string(),
+            "subnet 10.0.0.0/15 is too large to scan (at most /16)"
         );
     }
 
