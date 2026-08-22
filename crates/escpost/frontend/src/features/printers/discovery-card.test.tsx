@@ -3,10 +3,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useState } from "preact/hooks";
 import type { DiscoveryQuery } from "../../api/discovery-stream";
 import type { DiscoveryNetworksResponse } from "../../api/types";
-import { ScanOptions } from "./scan-options";
+import { DiscoveryCard } from "./discovery-card";
 
 // Host counts that are neither equal nor derivable from the prefix, so a
-// summed probe count proves the panel adds up what the server reported — the
+// summed probe count proves the card adds up what the server reported — the
 // server has already subtracted this machine's own addresses — rather than
 // recomputing 254 from `/24`.
 const twoNetworks: DiscoveryNetworksResponse = {
@@ -27,11 +27,11 @@ function json(body: unknown, status = 200) {
 }
 
 // The scope of a session where no scan has been configured yet, which is what
-// the provider hands the panel until one has: the CLI's no-flag behaviour.
+// the provider hands the card until one has: the CLI's no-flag behaviour.
 const noScanYet: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 
-// Whether the panel is open is the page's state, because starting a scan
-// shuts the form and scans start outside it. The bar belongs to the panel and
+// Whether the card is open is the page's state, because starting a scan
+// shuts the form and scans start outside it. The bar belongs to the card and
 // the buttons in it belong to the page, which builds them from the scope it
 // is handed — in the same render that draws the line, so the stand-in here
 // can carry the scope on the button itself. Reading it back off the DOM is
@@ -39,7 +39,7 @@ const noScanYet: DiscoveryQuery = { usb: true, network: true, subnets: [] };
 function Options({ query }: { query: DiscoveryQuery }) {
   const [open, setOpen] = useState(false);
   return (
-    <ScanOptions
+    <DiscoveryCard
       query={query}
       open={open}
       onOpenChange={setOpen}
@@ -51,7 +51,7 @@ function Options({ query }: { query: DiscoveryQuery }) {
   );
 }
 
-// Collapsed is how the panel sits on an idle page, so every test about the
+// Collapsed is how the card sits on an idle page, so every test about the
 // form itself opens the disclosure first and only the ones about the
 // disclosure render it shut.
 function renderOptions(response: Response | DiscoveryNetworksResponse, query: DiscoveryQuery = noScanYet, expanded = true) {
@@ -71,7 +71,7 @@ function disclosure() {
 
 // The collapsed line, read through the element the disclosure describes
 // itself with. By id rather than by text, because it is the one part of the
-// panel that survives the form being shut.
+// card that survives the form being shut.
 function statedScope() {
   return document.getElementById("scan-options-scope")?.textContent;
 }
@@ -98,7 +98,7 @@ function gone(element: Element | null) {
 
 afterEach(cleanup);
 
-describe("ScanOptions", () => {
+describe("DiscoveryCard", () => {
   test("publishes no subnets when every known network is checked, so the scan runs in automatic mode", async () => {
     renderOptions(twoNetworks);
     await screen.findByLabelText("10.42.0.0/24");
@@ -132,7 +132,7 @@ describe("ScanOptions", () => {
     expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
-  // The panel opens on the scope the last scan ran with, so that what it
+  // The card opens on the scope the last scan ran with, so that what it
   // shows and what `Scan` would send are the same thing.
   test("opens on the recorded scope, port and timeout included", async () => {
     renderOptions(twoNetworks, {
@@ -240,7 +240,7 @@ describe("ScanOptions", () => {
 
   // One refused entry invalidates the whole field, so the line states no
   // count at all rather than a total for the entries that survived. A number
-  // beside a refusal would promise work the panel is refusing to do.
+  // beside a refusal would promise work the card is refusing to do.
   test("states no probe count while any custom entry is refused", async () => {
     const { view } = renderOptions(twoNetworks);
     fireEvent.input(await screen.findByLabelText("Custom network"), { target: { value: "10.0.0.0/8, 10.0.5.0/24" } });
@@ -252,7 +252,7 @@ describe("ScanOptions", () => {
   });
 
   // The port is a `NonZeroU16` and the timeout a `u64` of milliseconds in the
-  // shared layer, so the panel accepts exactly that — `--timeout 0` included,
+  // shared layer, so the card accepts exactly that — `--timeout 0` included,
   // since inventing a stricter rule here is its own kind of divergence.
   test("refuses a port or timeout the shared layer cannot take, and accepts the whole range it can", async () => {
     renderOptions(twoNetworks);
@@ -280,7 +280,7 @@ describe("ScanOptions", () => {
     fireEvent.input(timeout, { target: { value: "0" } });
     expect(gone(screen.queryByText("Enter a timeout as a whole number of milliseconds."))).toBe(true);
     // The field's own constraint has to agree, or the browser paints it
-    // out of range while the panel accepts it.
+    // out of range while the card accepts it.
     expect(timeout.getAttribute("min")).toBe("0");
     expectScope({ usb: true, network: true, subnets: [], port: 65535, timeoutMs: 0 });
   });
@@ -299,10 +299,10 @@ describe("ScanOptions", () => {
     expectScope({ usb: true, network: false, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
-  // The reason is the shared layer's; the remedy is this panel's. The
+  // The reason is the shared layer's; the remedy is this card's. The
   // terminal answers the same omission with `--subnet`, which is useless
   // advice in a browser with a custom-network field two rows below.
-  test("a skipped adapter is listed with the server's reason, this panel's remedy, and no CLI flag", async () => {
+  test("a skipped adapter is listed with the server's reason, this card's remedy, and no CLI flag", async () => {
     const { view } = renderOptions({
       networks: [],
       skipped: [
@@ -377,7 +377,7 @@ describe("ScanOptions", () => {
     expectScope({ usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 });
   });
 
-  // The panel lives in the page rather than over it, so an idle page is one
+  // The card lives in the page rather than over it, so an idle page is one
   // row: the form is behind a disclosure and nothing about it overlays the
   // results below.
   test("renders collapsed, and the disclosure it announces is the form", async () => {
@@ -449,7 +449,7 @@ describe("ScanOptions", () => {
 
   // The scope a scan was configured with is a difference from the defaults,
   // and reopening on it is exactly when a reader wants the way back.
-  test("Reset is offered when the panel opens on a narrowed scope", async () => {
+  test("Reset is offered when the card opens on a narrowed scope", async () => {
     renderOptions(twoNetworks, { usb: true, network: true, subnets: ["192.168.1.0/24"], port: 9100, timeoutMs: 1000 });
     await screen.findByLabelText("10.42.0.0/24");
 

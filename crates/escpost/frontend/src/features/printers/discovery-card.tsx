@@ -7,7 +7,7 @@ import type { DiscoveryNetworksResponse, SkippedNetwork } from "../../api/types"
 
 // Copied from `discovery::EXPLICIT_SCAN_MINIMUM_PREFIX`, which is the source
 // of truth. Refusing the subnet here only saves a round trip and lets the
-// panel say what is wrong next to the field; the server refuses the same
+// card say what is wrong next to the field; the server refuses the same
 // input in the same words and stays the authority on what a scan accepts. If
 // the Rust constant moves and this does not, the cost is a wrong hint, never
 // a wrong scan.
@@ -73,7 +73,7 @@ function skippedExplanation(adapter: SkippedNetwork) {
   return adapter.reason === "too_large" && adapter.subnet ? `${adapter.description}, add it as a custom network` : adapter.description;
 }
 
-// The one treatment every field label in this panel shares. Sentence case,
+// The one treatment every field label in this card shares. Sentence case,
 // deliberately: the capitals used to come from `uppercase`, and the only
 // capitals left are the ones the words are actually spelled with.
 const FIELD_LABEL = "text-xs font-medium text-base-content/60";
@@ -93,14 +93,19 @@ function checkboxId(value: string) {
 }
 
 /**
- * The scan scope, as controls, in the page rather than over it: a disclosure
- * row that states the scope and its cost in one line, and the form itself
- * behind it. `query` is the scope the last scan ran with — the provider's
+ * The discovery card, in the page rather than over it: the scan options as a
+ * disclosure row that states the scope and its cost in one line with the
+ * form behind it, then what the last scan found, then the bar of controls
+ * along the bottom. Only the first of those three is its own; the other two
+ * arrive through slots, because the card owns the container and the page
+ * owns what goes in it.
+ *
+ * `query` is the scope the last scan ran with — the provider's
  * `scanQuery`, which is the CLI's no-flag default until a scan has been
  * configured — and the controls are seeded from it, so the line and the form
  * are two views of the same thing.
  *
- * This panel starts nothing. `actions` is called with what its controls
+ * This card starts nothing. `actions` is called with what its controls
  * amount to — or `null` when they amount to no scan at all — and the page
  * builds the button that acts on it. Handing the scope over as an argument
  * rather than through a callback and a piece of the page's state is what
@@ -110,21 +115,20 @@ function checkboxId(value: string) {
  *
  * `open` belongs to the page: starting a scan shuts the form, and scans
  * start outside it. So does the content of the bar along the bottom — the
- * bar is this panel's, the buttons in it are the page's, and it stays
+ * bar is this card's, the buttons in it are the page's, and it stays
  * whether the form is open or shut because everything in it acts on the
  * scope the line states rather than on the fields.
  *
- * `results` sits between the form and that bar, which makes this the whole
- * discovery card rather than only its options: what a scan would do, what it
- * did, and what to do next, in that order and in one container. It renders
- * nothing at all until there is a scan, and the bar simply moves up to meet
- * the accordion — no placeholder, no gap.
+ * `results` sits between the form and that bar: what a scan would do, what
+ * it did, and what to do next, in that order and in one container. It
+ * renders nothing at all until there is a scan, and the bar simply moves up
+ * to meet the accordion — no placeholder, no gap.
  *
  * The networks are fetched once per mount, and again on Reset: adapters
  * change with a cable or a VPN, so the server stays the authority on which
  * networks exist while `query` says which of them were chosen.
  */
-export function ScanOptions({ query, open, onOpenChange, results, actions }: {
+export function DiscoveryCard({ query, open, onOpenChange, results, actions }: {
   query: DiscoveryQuery;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -136,12 +140,12 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
   const [usb, setUsb] = useState(true);
   const [network, setNetwork] = useState(true);
   // The subnets the user has *un*checked, so "everything checked" needs no
-  // state at all and survives a networks response arriving after the panel
+  // state at all and survives a networks response arriving after the card
   // renders.
   const [unchecked, setUnchecked] = useState<string[]>([]);
   const [custom, setCustom] = useState("");
   // `null` until edited, so the port and timeout fields show the server's own
-  // defaults without the panel restating what those defaults are.
+  // defaults without the card restating what those defaults are.
   const [port, setPort] = useState<string | null>(null);
   const [timeout, setTimeoutMs] = useState<string | null>(null);
 
@@ -170,7 +174,7 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
     setTimeoutMs(scope.timeoutMs === undefined ? null : String(scope.timeoutMs));
     const known = data.networks.map((entry) => entry.subnet);
     if (scope.subnets.length === 0) {
-      // Automatic mode: every network checked, which is also how the panel
+      // Automatic mode: every network checked, which is also how the card
       // opens before any scan has been configured.
       setUnchecked([]);
       setCustom("");
@@ -299,7 +303,7 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
   // contradiction — so an unvetted field falls back to the default the server
   // advertised on `discover/networks`, which is also what the fields and the
   // line above are showing. `DiscoveryQuery` would accept the omission, but
-  // this panel has a number to send: it asked for one and displayed the
+  // this card has a number to send: it asked for one and displayed the
   // answer, so sending what the reader is looking at is the honest query.
   const scope: DiscoveryQuery | null = startable && data
     ? {
@@ -317,11 +321,11 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
       : [...current, subnet]);
   };
 
-  // Back to the panel as it opened, adapters included: a network appears or
+  // Back to the card as it opened, adapters included: a network appears or
   // vanishes with a cable or a VPN, and Reset is the only way back from a
   // failed detection. These are the hard defaults rather than the recorded
   // scope only for as long as the refetch takes — its response re-seeds the
-  // controls, so Reset lands on the scope the panel opened with, which is
+  // controls, so Reset lands on the scope the card opened with, which is
   // what "as it opened" has to mean now that it opens configured.
   const reset = () => {
     setUsb(true);
@@ -338,14 +342,14 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
   // with no options set — which is exactly `printers discover` with no flags:
   // both transports, every detected network, no custom subnet, and the port
   // and timeout the server advertises. That is the same equivalence the
-  // panel already trades on when it sends no subnets at all while everything
+  // card already trades on when it sends no subnets at all while everything
   // is checked, and it is why the default is what it is: anything else here
   // would stop matching the terminal.
   //
   // The comparison is made on the effective scope rather than on the raw
   // fields, so a custom box holding nothing but spaces, or a port typed back
   // to the number it already held, is not a change. The seeded scope is not
-  // the default either: a panel that opened on a narrowed `scanQuery` is
+  // the default either: a card that opened on a narrowed `scanQuery` is
   // showing a scan someone configured, which is exactly when a reader
   // reaches for this.
   //
@@ -365,7 +369,7 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
   // form opens itself to put the reason and its Retry in front of the reader
   // rather than behind a disclosure they have no reason to open. Once, on
   // the failure — reopening a form the reader has since shut would be the
-  // panel arguing with them.
+  // card arguing with them.
   const expand = useRef(onOpenChange);
   expand.current = onOpenChange;
   const failed = resource.error !== null;
@@ -439,7 +443,7 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
                     </div>
                   ))}
                   {/* A skipped adapter states the shared layer's own reason,
-                      and this panel's own remedy for it. `detect_networks`
+                      and this card's own remedy for it. `detect_networks`
                       reports one entry per address rather than per adapter, so
                       two too-large addresses on one interface arrive as two
                       rows and only the position tells them apart. */}
@@ -496,7 +500,7 @@ export function ScanOptions({ query, open, onOpenChange, results, actions }: {
                 <div class="flex items-center gap-2">
                   {/* `min` follows `timeoutValid`: zero is what `--timeout 0`
                       accepts, so neither the spinner nor `:out-of-range` may
-                      say the panel rejects it. */}
+                      say the card rejects it. */}
                   <input
                     id="scan-timeout"
                     type="number"

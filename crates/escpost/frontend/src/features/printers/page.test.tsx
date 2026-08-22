@@ -35,7 +35,7 @@ function json(body: unknown, status = 200) {
 
 // Every endpoint the assembled page reaches for on its own, so a test only
 // has to state the one it is actually about. The networks are among them
-// now: the discovery panel is always mounted and states its scope from
+// now: the discovery card is always mounted and states its scope from
 // them, so a stub that leaves them out breaks tests that are about
 // something else entirely.
 function shared(url: string) {
@@ -340,7 +340,7 @@ describe("PrintersPage", () => {
     renderPage(fetchStub());
 
     // Both transports and every network, which is the CLI's no-flag scope,
-    // with the port and timeout the panel asked the server for.
+    // with the port and timeout the card asked the server for.
     await scan("Scan");
     expect(FakeEventSource.urls).toEqual(["/api/printers/discover?port=9100&timeout=1000"]);
     expect(gone(screen.queryByRole("button", { name: "Scan" }))).toBe(true);
@@ -626,7 +626,7 @@ describe("PrintersPage", () => {
     expect(statedScope()).toBe("USB · 1 of 2 networks · 253 probes");
   });
 
-  // The panel detects the networks once per mount, so this is the case a
+  // The card detects the networks once per mount, so this is the case a
   // route change produces: the page comes back, asks again, and the subnet
   // the last scan ran on is gone.
   test("a network that has since disappeared comes back in the custom field", async () => {

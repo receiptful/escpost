@@ -3,9 +3,9 @@ import type { DiscoveryQuery } from "../../api/discovery-stream";
 import type { AddPrinterBody, DiscoveredPrinter } from "../../api/types";
 import { useAppData } from "../../app/data";
 import { AddPrinterDialog } from "./add-printer-dialog";
+import { DiscoveryCard } from "./discovery-card";
 import { DiscoveryPanel } from "./discovery-panel";
 import { PrinterList } from "./printer-list";
-import { ScanOptions } from "./scan-options";
 
 export function PrintersPage() {
   // `scanQuery` is the scope the last scan ran with, and it comes from the
@@ -70,7 +70,7 @@ export function PrintersPage() {
             own, so the button below is built by the same render that draws
             the line stating that scope. There is no version of this page
             where the two disagree, not even for a frame. */}
-        <ScanOptions
+        <DiscoveryCard
           query={scanQuery}
           open={optionsOpen}
           onOpenChange={setOptionsOpen}
