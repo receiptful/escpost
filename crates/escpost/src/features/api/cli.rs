@@ -24,6 +24,12 @@ pub(crate) struct ApiArgs {
     /// Read printer configuration from this exact file.
     #[arg(long, value_name = "FILE")]
     pub(crate) config: Option<std::path::PathBuf>,
+
+    /// Accept requests only from this Chrome extension id. By default any
+    /// extension is accepted, because a reinstall changes the id and pinning
+    /// the wrong one locks the extension out with no recovery.
+    #[arg(long, value_name = "ID")]
+    pub(crate) extension_id: Option<String>,
 }
 
 pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<(), CliError> {
@@ -46,7 +52,7 @@ pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<()
     eprintln!("Press Ctrl+C to stop.");
 
     let state = super::ApiState {
-        extension_id: None,
+        extension_id: arguments.extension_id,
         config: arguments.config,
         ..Default::default()
     };

@@ -269,11 +269,7 @@ fn there_is_no_default_printer_when_none_is_configured() {
 fn a_json_print_reaches_the_printer_with_its_bytes_unchanged() {
     let directory = temporary_directory("json-print");
     let config = directory.join("printers.toml");
-    let printer = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a fake printer should bind");
-    let printer_port = printer
-        .local_addr()
-        .expect("the fake printer has an address")
-        .port();
+    let (printer, printer_port) = fake_printer();
     std::fs::write(
         &config,
         format!(
@@ -353,11 +349,7 @@ fn printing_to_an_unconfigured_printer_is_a_typed_404() {
 fn an_octet_stream_print_sends_the_bytes_with_no_re_encoding() {
     let directory = temporary_directory("octet-print");
     let config = directory.join("printers.toml");
-    let printer = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a fake printer should bind");
-    let printer_port = printer
-        .local_addr()
-        .expect("the fake printer has an address")
-        .port();
+    let (printer, printer_port) = fake_printer();
     std::fs::write(
         &config,
         format!(
@@ -432,11 +424,7 @@ fn two_concurrent_prints_to_one_printer_are_serialised() {
     // prints fails, and which one is a race.
     let directory = temporary_directory("concurrent");
     let config = directory.join("printers.toml");
-    let printer = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a fake printer should bind");
-    let printer_port = printer
-        .local_addr()
-        .expect("the fake printer has an address")
-        .port();
+    let (printer, printer_port) = fake_printer();
     std::fs::write(
         &config,
         format!(
@@ -503,6 +491,49 @@ port = {printer_port}
     std::fs::remove_dir_all(directory).expect("the test directory should be removable");
 }
 
+#[test]
+fn pinning_an_extension_id_refuses_every_other_extension() {
+    let pinned = "cnifebiebidolpmlmgcghpopggfcklmc";
+    let port = unused_loopback_port();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "api",
+            "--listen",
+            &format!("127.0.0.1:{port}"),
+            "--extension-id",
+            pinned,
+            "--non-interactive",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost command should start");
+    wait_until_listening(&mut child, port);
+
+    let allowed = http_request(
+        port,
+        "GET",
+        "/info",
+        &[format!("Origin: chrome-extension://{pinned}")],
+        &[],
+    );
+    let refused = http_request(
+        port,
+        "GET",
+        "/info",
+        &["Origin: chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()],
+        &[],
+    );
+    // Pinning narrows which extension may call, never whether a local backend
+    // may: L1–L4 do not require an extension to exist at all.
+    let local = http_get(port, "/info");
+    stop(&mut child);
+
+    assert_eq!(response_status(&allowed), "HTTP/1.1 200 OK");
+    assert_eq!(response_status(&refused), "HTTP/1.1 403 Forbidden");
+    assert_eq!(response_status(&local), "HTTP/1.1 200 OK");
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {
@@ -527,10 +558,22 @@ fn start_api(port: u16) -> Child {
         .expect("the escpost command should start")
 }
 
-fn unused_loopback_port() -> u16 {
-    static ISSUED: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
+static ISSUED: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
+
+/// Claim `port` in the shared registry, returning false if it was already
+/// handed out.
+fn claim(port: u16) -> bool {
     let mut issued = ISSUED.lock().expect("the issued-port set should be usable");
-    let issued = issued.get_or_insert_with(HashSet::new);
+    issued.get_or_insert_with(HashSet::new).insert(port)
+}
+
+/// A loopback port no other test in this binary has been given.
+///
+/// The listener is dropped before returning, so there is a window where the
+/// port is free but spoken for. `fake_printer` claims from the same registry
+/// precisely so it cannot bind into that window and knock over a server that
+/// was about to.
+fn unused_loopback_port() -> u16 {
     let mut held = Vec::new();
     for _ in 0..64 {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
@@ -539,12 +582,31 @@ fn unused_loopback_port() -> u16 {
             .local_addr()
             .expect("the listener should have a local address")
             .port();
-        if issued.insert(port) {
+        if claim(port) {
             return port;
         }
         held.push(listener);
     }
     panic!("no unissued ephemeral loopback port was available after 64 attempts");
+}
+
+/// A bound listener standing in for a RAW TCP printer, on a port that is
+/// registered so no API server is later told to use it.
+fn fake_printer() -> (TcpListener, u16) {
+    let mut held = Vec::new();
+    for _ in 0..64 {
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("a fake printer should bind");
+        let port = listener
+            .local_addr()
+            .expect("the fake printer has an address")
+            .port();
+        if claim(port) {
+            return (listener, port);
+        }
+        held.push(listener);
+    }
+    panic!("no unissued ephemeral loopback port was available for a fake printer");
 }
 
 fn wait_until_listening(child: &mut Child, port: u16) {
