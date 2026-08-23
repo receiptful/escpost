@@ -49,7 +49,14 @@ pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<()
         extension_id: None,
         config: arguments.config,
     };
-    warn_about_unresolvable_profiles(&state).await;
+    // Concurrently, not before serving. Reading the inventory probes every
+    // configured network printer, which costs seconds when one is unreachable —
+    // and the port is already bound by this point, so awaiting it here would
+    // leave a socket that accepts connections and then answers nothing.
+    tokio::spawn({
+        let state = state.clone();
+        async move { warn_about_unresolvable_profiles(&state).await }
+    });
 
     super::http::serve(listener, state)
         .await

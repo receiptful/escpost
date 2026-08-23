@@ -204,6 +204,67 @@ fn temporary_directory(case: &str) -> std::path::PathBuf {
     path
 }
 
+#[test]
+fn the_default_printer_is_the_first_one_listed() {
+    let directory = temporary_directory("default");
+    let config = directory.join("printers.toml");
+    std::fs::write(
+        &config,
+        "\
+[zulu]
+transport = \"network\"
+host = \"192.0.2.50\"
+port = 9100
+
+[alpha]
+transport = \"network\"
+host = \"192.0.2.51\"
+port = 9100
+",
+    )
+    .expect("the printer configuration should be writable");
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+    let listed = http_get(port, "/printers");
+    let default = http_get(port, "/printers/default");
+    stop(&mut child);
+
+    let listed: serde_json::Value =
+        serde_json::from_slice(response_body(&listed)).expect("/printers should answer JSON");
+    let default_body: serde_json::Value =
+        serde_json::from_slice(response_body(&default)).expect("the default should answer JSON");
+
+    assert_eq!(response_status(&default), "HTTP/1.1 200 OK");
+    assert_eq!(default_body["id"], listed[0]["id"]);
+    // Both are unavailable, so the tie breaks on name: alpha before zulu.
+    assert_eq!(default_body["id"], "alpha");
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[test]
+fn there_is_no_default_printer_when_none_is_configured() {
+    let directory = temporary_directory("no-default");
+    let config = directory.join("printers.toml");
+    std::fs::write(&config, "").expect("an empty configuration should be writable");
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+    let response = http_get(port, "/printers/default");
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 404 Not Found");
+    let body: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the 404 should be JSON");
+    // The extension turns exactly this code into `null` rather than an error.
+    assert_eq!(body["error"]["code"], "PRINTER_NOT_FOUND");
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {

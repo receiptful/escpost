@@ -44,6 +44,14 @@ impl ApiFailure {
         )
     }
 
+    pub(super) fn no_default_printer() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "PRINTER_NOT_FOUND",
+            "No printer is configured.",
+        )
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,

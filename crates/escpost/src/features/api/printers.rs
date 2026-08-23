@@ -11,7 +11,9 @@ use super::ApiState;
 use super::error::ApiFailure;
 
 pub(super) fn router() -> Router<ApiState> {
-    Router::new().route("/printers", get(list_printers))
+    Router::new()
+        .route("/printers", get(list_printers))
+        .route("/printers/default", get(default_printer))
 }
 
 #[derive(Serialize)]
@@ -97,6 +99,22 @@ pub(super) async fn load_printers(state: &ApiState) -> Result<Vec<Printer>, ApiF
     .await
     .map(|response| response.printers)
     .map_err(|_| ApiFailure::printer_inventory_failure())
+}
+
+/// escpost has no configured default printer, so this endpoint defines one:
+/// the first entry `/printers` would return. That ordering is already
+/// deterministic — connected before unavailable, then name, then transport —
+/// so "the default" means "the first one you would list", which is how the
+/// extension's popup presents it.
+async fn default_printer(
+    State(state): State<ApiState>,
+) -> Result<Json<PrinterResponse>, ApiFailure> {
+    let printers = load_printers(&state).await?;
+    printers
+        .into_iter()
+        .next()
+        .map(|printer| Json(PrinterResponse::from(printer)))
+        .ok_or_else(ApiFailure::no_default_printer)
 }
 
 async fn list_printers(
