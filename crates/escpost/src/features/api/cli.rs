@@ -48,15 +48,9 @@ pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<()
     let state = super::ApiState {
         extension_id: None,
         config: arguments.config,
+        ..Default::default()
     };
-    // Concurrently, not before serving. Reading the inventory probes every
-    // configured network printer, which costs seconds when one is unreachable —
-    // and the port is already bound by this point, so awaiting it here would
-    // leave a socket that accepts connections and then answers nothing.
-    tokio::spawn({
-        let state = state.clone();
-        async move { warn_about_unresolvable_profiles(&state).await }
-    });
+    warn_about_unresolvable_profiles(&state);
 
     super::http::serve(listener, state)
         .await
@@ -69,18 +63,23 @@ pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<()
 /// that does not exist, which is correct but silent. An operator should learn
 /// about a typo here, at startup, instead of from a print that fails days
 /// later.
-async fn warn_about_unresolvable_profiles(state: &super::ApiState) {
-    let Ok(printers) = super::printers::load_printers(state).await else {
+///
+/// Reads the configuration directly rather than the inventory. The inventory
+/// probes every configured network printer, which costs seconds and opens a
+/// connection to each — a startling thing for a warning about spelling to do,
+/// and enough to consume a single-session printer's one accept.
+fn warn_about_unresolvable_profiles(state: &super::ApiState) {
+    let Ok(configuration) = crate::configuration::load(state.config.as_deref()) else {
         return;
     };
-    for printer in printers {
-        if let Some(configured) = printer.profile.as_deref()
+    for printer in configuration.printers() {
+        if let Some(configured) = printer.profile()
             && super::printers::canonical_profile(Some(configured)).is_none()
         {
             eprintln!(
                 "warning: printer {:?} has profile {configured:?}, which is not in the catalog; \
                  it will be reported as having none. Run `escpost profiles list` for valid ids.",
-                printer.name
+                printer.name()
             );
         }
     }

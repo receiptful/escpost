@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum.workspace = true
+base64.workspace = true
 clap.workspace = true
 directories.workspace = true
 escpost-render = { version = "0.1.0", path = "../escpost-render" }

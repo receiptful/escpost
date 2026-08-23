@@ -52,6 +52,38 @@ impl ApiFailure {
         )
     }
 
+    pub(super) fn unsupported_format(message: &str) -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "UNSUPPORTED_FORMAT",
+            message.to_owned(),
+        )
+    }
+
+    pub(super) fn printer_required() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "PRINTER_NOT_FOUND",
+            "Name a printer, in the JSON body or as ?printer=.",
+        )
+    }
+
+    pub(super) fn printer_not_found(name: &str) -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "PRINTER_NOT_FOUND",
+            format!("No printer named {name:?} is configured."),
+        )
+    }
+
+    pub(super) fn print_failed(message: &str) -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PRINT_FAILED",
+            message.to_owned(),
+        )
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
@@ -74,5 +106,14 @@ impl IntoResponse for ApiFailure {
             }),
         )
             .into_response()
+    }
+}
+
+/// The one field the decoding tests assert on. Test-only: nothing in the
+/// running server inspects a failure it is about to send.
+#[cfg(test)]
+impl ApiFailure {
+    pub(super) fn code(&self) -> &'static str {
+        self.code
     }
 }

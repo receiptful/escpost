@@ -5,10 +5,14 @@
 //! and a preview viewer. This surface prints to real printers and renders
 //! nothing.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
 pub(crate) mod cli;
 mod error;
 mod http;
 mod origin;
+mod print;
 mod printers;
 
 /// What this build can do, advertised on `/info` so a client can detect a
@@ -24,4 +28,8 @@ pub(crate) struct ApiState {
     /// Read printer configuration from this exact file rather than the
     /// default location.
     pub(crate) config: Option<std::path::PathBuf>,
+    /// Names jobs within one run. Nothing persists a job id — the extension
+    /// echoes it and discards it — so a counter is enough and a dependency on
+    /// a UUID crate is not warranted.
+    pub(crate) job_sequence: Arc<AtomicU64>,
 }

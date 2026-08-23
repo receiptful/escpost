@@ -265,6 +265,90 @@ fn there_is_no_default_printer_when_none_is_configured() {
     std::fs::remove_dir_all(directory).expect("the test directory should be removable");
 }
 
+#[test]
+fn a_json_print_reaches_the_printer_with_its_bytes_unchanged() {
+    let directory = temporary_directory("json-print");
+    let config = directory.join("printers.toml");
+    let printer = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a fake printer should bind");
+    let printer_port = printer
+        .local_addr()
+        .expect("the fake printer has an address")
+        .port();
+    std::fs::write(
+        &config,
+        format!(
+            "\
+[counter]
+transport = \"network\"
+host = \"127.0.0.1\"
+port = {printer_port}
+"
+        ),
+    )
+    .expect("the printer configuration should be writable");
+
+    let received = thread::spawn(move || {
+        let (mut connection, _) = printer.accept().expect("the printer should be reached");
+        let mut bytes = Vec::new();
+        connection
+            .read_to_end(&mut bytes)
+            .expect("the print connection should close cleanly");
+        bytes
+    });
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+    let response = http_request(
+        port,
+        "POST",
+        "/print",
+        &["Content-Type: application/json".to_owned()],
+        br#"{"printer":"counter","data":"G0BIaQo="}"#,
+    );
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 200 OK");
+    let body: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the print should answer JSON");
+    assert!(
+        body["job_id"].as_str().is_some_and(|id| !id.is_empty()),
+        "a print should be given a job id"
+    );
+    assert_eq!(
+        received.join().expect("the printer thread should finish"),
+        vec![0x1b, 0x40, b'H', b'i', b'\n']
+    );
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[test]
+fn printing_to_an_unconfigured_printer_is_a_typed_404() {
+    let directory = temporary_directory("unknown-printer");
+    let config = directory.join("printers.toml");
+    std::fs::write(&config, "").expect("an empty configuration should be writable");
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+    let response = http_request(
+        port,
+        "POST",
+        "/print",
+        &["Content-Type: application/json".to_owned()],
+        br#"{"printer":"nope","data":""}"#,
+    );
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 404 Not Found");
+    let body: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the refusal should be JSON");
+    assert_eq!(body["error"]["code"], "PRINTER_NOT_FOUND");
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {
