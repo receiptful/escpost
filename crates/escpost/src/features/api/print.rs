@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use axum::body::Bytes;
@@ -96,6 +97,20 @@ pub(super) fn decode_payload(
     Ok(request)
 }
 
+/// This printer's lock, created on first use.
+///
+/// Keyed by name rather than one global lock: two different printers must be
+/// able to print at once, and the same printer must not — a USB device can only
+/// be claimed once, and a RAW TCP printer is usually single-session.
+pub(super) async fn printer_lock(state: &ApiState, printer: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = state.printer_locks.lock().await;
+    Arc::clone(
+        locks
+            .entry(printer.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+    )
+}
+
 async fn print_job(
     State(state): State<ApiState>,
     Query(query): Query<PrintQuery>,
@@ -109,6 +124,11 @@ async fn print_job(
         config: state.config.clone(),
     })
     .map_err(|_| ApiFailure::printer_not_found(&request.printer))?;
+
+    // Held for the whole transfer, so two simultaneous prints to one printer
+    // queue rather than collide.
+    let lock = printer_lock(&state, &request.printer).await;
+    let _printing = lock.lock().await;
 
     printing::print(printing::Request {
         bytes: request.bytes,
@@ -125,9 +145,12 @@ async fn print_job(
 
 #[cfg(test)]
 mod tests {
-    use super::decode_payload;
+    use super::{decode_payload, printer_lock};
+    use crate::features::api::ApiState;
     use axum::http::HeaderMap;
     use axum::http::header;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     fn json_headers() -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -224,5 +247,52 @@ mod tests {
         let error = decode_payload(&json_headers(), None, br#"{"printer":"","data":""}"#)
             .expect_err("a blank printer name must be refused");
         assert_eq!(error.code(), "PRINTER_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn one_printer_has_exactly_one_lock() {
+        // The mutex has to be keyed, not global: two different printers must
+        // print at the same time, and the same printer must not.
+        let state = ApiState::default();
+
+        let first = printer_lock(&state, "counter").await;
+        let again = printer_lock(&state, "counter").await;
+        let other = printer_lock(&state, "kitchen").await;
+
+        assert!(Arc::ptr_eq(&first, &again));
+        assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[tokio::test]
+    async fn a_second_print_to_the_same_printer_waits_for_the_first() {
+        let state = ApiState::default();
+        let held = printer_lock(&state, "counter").await;
+        let guard = held.lock().await;
+
+        let contended = printer_lock(&state, "counter").await;
+        // try_lock rather than a sleep: this asserts contention rather than
+        // hoping a timing window is wide enough.
+        assert!(
+            contended.try_lock().is_err(),
+            "a second print to one printer must wait"
+        );
+
+        drop(guard);
+        assert!(
+            contended.try_lock().is_ok(),
+            "the lock must be released when the print finishes"
+        );
+    }
+
+    #[tokio::test]
+    async fn two_different_printers_do_not_block_each_other() {
+        let state = ApiState::default();
+        let counter = printer_lock(&state, "counter").await;
+        let _busy = counter.lock().await;
+
+        let kitchen = printer_lock(&state, "kitchen").await;
+        let free = tokio::time::timeout(Duration::from_millis(200), kitchen.lock()).await;
+
+        assert!(free.is_ok(), "a different printer must not be blocked");
     }
 }

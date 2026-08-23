@@ -425,6 +425,84 @@ fn an_octet_stream_print_without_a_printer_parameter_says_so() {
     assert_eq!(body["error"]["code"], "PRINTER_NOT_FOUND");
 }
 
+#[test]
+fn two_concurrent_prints_to_one_printer_are_serialised() {
+    // A RAW TCP printer is single-session: the second connection is refused
+    // while the first is open. Without serialisation one of two simultaneous
+    // prints fails, and which one is a race.
+    let directory = temporary_directory("concurrent");
+    let config = directory.join("printers.toml");
+    let printer = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a fake printer should bind");
+    let printer_port = printer
+        .local_addr()
+        .expect("the fake printer has an address")
+        .port();
+    std::fs::write(
+        &config,
+        format!(
+            "\
+[counter]
+transport = \"network\"
+host = \"127.0.0.1\"
+port = {printer_port}
+"
+        ),
+    )
+    .expect("the printer configuration should be writable");
+
+    // Accept one connection at a time, holding each briefly, so overlapping
+    // prints would be visible as a refusal or interleaved bytes.
+    let receiver = thread::spawn(move || {
+        let mut jobs = Vec::new();
+        for _ in 0..2 {
+            let (mut connection, _) = printer.accept().expect("each print should arrive");
+            let mut bytes = Vec::new();
+            connection
+                .read_to_end(&mut bytes)
+                .expect("each print should close cleanly");
+            thread::sleep(Duration::from_millis(120));
+            jobs.push(bytes);
+        }
+        jobs
+    });
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+
+    let first = thread::spawn(move || {
+        http_request(
+            port,
+            "POST",
+            "/print",
+            &["Content-Type: application/json".to_owned()],
+            br#"{"printer":"counter","data":"QUFB"}"#,
+        )
+    });
+    let second = thread::spawn(move || {
+        http_request(
+            port,
+            "POST",
+            "/print",
+            &["Content-Type: application/json".to_owned()],
+            br#"{"printer":"counter","data":"QkJC"}"#,
+        )
+    });
+    let first = first.join().expect("the first print should finish");
+    let second = second.join().expect("the second print should finish");
+    stop(&mut child);
+
+    assert_eq!(response_status(&first), "HTTP/1.1 200 OK");
+    assert_eq!(response_status(&second), "HTTP/1.1 200 OK");
+
+    let mut jobs = receiver.join().expect("the printer thread should finish");
+    jobs.sort();
+    // Each job arrived whole. Interleaving would show as a job that is neither.
+    assert_eq!(jobs, vec![b"AAA".to_vec(), b"BBB".to_vec()]);
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {

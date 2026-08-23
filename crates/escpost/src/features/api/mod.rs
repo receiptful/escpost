@@ -5,8 +5,17 @@
 //! and a preview viewer. This surface prints to real printers and renders
 //! nothing.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+
+use tokio::sync::Mutex;
+
+/// One lock per printer name. Held across a whole print, so two requests for
+/// the same printer queue instead of both trying to open it.
+///
+/// A `std::sync::Mutex` would be wrong here: the guard is held across `.await`.
+pub(crate) type PrinterLocks = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
 
 pub(crate) mod cli;
 mod error;
@@ -32,4 +41,6 @@ pub(crate) struct ApiState {
     /// echoes it and discards it — so a counter is enough and a dependency on
     /// a UUID crate is not warranted.
     pub(crate) job_sequence: Arc<AtomicU64>,
+    /// Serialises prints per printer. See `PrinterLocks`.
+    pub(crate) printer_locks: PrinterLocks,
 }
