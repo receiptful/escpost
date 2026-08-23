@@ -99,6 +99,111 @@ fn the_extension_and_local_callers_are_accepted() {
     assert_eq!(response_status(&absent), "HTTP/1.1 200 OK");
 }
 
+#[test]
+fn printers_reports_identity_transport_and_a_resolvable_profile() {
+    let directory = temporary_directory("printers");
+    let config = directory.join("printers.toml");
+    std::fs::write(
+        &config,
+        "\
+[counter]
+transport = \"usb\"
+profile = \"TM-T88II\"
+vendor_id = \"0x04b8\"
+product_id = \"0x0202\"
+interface_number = 0
+out_endpoint = \"0x01\"
+
+[kitchen]
+transport = \"network\"
+profile = \"tm-t88\"
+host = \"192.0.2.50\"
+port = 9100
+",
+    )
+    .expect("the printer configuration should be writable");
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+    let response = http_get(port, "/printers");
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 200 OK");
+    let body: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("/printers should answer JSON");
+    let printers = body.as_array().expect("/printers returns an array");
+    assert_eq!(printers.len(), 2);
+
+    let counter = printers
+        .iter()
+        .find(|printer| printer["id"] == "counter")
+        .expect("the USB printer should be listed");
+    assert_eq!(counter["transport"], "usb");
+    assert_eq!(counter["profile"], "TM-T88II");
+    assert_eq!(counter["device"]["usbVendorId"], 0x04b8);
+
+    let kitchen = printers
+        .iter()
+        .find(|printer| printer["id"] == "kitchen")
+        .expect("the TCP printer should be listed");
+    assert_eq!(kitchen["transport"], "tcp");
+    // "tm-t88" is in no catalog. Reporting it as a real profile is the bug.
+    assert_eq!(kitchen["profile"], serde_json::Value::Null);
+    assert_eq!(kitchen["device"]["host"], "192.0.2.50");
+    assert_eq!(kitchen["device"]["port"], 9100);
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[test]
+fn info_advertises_device_identity_so_a_client_can_detect_an_older_daemon() {
+    let port = unused_loopback_port();
+    let mut child = start_api(port);
+    wait_until_listening(&mut child, port);
+    let response = http_get(port, "/info");
+    stop(&mut child);
+
+    let body: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("/info should answer JSON");
+    let capabilities: Vec<&str> = body["capabilities"]
+        .as_array()
+        .expect("capabilities should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("each capability is a string"))
+        .collect();
+    assert!(capabilities.contains(&"device-identity"));
+}
+
+fn start_api_with_config(port: u16, config: &std::path::Path) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "api",
+            "--listen",
+            &format!("127.0.0.1:{port}"),
+            "--config",
+            config.to_str().expect("the config path should be UTF-8"),
+            "--non-interactive",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost command should start")
+}
+
+fn temporary_directory(case: &str) -> std::path::PathBuf {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the system clock should be after the Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "escpost-api-{case}-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&path).expect("the test directory should be creatable");
+    path
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {

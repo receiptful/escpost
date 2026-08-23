@@ -16,6 +16,7 @@ struct InfoResponse {
 pub(super) fn router(state: ApiState) -> Router {
     Router::new()
         .route("/info", get(info))
+        .merge(super::printers::router())
         // D2 applies to every route, including ones added later, because the
         // layer wraps the router rather than each handler.
         .layer(middleware::from_fn_with_state(state.clone(), origin::guard))

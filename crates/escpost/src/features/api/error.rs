@@ -36,6 +36,14 @@ impl ApiFailure {
         )
     }
 
+    pub(super) fn printer_inventory_failure() -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PRINT_FAILED",
+            "The printer configuration could not be read.",
+        )
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,

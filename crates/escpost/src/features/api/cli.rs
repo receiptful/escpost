@@ -20,6 +20,10 @@ pub(crate) struct ApiArgs {
     /// from 9180 through 9189 is used.
     #[arg(long)]
     pub(crate) listen: Option<SocketAddr>,
+
+    /// Read printer configuration from this exact file.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) config: Option<std::path::PathBuf>,
 }
 
 pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<(), CliError> {
@@ -41,7 +45,36 @@ pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<()
     eprintln!("escpost api: http://{address}");
     eprintln!("Press Ctrl+C to stop.");
 
-    super::http::serve(listener, super::ApiState::default())
+    let state = super::ApiState {
+        extension_id: None,
+        config: arguments.config,
+    };
+    warn_about_unresolvable_profiles(&state).await;
+
+    super::http::serve(listener, state)
         .await
         .map_err(CliError::ServeApi)
+}
+
+/// Name any printer whose configured profile is not in the catalog.
+///
+/// `/printers` reports such a profile as absent rather than advertising one
+/// that does not exist, which is correct but silent. An operator should learn
+/// about a typo here, at startup, instead of from a print that fails days
+/// later.
+async fn warn_about_unresolvable_profiles(state: &super::ApiState) {
+    let Ok(printers) = super::printers::load_printers(state).await else {
+        return;
+    };
+    for printer in printers {
+        if let Some(configured) = printer.profile.as_deref()
+            && super::printers::canonical_profile(Some(configured)).is_none()
+        {
+            eprintln!(
+                "warning: printer {:?} has profile {configured:?}, which is not in the catalog; \
+                 it will be reported as having none. Run `escpost profiles list` for valid ids.",
+                printer.name
+            );
+        }
+    }
 }
