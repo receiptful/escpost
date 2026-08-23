@@ -534,6 +534,51 @@ fn pinning_an_extension_id_refuses_every_other_extension() {
     assert_eq!(response_status(&local), "HTTP/1.1 200 OK");
 }
 
+#[test]
+fn the_api_makes_no_outbound_connection_while_serving() {
+    // D4. escpost is Apache-2.0 and must stay independently useful: no licence
+    // check, no telemetry, no account. A local listener stands in for
+    // "somewhere else" — if the API ever phones home, the most likely first
+    // version of that bug is a connection this catches.
+    //
+    // The watcher is on a port nothing is configured to use, which is the
+    // distinction that matters: `/printers` legitimately connects to every
+    // configured network printer to report its availability, so a watcher
+    // doubling as a configured printer would prove nothing.
+    let (watcher, _watcher_port) = fake_printer();
+    watcher
+        .set_nonblocking(true)
+        .expect("the watcher should be non-blocking");
+
+    let directory = temporary_directory("no-egress");
+    let config = directory.join("printers.toml");
+    std::fs::write(&config, "").expect("an empty configuration should be writable");
+
+    let port = unused_loopback_port();
+    let mut child = start_api_with_config(port, &config);
+    wait_until_listening(&mut child, port);
+
+    let _ = http_get(port, "/info");
+    let _ = http_get(port, "/printers");
+    let _ = http_get(port, "/printers/default");
+    let _ = http_request(
+        port,
+        "POST",
+        "/print",
+        &["Content-Type: application/json".to_owned()],
+        br#"{"printer":"nope","data":""}"#,
+    );
+    thread::sleep(Duration::from_millis(400));
+    stop(&mut child);
+
+    assert!(
+        watcher.accept().is_err(),
+        "serving the API must open no connection of its own"
+    );
+
+    std::fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {
