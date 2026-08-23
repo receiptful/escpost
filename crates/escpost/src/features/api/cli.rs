@@ -41,7 +41,7 @@ pub(crate) async fn run(arguments: ApiArgs, _non_interactive: bool) -> Result<()
     eprintln!("escpost api: http://{address}");
     eprintln!("Press Ctrl+C to stop.");
 
-    super::http::serve(listener)
+    super::http::serve(listener, super::ApiState::default())
         .await
         .map_err(CliError::ServeApi)
 }

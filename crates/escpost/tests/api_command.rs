@@ -56,6 +56,49 @@ fn the_api_binds_loopback_and_not_every_interface() {
     }
 }
 
+#[test]
+fn a_remote_page_origin_is_refused() {
+    let port = unused_loopback_port();
+    let mut child = start_api(port);
+    wait_until_listening(&mut child, port);
+
+    let response = http_request(
+        port,
+        "GET",
+        "/info",
+        &["Origin: https://evil.example".to_owned()],
+        &[],
+    );
+    stop(&mut child);
+
+    assert_eq!(response_status(&response), "HTTP/1.1 403 Forbidden");
+    let body: serde_json::Value =
+        serde_json::from_slice(response_body(&response)).expect("the refusal should be JSON");
+    assert_eq!(body["error"]["code"], "ORIGIN_NOT_GRANTED");
+}
+
+#[test]
+fn the_extension_and_local_callers_are_accepted() {
+    let port = unused_loopback_port();
+    let mut child = start_api(port);
+    wait_until_listening(&mut child, port);
+
+    let extension = http_request(
+        port,
+        "GET",
+        "/info",
+        &["Origin: chrome-extension://cnifebiebidolpmlmgcghpopggfcklmc".to_owned()],
+        &[],
+    );
+    let opaque = http_request(port, "GET", "/info", &["Origin: null".to_owned()], &[]);
+    let absent = http_get(port, "/info");
+    stop(&mut child);
+
+    assert_eq!(response_status(&extension), "HTTP/1.1 200 OK");
+    assert_eq!(response_status(&opaque), "HTTP/1.1 200 OK");
+    assert_eq!(response_status(&absent), "HTTP/1.1 200 OK");
+}
+
 /// A routable IPv4 address of this machine, if it has one. Returns None on a
 /// host with only loopback, where the negative assertion cannot be made.
 fn non_loopback_address() -> Option<std::net::IpAddr> {
