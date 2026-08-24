@@ -33,6 +33,8 @@ services:
     depends_on:
       frontend-build:
         condition: service_completed_successfully
+      escpost:
+        condition: service_healthy
     command: ["bun", "run", "dev"]
 
   test:
@@ -88,6 +90,20 @@ services:
     depends_on:
       frontend-build:
         condition: service_completed_successfully
+    # The test has two parts. The container uses the network of the host.
+    # Thus a test of the port only can find the server of a different
+    # directory. The start period gives time for the first build. The
+    # server cannot listen before the build is complete.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - grep -qx escpost /proc/*/comm && echo > /dev/tcp/127.0.0.1/9000
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 600s
     environment:
       # Keep configuration used by this checkout separate from any
       # host-installed ESCPost version.
