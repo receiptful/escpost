@@ -3,7 +3,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 #[cfg(unix)]
 use std::net::TcpListener;
 #[cfg(unix)]
@@ -11,11 +11,15 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(unix)]
-use std::process::{Output, Stdio};
+use std::process::{Child, ExitStatus, Output, Stdio};
+#[cfg(unix)]
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
 use std::thread;
 #[cfg(unix)]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn printers_list_is_a_rust_cli_command() {
@@ -1126,39 +1130,38 @@ fn printers_discover_streams_each_answering_host_exactly_once() {
     fs::remove_dir_all(directory).expect("the test directory should be removable");
 }
 
-/// The point of streaming: a sweep stopped with Ctrl+C keeps every result it
-/// already printed, still tells the user how to register it, and still reports
-/// an interrupt to whatever started it.
+/// A listener on every local address, so a sweep of the loopback network
+/// finds a host at each address it probes. It answers only the first probes:
+/// its accept queue holds a fixed number of connections, and nothing takes
+/// them off the queue. The kernel then drops the connection request of every
+/// later probe, and each of those probes waits for its full timeout. A sweep
+/// of 65533 loopback addresses set up this way reports its first results at
+/// once and cannot end for hours, which is the state these tests need. It
+/// also needs no network outside the machine, so it behaves the same way
+/// wherever the tests run.
 #[cfg(unix)]
-#[test]
-fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
-    let listener = TcpListener::bind("127.0.0.2:0").expect("an ephemeral port should bind");
+fn stalling_loopback_listener() -> (TcpListener, u16) {
+    let listener = TcpListener::bind("0.0.0.0:0").expect("an ephemeral port should bind");
     let port = listener
         .local_addr()
         .expect("the listener should report its address")
         .port();
-    let directory = temporary_directory("discover-interrupt");
-    let config = directory.join("printers.toml");
+    (listener, port)
+}
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
+/// Start a sweep that cannot end on its own. See `stalling_loopback_listener`
+/// for why every address answers or stalls.
+#[cfg(unix)]
+fn spawn_stalling_sweep(config: &Path, port: u16) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["--non-interactive", "printers", "--config"])
-        .arg(&config)
+        .arg(config)
         .args([
             "discover",
             "--transport",
             "network",
             "--subnet",
-            "127.0.0.2/32",
-            // The RFC 5737 documentation ranges, probed after the loopback
-            // host that answers at once. Whether they time out or fail, 762
-            // further addresses keep the sweep busy long enough to interrupt
-            // it — which is the state this test needs.
-            "--subnet",
-            "192.0.2.0/24",
-            "--subnet",
-            "198.51.100.0/24",
-            "--subnet",
-            "203.0.113.0/24",
+            "127.0.0.0/16",
             "--port",
             &port.to_string(),
             "--timeout",
@@ -1167,21 +1170,13 @@ fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the escpost command should start");
+        .expect("the escpost command should start")
+}
 
-    // Armed before the sweep is watched, so interrupting costs one pipe write
-    // rather than a process spawn: the smaller that gap, the less of the sweep
-    // can finish inside it. `sh`'s builtin `kill` sends the signal, so the
-    // test needs no libc binding of its own.
-    let mut interrupter = Command::new("sh")
-        .args(["-c", &format!("read ready; kill -INT {}", child.id())])
-        .stdin(Stdio::piped())
-        .spawn()
-        .expect("the interrupter should start");
-    let mut trigger = interrupter.stdin.take().expect("stdin should be piped");
-
-    let mut results = BufReader::new(child.stdout.take().expect("stdout should be piped"));
-    let endpoint = format!("127.0.0.2:{port}");
+/// Read streamed results until one whole result block is in hand. Returns
+/// everything read and the endpoint that block reports.
+#[cfg(unix)]
+fn read_first_result(results: &mut impl BufRead) -> (String, String) {
     let mut streamed = String::new();
     loop {
         let mut line = String::new();
@@ -1193,22 +1188,55 @@ fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
             "the sweep ended before streaming its first result:\n{streamed}"
         );
         streamed.push_str(&line);
-        // The heading arrives only after its whole block has been written and
-        // flushed, so reaching it means a complete result is already in the
-        // pipe — while the sweep is still probing.
-        if line.starts_with('[') && line.trim_end().ends_with(&endpoint) {
-            break;
+        // The endpoint line comes after the heading, so reaching it proves a
+        // whole result reached the reader while the sweep still probes.
+        if let Some(endpoint) = line.strip_prefix("    network: ") {
+            let endpoint = endpoint.trim_end().to_owned();
+            return (streamed, endpoint);
         }
     }
+}
 
-    writeln!(trigger).expect("the interrupt should be triggerable");
-    drop(trigger);
-    let interrupted = interrupter.wait().expect("the interrupter should finish");
-    assert!(interrupted.success(), "the interrupt should be delivered");
+/// The point of streaming: a sweep stopped with Ctrl+C keeps every result it
+/// already printed, still tells the user how to register it, and still reports
+/// an interrupt to whatever started it.
+#[cfg(unix)]
+#[test]
+fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
+    let (_listener, port) = stalling_loopback_listener();
+    let directory = temporary_directory("discover-interrupt");
+    let config = directory.join("printers.toml");
+    let mut child = spawn_stalling_sweep(&config, port);
 
+    let mut results = BufReader::new(child.stdout.take().expect("stdout should be piped"));
+    let (mut streamed, endpoint) = read_first_result(&mut results);
+
+    // The sweep cannot end on its own, so the signal always reaches a running
+    // command. It is sent again every 100 ms until the command ends, so one
+    // signal that gets lost cannot make the test wait for ever. `sh`'s
+    // builtin `kill` sends it, so the test needs no libc binding of its own.
+    let interrupting = Arc::new(AtomicBool::new(true));
+    let signals = Arc::clone(&interrupting);
+    let identifier = child.id();
+    let interrupter = thread::spawn(move || {
+        while signals.load(Ordering::Relaxed) {
+            let sent = Command::new("sh")
+                .args(["-c", &format!("kill -INT {identifier}")])
+                .status()
+                .expect("the interrupter should run");
+            assert!(sent.success(), "the interrupt should be delivered");
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
+
+    // Read to the end first: that finishes when the command closes stdout,
+    // which it does as it exits. The process identifier stays reserved until
+    // the `wait` below, so no signal can reach another process.
     results
         .read_to_string(&mut streamed)
         .expect("the remaining results should be readable");
+    interrupting.store(false, Ordering::Relaxed);
+    interrupter.join().expect("the interrupter should finish");
     let mut stderr = String::new();
     child
         .stderr
@@ -1222,6 +1250,10 @@ fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
         status.code(),
         Some(130),
         "an interrupted sweep must still report the interrupt (128 + SIGINT):\n{stderr}"
+    );
+    assert!(
+        streamed.contains(&format!("[1] {endpoint}\n")),
+        "the printed result must survive the interrupt intact:\n{streamed}"
     );
     assert!(
         streamed.contains(&format!("    network: {endpoint}\n")),
@@ -1238,6 +1270,87 @@ fn printers_discover_keeps_its_results_when_the_sweep_is_interrupted() {
         "an interrupted sweep should still name the command that registers what it found:\n{stderr}"
     );
     fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+/// `printers discover | head -n 1` closes the pipe as soon as it has read
+/// enough. The sweep must stop there and the command must end quietly,
+/// instead of probing every address that is left and then reporting a broken
+/// pipe as a failure.
+#[cfg(unix)]
+#[test]
+fn printers_discover_stops_quietly_when_its_reader_closes_the_pipe() {
+    let (listener, port) = stalling_loopback_listener();
+    // One accepted connection every 20 ms makes one place in the queue free,
+    // so a probe that waits gets an answer and a new result goes to the
+    // reader. Without this the sweep has nothing more to write and never
+    // learns that the pipe is closed.
+    let queue = listener
+        .try_clone()
+        .expect("the listener should be clonable");
+    thread::spawn(move || {
+        while queue.accept().is_ok() {
+            thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let directory = temporary_directory("discover-broken-pipe");
+    let config = directory.join("printers.toml");
+    let mut child = spawn_stalling_sweep(&config, port);
+
+    let mut results = BufReader::new(child.stdout.take().expect("stdout should be piped"));
+    let (_streamed, _endpoint) = read_first_result(&mut results);
+    // What `head` does once it has its line.
+    drop(results);
+
+    // The sweep would run for hours if it kept probing, so a command that is
+    // still alive after 30 seconds did not stop at the closed pipe.
+    let status = wait_for_exit(
+        &mut child,
+        Duration::from_secs(30),
+        "the sweep should stop as soon as its reader closes the pipe",
+    );
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .expect("stderr should be piped")
+        .read_to_string(&mut stderr)
+        .expect("the diagnostics should be readable");
+
+    assert!(
+        status.success(),
+        "a reader that closes the pipe is not a failure:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Broken pipe"),
+        "a closed pipe must not be reported as an error:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("error:"),
+        "a closed pipe must not be reported as an error:\n{stderr}"
+    );
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+/// Wait for a command to end, but not longer than `limit`. A command that is
+/// still alive then is killed and `reason` is reported, so a failed test
+/// leaves no process behind.
+#[cfg(unix)]
+fn wait_for_exit(child: &mut Child, limit: Duration, reason: &str) -> ExitStatus {
+    let deadline = Instant::now() + limit;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .expect("the escpost command should be waitable")
+        {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{reason}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Two loopback addresses listening on one port, so a single sweep has two

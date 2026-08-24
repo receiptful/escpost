@@ -1,10 +1,14 @@
 //! The `printers discover` terminal adapter.
 
-use std::io::{self, Write};
+use std::future::{Future, pending, poll_fn};
+use std::io::{self, ErrorKind, Write};
 use std::path::PathBuf;
+use std::pin::pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use tokio::sync::{Notify, oneshot};
 
 use super::super::cli::output::{
     NetworkListing, UsbListing, format_network_endpoint, usb_printer_label_parts,
@@ -82,8 +86,18 @@ pub(crate) async fn run_discover(
     );
     bar.set_message("Scanning for network printers");
     let mut listing = LiveListing::new(&bar, io::stdout(), io::stderr());
+    let output_closed = listing.output_closed_signal();
     let mut length_set = false;
     let mut inventory = NusbInventory;
+    // Armed before the sweep, so no result can be printed before Ctrl+C is
+    // caught. See `watch_for_interrupt`.
+    let interrupted = watch_for_interrupt().await;
+    // Ctrl+C stops the sweep only at a point where the command waits. The USB
+    // scan does not wait, because it reads the devices in one step. A signal
+    // that comes during that step waits until the step ends. With
+    // `--transport usb` the command does not wait again after that step, so it
+    // does not see the signal and it ends with a success status. A USB scan
+    // takes a short time, so the delay is small.
     let finished = tokio::select! {
         result = execute(
             prepared,
@@ -131,9 +145,19 @@ pub(crate) async fn run_discover(
         // that registers it. Dropping the discovery future is exactly how the
         // web app cancels a scan when its response is dropped, so a terminal
         // and a browser abandon a sweep through one mechanism rather than two.
-        () = interrupt() => None,
+        _ = interrupted => None,
+        // A reader that closes stdout asks for no more output. Stop the sweep
+        // there instead of probing every remaining address into a pipe that
+        // nobody reads.
+        () = output_closed.notified() => None,
     };
     bar.finish_and_clear();
+    // A closed stdout is the reader's decision, not a fault in the scan. The
+    // command therefore ends without a message, without the closing hint, and
+    // with a success status, the same way a reader expects `| head` to end.
+    if listing.output_closed() {
+        return Ok(());
+    }
     let Some(result) = finished else {
         // Registration availability is tallied from what actually reached
         // stdout, because the `Response` that normally carries it was never
@@ -153,13 +177,42 @@ pub(crate) async fn run_discover(
     Ok(())
 }
 
-/// Resolves when the user asks for the sweep to stop. A handler that cannot be
-/// installed must not cost the user their scan, so the future then never
-/// resolves and the run finishes under the default signal disposition.
-async fn interrupt() {
-    if tokio::signal::ctrl_c().await.is_err() {
-        std::future::pending::<()>().await;
-    }
+/// Start to watch for Ctrl+C, and return only after the signal handler is
+/// installed. The returned receiver resolves when the user asks for the sweep
+/// to stop.
+///
+/// Tokio installs the handler at the first poll of its `ctrl_c` future. The
+/// sweep can print its first results before that poll happens, because
+/// `select!` polls its branches in an unspecified order and the sweep spawns
+/// and collects many probes in one poll. A signal that comes in that gap gets
+/// the default action, which ends the process and loses every result. The
+/// task below therefore polls the future once and reports back, and the sweep
+/// starts only after that.
+///
+/// A handler that cannot be installed must not cost the user their scan, so
+/// the receiver then never resolves and the run finishes under the default
+/// signal disposition.
+async fn watch_for_interrupt() -> oneshot::Receiver<()> {
+    let (installed, ready) = oneshot::channel();
+    let (interrupted, asked_to_stop) = oneshot::channel();
+    tokio::spawn(async move {
+        let mut signal = pin!(tokio::signal::ctrl_c());
+        let mut installed = Some(installed);
+        let outcome = poll_fn(|context| {
+            let polled = signal.as_mut().poll(context);
+            if let Some(installed) = installed.take() {
+                let _ = installed.send(());
+            }
+            polled
+        })
+        .await;
+        if outcome.is_err() {
+            pending::<()>().await;
+        }
+        let _ = interrupted.send(());
+    });
+    let _ = ready.await;
+    asked_to_stop
 }
 
 fn print_registration_hint(registration: RegistrationAvailability, port: u16) {
@@ -186,6 +239,12 @@ struct LiveListing<'a, O: Write, W: Write> {
     /// The first failure to write a result. Kept rather than returned because
     /// the discovery observer this drives cannot report an error.
     error: Option<CliError>,
+    /// Set when a write to the output finds a closed reader.
+    output_closed: bool,
+    /// Tells the sweep that the output closed. The observer runs inside the
+    /// sweep, so it cannot stop the sweep itself. It sends this signal, and
+    /// the caller waits for it beside the sweep.
+    output_closed_signal: Arc<Notify>,
 }
 
 impl<'a, O: Write, W: Write> LiveListing<'a, O, W> {
@@ -198,7 +257,19 @@ impl<'a, O: Write, W: Write> LiveListing<'a, O, W> {
             registration: RegistrationAvailability::default(),
             grant_hint_written: false,
             error: None,
+            output_closed: false,
+            output_closed_signal: Arc::new(Notify::new()),
         }
+    }
+
+    /// A handle on the "the output closed" signal, for the caller to wait on
+    /// beside the sweep.
+    fn output_closed_signal(&self) -> Arc<Notify> {
+        Arc::clone(&self.output_closed_signal)
+    }
+
+    fn output_closed(&self) -> bool {
+        self.output_closed
     }
 
     fn usb_printer(&mut self, discovered: &UsbDiscovery) {
@@ -235,10 +306,15 @@ impl<'a, O: Write, W: Write> LiveListing<'a, O, W> {
     /// The closing line for a sweep that finished having found nothing.
     /// Suppressed once anything streamed, since the results are the report.
     fn write_empty_notice(&mut self) -> Result<(), CliError> {
-        if self.printed > 0 {
+        if self.printed > 0 || self.output_closed {
             return Ok(());
         }
-        writeln!(self.output, "No printers discovered.").map_err(CliError::WriteHumanOutput)
+        if let Err(error) =
+            writeln!(self.output, "No printers discovered.").map_err(CliError::WriteHumanOutput)
+        {
+            self.record_write_failure(error);
+        }
+        self.take_error()
     }
 
     fn registration(&self) -> RegistrationAvailability {
@@ -250,11 +326,12 @@ impl<'a, O: Write, W: Write> LiveListing<'a, O, W> {
     }
 
     /// One result on stdout, drawn through the bar's `suspend` so it cannot
-    /// land inside the bar's own line on stderr, and flushed immediately: a
-    /// redirected stdout is block-buffered, and a sweep that is interrupted
-    /// rather than closed must still leave every printed result in the pipe.
+    /// land inside the bar's own line on stderr, and flushed immediately. A
+    /// sweep that is stopped never closes its output, so a result that stays
+    /// in a buffer is lost. The flush keeps every printed result, whatever
+    /// writer is behind the output.
     fn write_result(&mut self, render: impl FnOnce(&mut O) -> Result<(), CliError>) {
-        if self.error.is_some() {
+        if self.error.is_some() || self.output_closed {
             return;
         }
         let Self { bar, output, .. } = self;
@@ -264,7 +341,22 @@ impl<'a, O: Write, W: Write> LiveListing<'a, O, W> {
         });
         match result {
             Ok(()) => self.printed += 1,
-            Err(error) => self.error = Some(error),
+            Err(error) => self.record_write_failure(error),
+        }
+    }
+
+    /// Sort a failed write into the two answers it can get. A broken pipe
+    /// means the reader closed the output, so the sweep stops and the command
+    /// ends quietly. Every other failure is kept and reported.
+    fn record_write_failure(&mut self, error: CliError) {
+        if matches!(&error, CliError::WriteHumanOutput(cause) if cause.kind() == ErrorKind::BrokenPipe)
+        {
+            self.output_closed = true;
+            self.output_closed_signal.notify_one();
+            return;
+        }
+        if self.error.is_none() {
+            self.error = Some(error);
         }
     }
 
@@ -641,6 +733,109 @@ mod tests {
 
         assert_eq!(listing.output, b"No printers discovered.\n");
         assert!(listing.warnings.is_empty());
+    }
+
+    /// A writer that records how much output each flush pushed out.
+    #[derive(Default)]
+    struct FlushRecorder {
+        written: Vec<u8>,
+        /// The size of `written` at each flush.
+        flushed_at: Vec<usize>,
+    }
+
+    impl Write for FlushRecorder {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.written.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushed_at.push(self.written.len());
+            Ok(())
+        }
+    }
+
+    /// Each result must leave the program as soon as it is complete, because
+    /// a sweep that is stopped never gets a chance to empty a buffer. Only
+    /// the flush proves that: a buffered output holds the same bytes but
+    /// loses every one of them when the sweep stops.
+    #[test]
+    fn each_streamed_result_is_flushed_as_soon_as_it_is_written() {
+        let bar = ProgressBar::hidden();
+        let mut listing = LiveListing::new(&bar, FlushRecorder::default(), Vec::new());
+
+        listing.usb_printer(&UsbDiscovery {
+            configured_name: None,
+            configured_profile: None,
+            printer: usb_printer("003", 60, Some("B120300001"), Some("YICHIP3121")),
+        });
+        let after_first = listing.output.written.len();
+        assert!(after_first > 0, "the first result should have been written");
+        assert_eq!(
+            listing.output.flushed_at,
+            vec![after_first],
+            "the first result should be flushed as a whole block, once"
+        );
+
+        listing.network_printer(&NetworkDiscovery {
+            configured_names: Vec::new(),
+            configured_profile: None,
+            host: "10.42.0.5".to_owned(),
+            port: 9100,
+            interface: None,
+        });
+        let after_second = listing.output.written.len();
+        assert!(
+            after_second > after_first,
+            "the second result should have been written"
+        );
+        assert_eq!(
+            listing.output.flushed_at,
+            vec![after_first, after_second],
+            "the second result should be flushed as a whole block too"
+        );
+    }
+
+    /// A writer whose reader has gone away.
+    struct ClosedOutput;
+
+    impl Write for ClosedOutput {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::from(ErrorKind::BrokenPipe))
+        }
+    }
+
+    /// `printers discover | head -n 1` closes the output while the sweep
+    /// runs. That is the reader's decision, so the listing keeps no error and
+    /// tells the sweep to stop instead of probing every address that is left.
+    #[tokio::test]
+    async fn a_closed_output_stops_the_sweep_without_an_error() {
+        let bar = ProgressBar::hidden();
+        let mut listing = LiveListing::new(&bar, ClosedOutput, Vec::new());
+        let closed = listing.output_closed_signal();
+
+        listing.network_printer(&NetworkDiscovery {
+            configured_names: Vec::new(),
+            configured_profile: None,
+            host: "10.42.0.5".to_owned(),
+            port: 9100,
+            interface: None,
+        });
+
+        assert!(listing.output_closed(), "the closed output should be seen");
+        listing
+            .take_error()
+            .expect("a closed output is not a command failure");
+        listing
+            .write_empty_notice()
+            .expect("a closed output must not turn into an empty-sweep failure");
+        tokio::time::timeout(Duration::from_secs(5), closed.notified())
+            .await
+            .expect("the sweep should be told to stop");
     }
 
     #[cfg(target_os = "linux")]
