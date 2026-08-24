@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::application::{self, ApplicationError};
 use crate::configuration::{self, PrinterConfiguration};
 use crate::discovery::{
-    self, DiscoveredHost, InterfaceAddress, ScanTarget, SkippedInterface, Subnet,
+    self, DiscoveredHost, InterfaceAddress, ScanTarget, SharedProber, SkippedInterface, Subnet,
 };
 
 use super::inventory::{
@@ -82,11 +82,22 @@ pub(crate) struct PreparedDiscovery {
     scope: DiscoveryScope,
     scan_targets: Vec<ScanTarget>,
     skipped: Vec<SkippedInterface>,
+    /// How the sweep tests each address. `prepare` always puts the real TCP
+    /// prober here, so production code names no prober at all.
+    prober: SharedProber,
 }
 
 impl PreparedDiscovery {
     pub(crate) fn skipped(&self) -> &[SkippedInterface] {
         &self.skipped
+    }
+
+    /// Replace the prober. A test uses this to sweep without a socket: the
+    /// scan then reports what the given prober says, and touches no address.
+    #[cfg(test)]
+    fn with_prober(mut self, prober: SharedProber) -> Self {
+        self.prober = prober;
+        self
     }
 }
 
@@ -168,6 +179,7 @@ pub(crate) fn prepare(
         scope,
         scan_targets,
         skipped,
+        prober: discovery::tcp_prober(),
     })
 }
 
@@ -253,6 +265,7 @@ pub(in crate::features::printers) async fn execute(
             &prepared.scan_targets,
             scan.port(),
             scan.timeout(),
+            &prepared.prober,
             |event| match event {
                 discovery::ScanEvent::Progress { completed, total } => {
                     observer(DiscoveryEvent::NetworkScanProgress { completed, total });
@@ -359,7 +372,7 @@ fn configured_names(configuration: &PrinterConfiguration, host: &DiscoveredHost)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{ScanTarget, SkipReason, Subnet};
+    use crate::discovery::{ProbeFuture, Prober, ScanTarget, SharedProber, SkipReason, Subnet};
     use crate::features::printers::inventory::{
         UsbEnumeration, UsbEnumerationFailure, UsbFailureStage,
     };
@@ -367,14 +380,37 @@ mod tests {
         TolerantInventory, netum_usb_printer, temporary_configuration,
     };
     use std::net::{Ipv4Addr, TcpListener};
+    use std::sync::Arc;
     use std::time::Duration;
 
-    /// A subnet from TEST-NET-3 (RFC 5737), which is reserved for
-    /// documentation and never routed, so these tests probe address space no
-    /// machine can be on. A private range like `10.42.0.0/24` looks harmless
-    /// and is not: the test container shares the host's network namespace, so
-    /// a developer whose own LAN happens to use that range gets real answers
-    /// here and a test that fails on their desk and nowhere else.
+    /// A prober that opens no socket and answers "no listener" for every
+    /// address. A test that pairs it with `PreparedDiscovery::with_prober`
+    /// sweeps a subnet without touching a single address.
+    ///
+    /// The tests must pass on every machine. A test that connects to an
+    /// address it does not own cannot promise that. Reserved ranges do not
+    /// help: this suite has seen answers from both TEST-NET-1 and TEST-NET-3
+    /// on a development machine, because a VPN or a route can put a real
+    /// host behind any address. Only a prober the test controls removes the
+    /// risk.
+    struct NoListeners;
+
+    impl Prober for NoListeners {
+        fn probe(&self, _address: Ipv4Addr, _port: u16, _probe_timeout: Duration) -> ProbeFuture {
+            Box::pin(std::future::ready(false))
+        }
+    }
+
+    fn no_listeners() -> SharedProber {
+        Arc::new(NoListeners)
+    }
+
+    /// A scan of a subnet that no probe ever opens. Of the tests that use
+    /// it, only one sweeps, and that one supplies `no_listeners`; the others
+    /// stop at `prepare` or at an error. The CIDR is therefore only the
+    /// shape of the work — one /24 — and not an address this suite touches.
+    /// Give this scan the real prober and the rule at the top of
+    /// `no_listeners` is broken again.
     fn explicit_network_scan() -> NetworkScan {
         NetworkScan::new(
             9100,
@@ -419,7 +455,8 @@ mod tests {
             Some(configuration.path().to_owned()),
             DiscoveryScope::Network(explicit_network_scan()),
         )
-        .expect("network discovery should prepare");
+        .expect("network discovery should prepare")
+        .with_prober(no_listeners());
         let mut order = Vec::new();
         // A network-only scope never calls the inventory, so an empty
         // fixture is enough to stand in for it here.

@@ -1380,12 +1380,17 @@ fn printers_discover_announces_how_many_addresses_it_will_probe() {
             "--transport",
             "network",
             "--subnet",
-            // TEST-NET-3 (RFC 5737): reserved for documentation and never
-            // routed, so the announced count cannot change with whatever
-            // network the developer running this happens to be on. A private
-            // range here would drop to one address on any machine holding an
-            // address inside it, because self-exclusion correctly removes it.
-            "203.0.113.0/30",
+            // A loopback /30, so the two probes stay on this machine. The
+            // whole 127.0.0.0/8 block routes to loopback and a probe to an
+            // address with no listener is refused at once. A reserved
+            // documentation range is not a safe substitute: a route or a VPN
+            // can put a real host behind one, and this suite has seen both
+            // TEST-NET-1 and TEST-NET-3 answer.
+            //
+            // The /30 starts at .4 and not at .0, because 127.0.0.1 is this
+            // machine's own address. Self-exclusion removes it from any
+            // sweep that covers it, which would make the count one, not two.
+            "127.0.0.4/30",
             "--timeout",
             "1",
         ])

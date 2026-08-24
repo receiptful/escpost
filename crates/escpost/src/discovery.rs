@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::future::Future;
 use std::net::Ipv4Addr;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -325,6 +327,46 @@ pub(crate) fn explicit_scan_targets(
 /// descriptor limits while keeping a /24 sweep to a couple of batches.
 const MAX_CONCURRENT_PROBES: usize = 128;
 
+/// The result of one probe, boxed because a trait method cannot be `async`
+/// and stay object safe.
+pub(crate) type ProbeFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
+
+/// How a sweep tests one address for a listener.
+///
+/// `scan` spawns each probe as its own task, so the prober must outlive the
+/// call and move across threads. That is why this is shared as
+/// `SharedProber` and not borrowed. Production always uses `TcpProbe`; a
+/// test can supply its own implementation and open no socket at all.
+pub(crate) trait Prober: Send + Sync + 'static {
+    /// Answers `true` if the address accepts a connection on the port
+    /// before the timeout ends.
+    fn probe(&self, address: Ipv4Addr, port: u16, probe_timeout: Duration) -> ProbeFuture;
+}
+
+/// A prober that many spawned probes share.
+pub(crate) type SharedProber = Arc<dyn Prober>;
+
+/// The prober every production sweep uses. It opens a TCP connection and
+/// drops it immediately. This proves that a listener is there. It sends no
+/// byte that a printer could read as ESC/POS data.
+struct TcpProbe;
+
+impl Prober for TcpProbe {
+    fn probe(&self, address: Ipv4Addr, port: u16, probe_timeout: Duration) -> ProbeFuture {
+        Box::pin(async move {
+            timeout(probe_timeout, TcpStream::connect((address, port)))
+                .await
+                .is_ok_and(|result| result.is_ok())
+        })
+    }
+}
+
+/// The real prober. Discovery builds one for every scan it prepares, so no
+/// caller has to name a prober to get production behaviour.
+pub(crate) fn tcp_prober() -> SharedProber {
+    Arc::new(TcpProbe)
+}
+
 /// A host that accepted a TCP connection on the probed port.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DiscoveredHost {
@@ -351,10 +393,11 @@ pub(crate) enum ScanEvent<'a> {
     Found(&'a DiscoveredHost),
 }
 
-/// Sweep every candidate address of every target. Opening and immediately
-/// dropping a stream proves a listener without sending a byte the printer
-/// could interpret as ESC/POS data. Failures and timeouts are the normal
-/// case for a sweep and are silently skipped.
+/// Sweep every candidate address of every target. `prober` decides whether
+/// an address answers; `tcp_prober` is the production one, and opening and
+/// immediately dropping a stream proves a listener without sending a byte
+/// the printer could interpret as ESC/POS data. Failures and timeouts are
+/// the normal case for a sweep and are silently skipped.
 ///
 /// `on_event` receives `Progress { completed: 0, total }` once up front
 /// before any probe is spawned, a `Found` for each newly discovered address
@@ -370,6 +413,7 @@ pub(crate) async fn scan(
     targets: &[ScanTarget],
     port: u16,
     probe_timeout: Duration,
+    prober: &SharedProber,
     mut on_event: impl FnMut(ScanEvent<'_>),
 ) -> Vec<DiscoveredHost> {
     // Counted before spawning so `total` is known, and reported via
@@ -389,14 +433,13 @@ pub(crate) async fn scan(
             }
             let interface = target.interface.clone();
             let limiter = Arc::clone(&limiter);
+            let prober = Arc::clone(prober);
             probes.spawn(async move {
                 let _permit = limiter
                     .acquire_owned()
                     .await
                     .expect("the probe semaphore is never closed");
-                let connected = timeout(probe_timeout, TcpStream::connect((address, port)))
-                    .await
-                    .is_ok_and(|result| result.is_ok());
+                let connected = prober.probe(address, port, probe_timeout).await;
                 connected.then_some(DiscoveredHost {
                     address,
                     port,
@@ -443,7 +486,7 @@ mod tests {
     use super::{
         ApplicationError, DiscoveredHost, EXPLICIT_SCAN_MINIMUM_PREFIX, InterfaceAddress,
         ScanEvent, ScanTarget, SkipReason, SkippedInterface, Subnet, describe_skipped,
-        detect_networks, explicit_scan_targets, probe_count, scan,
+        detect_networks, explicit_scan_targets, probe_count, scan, tcp_prober,
     };
 
     #[test]
@@ -851,6 +894,7 @@ mod tests {
             std::slice::from_ref(&target),
             port,
             Duration::from_secs(1),
+            &tcp_prober(),
             |_| {},
         )
         .await;
@@ -864,7 +908,14 @@ mod tests {
         );
 
         drop(listener);
-        let hosts = scan(&[target], port, Duration::from_secs(1), |_| {}).await;
+        let hosts = scan(
+            &[target],
+            port,
+            Duration::from_secs(1),
+            &tcp_prober(),
+            |_| {},
+        )
+        .await;
         assert!(hosts.is_empty());
     }
 
@@ -887,6 +938,7 @@ mod tests {
             std::slice::from_ref(&target),
             port,
             Duration::from_secs(1),
+            &tcp_prober(),
             |event| {
                 if let ScanEvent::Found(host) = event {
                     found.push(host.clone());
@@ -926,11 +978,17 @@ mod tests {
         let targets = vec![target.clone(), target];
 
         let mut found = Vec::new();
-        let hosts = scan(&targets, port, Duration::from_secs(1), |event| {
-            if let ScanEvent::Found(host) = event {
-                found.push(host.clone());
-            }
-        })
+        let hosts = scan(
+            &targets,
+            port,
+            Duration::from_secs(1),
+            &tcp_prober(),
+            |event| {
+                if let ScanEvent::Found(host) = event {
+                    found.push(host.clone());
+                }
+            },
+        )
         .await;
 
         assert_eq!(
@@ -966,9 +1024,15 @@ mod tests {
         };
 
         assert!(
-            scan(&[target], port, Duration::from_secs(1), |_| {})
-                .await
-                .is_empty()
+            scan(
+                &[target],
+                port,
+                Duration::from_secs(1),
+                &tcp_prober(),
+                |_| {}
+            )
+            .await
+            .is_empty()
         );
     }
 
@@ -991,11 +1055,17 @@ mod tests {
         let targets = vec![target.clone(), target];
 
         let mut calls = Vec::new();
-        let hosts = scan(&targets, port, Duration::from_secs(1), |event| {
-            if let ScanEvent::Progress { completed, total } = event {
-                calls.push((completed, total));
-            }
-        })
+        let hosts = scan(
+            &targets,
+            port,
+            Duration::from_secs(1),
+            &tcp_prober(),
+            |event| {
+                if let ScanEvent::Progress { completed, total } = event {
+                    calls.push((completed, total));
+                }
+            },
+        )
         .await;
 
         assert_eq!(hosts.len(), 1, "duplicate address should still dedup");

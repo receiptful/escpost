@@ -278,14 +278,20 @@ fn discovery_streams_prepared_progress_and_completion() {
         start_case_web_with_config_directory("single-sheet", port, &configuration_directory);
 
     wait_until_listening(&mut child, port);
-    // A /30 with a 1 ms timeout is two probes that both give up immediately,
-    // so the stream reaches `completed` and closes without the suite waiting
-    // on a real sweep. TEST-NET-1 (RFC 5737) is never a machine's own subnet,
-    // so no local address is excluded from it and the probe count is exactly
-    // two wherever this runs.
+    // A loopback /30 with a 1 ms timeout is two probes that both give up
+    // immediately, so the stream reaches `completed` and closes without the
+    // suite waiting on a real sweep. The probes stay on this machine: the
+    // whole 127.0.0.0/8 block routes to loopback, and an address there with
+    // no listener refuses at once. A reserved documentation range is not a
+    // safe substitute, because a route or a VPN can put a real host behind
+    // one.
+    //
+    // The /30 starts at .4 and not at .0, because 127.0.0.1 is this
+    // machine's own address. Self-exclusion removes it from any sweep that
+    // covers it, which would make the probe count one, not two.
     let stream = http_get_event_stream(
         port,
-        "/api/printers/discover?transport=network&subnet=192.0.2.0/30&timeout=1",
+        "/api/printers/discover?transport=network&subnet=127.0.0.4/30&timeout=1",
     );
     let unparsable_subnet = http_get_bytes(
         port,
