@@ -320,14 +320,20 @@ shows the scan's progress from any page.
 Feature-local HTTP adapters call the same application operations as the CLI.
 Read-only routes mirror CLI paths: `GET /api/printers/list` and
 `GET /api/profiles/list`; `GET /api/status` is runtime-only infrastructure,
-not a CLI operation. `GET /api/status` reports the virtual printer's state and
-address, the processed job count, and `config_path`, the resolved
-`printers.toml` the process reads and writes; a path that cannot be resolved
-degrades to an empty string rather than failing the endpoint that reports
-server health. The shell polls status while mounted, retains successful
-printer and profile responses for the app session, and reports loading, empty,
-error, retry, and stale-data states without introducing client-side filters or
-search parameters.
+not a CLI operation. It is the one-shot complete snapshot of the virtual
+printer's state and address, the processed job count, and `config_path`, the
+resolved `printers.toml` the process reads and writes; a path that cannot be
+resolved degrades to an empty string rather than failing the endpoint that
+reports server health. `GET /api/status/events` sends that same complete
+snapshot when a client connects and after its runtime values change.
+`JobStore` exposes the watch-backed runtime projection that drives both status
+routes. In the browser,
+`ServerStatusProvider` owns the status stream's reconnection and stale-status
+state, while a coordinator forces a printer refresh after reconnection. The
+current-job and printer-inventory polling remain at 750 ms and 10 seconds,
+respectively. The shell retains successful printer and profile responses for
+the app session and reports loading, empty, error, retry, and stale-data states
+without introducing client-side filters or search parameters.
 
 Printer discovery and registration are three routes. `GET
 /api/printers/discover/networks` prepares the browser's discovery card: the
