@@ -7,7 +7,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
-use super::{CommandResponse, JobStoreState, WebState};
+use super::job_store::JobStoreState;
+use super::{CommandResponse, WebState};
 
 pub(super) fn router() -> Router<WebState> {
     Router::new()

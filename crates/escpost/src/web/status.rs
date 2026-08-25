@@ -5,7 +5,7 @@ use axum::http::header;
 use axum::routing::get;
 use serde::Serialize;
 
-use super::WebState;
+use super::{JobRuntimeStatus, WebState};
 
 #[derive(Serialize)]
 pub(super) struct StatusResponse {
@@ -26,7 +26,7 @@ pub(super) async fn status(
     [(axum::http::HeaderName, &'static str); 1],
     Json<StatusResponse>,
 ) {
-    let runtime = state.jobs.runtime_status().await;
+    let runtime: JobRuntimeStatus = state.jobs.runtime_status();
     let virtual_printer = state
         .virtual_printer_address
         .map(|address| VirtualPrinterStatus {
