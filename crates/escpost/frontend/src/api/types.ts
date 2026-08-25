@@ -10,11 +10,14 @@ export type VirtualPrinterStatus = {
   address: string;
 };
 
-export type StatusResponse = {
+export type ServerStatusSnapshot = {
   virtual_printer: VirtualPrinterStatus | null;
   jobs_processed: number;
   config_path: string;
 };
+
+// Kept only until Task 4 removes the polling client in the next commit.
+export type StatusResponse = ServerStatusSnapshot;
 
 export type UsbConnection = {
   type: "usb";
