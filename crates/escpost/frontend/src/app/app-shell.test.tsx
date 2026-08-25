@@ -560,15 +560,26 @@ describe("App", () => {
   // unreachable, so an unguarded pill would go on claiming a job is arriving
   // at a server nobody can reach — and would say so directly above a status
   // block reading "Disconnected".
-  test("stops claiming a job is arriving once the server is unreachable", async () => {
+  test("hides an incoming job while disconnected and restores it after reconnection", async () => {
     virtualPrinter = receiving;
     await renderShell("/app/jobs");
     expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
 
-    act(() => FakeEventSource.forUrl("/api/status/events")?.emit("error", null));
+    const statusStream = FakeEventSource.forUrl("/api/status/events");
+    act(() => statusStream?.emit("error", null));
 
     expect(screen.getAllByText("Disconnected")).toHaveLength(2);
     expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
+
+    act(() => statusStream?.emit("status", {
+      virtual_printer: receiving,
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    }));
+
+    for (const region of jobRegions()) {
+      expect(within(region).getByText("Incoming print job")).toBeTruthy();
+    }
   });
 
   test("drops the job block and its announcement once the job stops arriving", async () => {
