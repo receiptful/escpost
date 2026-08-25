@@ -558,6 +558,7 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
     wait_until_listening(&mut child, port);
     let paths = [
         "/api/status",
+        "/api/status/events",
         "/api/printers/list",
         "/api/printers/discover",
         "/api/printers/discover/networks",
@@ -709,6 +710,27 @@ fn api_status_reports_the_resolved_configuration_path() {
     let body = String::from_utf8_lossy(response_body(&response));
     assert!(body.contains("\"config_path\":"));
     assert!(body.contains("printers.toml"));
+}
+
+#[test]
+fn api_status_events_starts_with_the_current_complete_snapshot() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let snapshot = http_get_bytes(port, "/api/status");
+    let event = http_get_first_event(port, "/api/status/events");
+    stop(&mut child);
+
+    assert!(event.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(event.contains("content-type: text/event-stream"));
+    assert!(event.contains("cache-control: no-store"));
+    assert!(event.contains("event: status\n"));
+    let data = event_data(&event, "status");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(data).unwrap(),
+        serde_json::from_slice::<serde_json::Value>(response_body(&snapshot)).unwrap()
+    );
 }
 
 #[test]
@@ -1380,6 +1402,56 @@ fn http_get_event_stream(port: u16, path: &str) -> String {
         }
     }
     String::from_utf8(response).expect("the event stream should be UTF-8")
+}
+
+/// Read one event from a persistent event stream without waiting for the
+/// server to close the connection. The deadline is absolute so keep-alive
+/// comments cannot postpone a failure indefinitely.
+fn http_get_first_event(port: u16, path: &str) -> String {
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .expect("the HTTP request should be writable");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .unwrap_or_else(|| panic!("the event stream for {path} did not produce an event"));
+        stream
+            .set_read_timeout(Some(remaining))
+            .expect("the event stream socket should accept a read timeout");
+        match stream.read(&mut chunk) {
+            Ok(0) => panic!("the event stream for {path} closed before its first event"),
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error) => panic!("the event stream for {path} stalled: {error}"),
+        }
+        if response.windows(2).any(|window| window == b"\n\n") {
+            return String::from_utf8(response).expect("the event stream should be UTF-8");
+        }
+    }
+}
+
+fn event_data<'a>(event: &'a str, requested: &str) -> &'a str {
+    let mut matched_name = false;
+    for line in event.lines() {
+        if line.strip_prefix("event: ") == Some(requested) {
+            matched_name = true;
+        } else if matched_name {
+            if let Some(data) = line.strip_prefix("data: ") {
+                return data;
+            }
+            if line.is_empty() {
+                break;
+            }
+        }
+    }
+    panic!("the stream did not contain a data line for event {requested:?}")
 }
 
 fn http_get_bytes(port: u16, path: &str) -> Vec<u8> {

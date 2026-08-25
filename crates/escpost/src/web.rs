@@ -28,7 +28,7 @@ const LAST_AUTOMATIC_PORT: u16 = 9099;
 #[derive(Clone)]
 pub(crate) struct WebState {
     jobs: JobStore,
-    virtual_printer_address: Option<SocketAddr>,
+    status_metadata: status::ServerStatusMetadata,
 }
 
 /// Current wall-clock time in Unix epoch milliseconds, for job completion.
@@ -267,6 +267,7 @@ pub(crate) async fn serve(
     jobs: JobStore,
     virtual_printer_address: Option<SocketAddr>,
 ) -> std::io::Result<()> {
+    let status_metadata = status::ServerStatusMetadata::resolve(virtual_printer_address);
     let router = Router::new()
         .merge(crate::features::printers::http::router())
         .merge(crate::features::profiles::http::router())
@@ -285,7 +286,7 @@ pub(crate) async fn serve(
         .route("/job", get(download_job))
         .with_state(WebState {
             jobs,
-            virtual_printer_address,
+            status_metadata,
         });
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())

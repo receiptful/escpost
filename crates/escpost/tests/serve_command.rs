@@ -155,6 +155,74 @@ fn api_status_reports_virtual_printer_and_only_successful_captured_jobs() {
 }
 
 #[test]
+fn status_event_reports_receiving_then_ready_for_an_unsuccessful_capture() {
+    let mut child = start_serve(&[
+        "--profile",
+        "REFERENCE",
+        "--idle-timeout",
+        "0",
+        "--listen",
+        "127.0.0.1:0",
+        "--web-listen",
+        "127.0.0.1:0",
+    ]);
+    let (raw_port, web_port) = read_listen_ports(&mut child);
+    wait_until_listening(&mut child, raw_port);
+    wait_until_listening(&mut child, web_port);
+
+    let mut events = open_status_events(web_port);
+    assert_eq!(
+        next_status_event(&mut events)["virtual_printer"]["state"],
+        "ready"
+    );
+
+    let mut raw = open_raw_connection(raw_port);
+    raw.write_all(b"\x1c")
+        .expect("the unsupported byte should be writable");
+    raw.flush().expect("the unsupported byte should flush");
+    assert_eq!(
+        next_status_event(&mut events)["virtual_printer"]["state"],
+        "receiving"
+    );
+
+    drop(raw);
+    let completed = next_status_event(&mut events);
+    stop(&mut child);
+
+    assert_eq!(completed["virtual_printer"]["state"], "ready");
+    assert_eq!(completed["jobs_processed"], 0);
+}
+
+#[test]
+fn status_event_keeps_other_subscribers_live_and_reports_a_successful_job() {
+    let mut child = start_serve_on_ephemeral_ports();
+    let (raw_port, web_port) = read_listen_ports(&mut child);
+    wait_until_listening(&mut child, raw_port);
+    wait_until_listening(&mut child, web_port);
+
+    let mut events = open_status_events(web_port);
+    let initial = next_status_event(&mut events);
+    assert_eq!(initial["virtual_printer"]["state"], "ready");
+    assert_eq!(initial["jobs_processed"], 0);
+
+    let mut disconnected = open_status_events(web_port);
+    let disconnected_initial = next_status_event(&mut disconnected);
+    assert_eq!(disconnected_initial, initial);
+    drop(disconnected);
+
+    send_raw_job(raw_port, b"Count this streamed job\n");
+    let completed = loop {
+        let event = next_status_event(&mut events);
+        if event["jobs_processed"] == 1 && event["virtual_printer"]["state"] == "ready" {
+            break event;
+        }
+    };
+    stop(&mut child);
+
+    assert_eq!(completed["jobs_processed"], 1);
+}
+
+#[test]
 fn serve_finalizes_a_held_open_connection_after_the_idle_timeout() {
     let mut child = start_serve(&[
         "--profile",
@@ -746,6 +814,54 @@ fn http_get_once(port: u16, path: &str) -> std::io::Result<Vec<u8>> {
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
     Ok(response)
+}
+
+fn open_status_events(port: u16) -> BufReader<TcpStream> {
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
+    write!(
+        stream,
+        "GET /api/status/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .expect("the status event request should be writable");
+    BufReader::new(stream)
+}
+
+fn next_status_event(events: &mut BufReader<TcpStream>) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut event_name = None;
+    let mut data = None;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .unwrap_or_else(|| panic!("the status stream did not produce an event"));
+        events
+            .get_mut()
+            .set_read_timeout(Some(remaining))
+            .expect("the status event socket should accept a read timeout");
+
+        let mut line = String::new();
+        let read = events
+            .read_line(&mut line)
+            .unwrap_or_else(|error| panic!("the status stream stalled: {error}"));
+        assert!(read != 0, "the status stream closed before its next event");
+        let line = line.trim_end_matches(['\r', '\n']);
+        if let Some(name) = line.strip_prefix("event: ") {
+            event_name = Some(name.to_owned());
+        } else if let Some(value) = line.strip_prefix("data: ") {
+            data = Some(value.to_owned());
+        } else if line.is_empty() {
+            if event_name.as_deref() == Some("status") {
+                let data = data
+                    .as_deref()
+                    .expect("a named status event should contain data");
+                return serde_json::from_str(data).expect("status event data should be JSON");
+            }
+            event_name = None;
+            data = None;
+        }
+    }
 }
 
 fn response_body(response: &[u8]) -> &[u8] {
