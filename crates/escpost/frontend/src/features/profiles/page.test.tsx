@@ -4,7 +4,6 @@ import { useState } from "preact/hooks";
 import { AppDataProvider } from "../../app/data";
 import { ProfilesPage } from "./page";
 
-const status = { virtual_printer: null, jobs_processed: 0 };
 const profiles = [
   {
     id: "CALIBRATED", vendor: "Acme", model: "Pro 80", source: "calibrated",
@@ -65,7 +64,6 @@ afterEach(cleanup);
 describe("ProfilesPage", () => {
   test("renders the CLI profile columns, values, markers, legend, and mobile facts", async () => {
     renderPage(((input: RequestInfo | URL) => {
-      if (String(input) === "/api/status") return Promise.resolve(json(status));
       if (String(input) === "/api/profiles/list") return Promise.resolve(json({ profiles }));
       return Promise.resolve(json({ printers: [] }));
     }) as typeof globalThis.fetch);
@@ -95,7 +93,6 @@ describe("ProfilesPage", () => {
   test("distinguishes initial loading, empty catalog, initial API error, and successful retry", async () => {
     let resolveProfiles!: (response: Response) => void;
     renderPage(((input: RequestInfo | URL) => {
-      if (String(input) === "/api/status") return Promise.resolve(json(status));
       if (String(input) === "/api/profiles/list") return new Promise<Response>((resolve) => { resolveProfiles = resolve; });
       return Promise.resolve(json({ printers: [] }));
     }) as typeof globalThis.fetch);
@@ -109,7 +106,6 @@ describe("ProfilesPage", () => {
       json({ profiles: [profiles[0]] }),
     ];
     renderPage(((input: RequestInfo | URL) => {
-      if (String(input) === "/api/status") return Promise.resolve(json(status));
       if (String(input) === "/api/profiles/list") return Promise.resolve(responses.shift()!);
       return Promise.resolve(json({ printers: [] }));
     }) as typeof globalThis.fetch);
@@ -120,7 +116,6 @@ describe("ProfilesPage", () => {
 
   test("does not offer a refresh control for the compiled profile catalog", async () => {
     renderPage(((input: RequestInfo | URL) => {
-      if (String(input) === "/api/status") return Promise.resolve(json(status));
       if (String(input) === "/api/profiles/list") return Promise.resolve(json({ profiles: [profiles[0]] }));
       return Promise.resolve(json({ printers: [] }));
     }) as typeof globalThis.fetch);
@@ -131,7 +126,6 @@ describe("ProfilesPage", () => {
   test("keeps the successful unfiltered catalog for the workbench session", async () => {
     let profileRequests = 0;
     globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input) === "/api/status") return Promise.resolve(json(status));
       if (String(input) === "/api/profiles/list") {
         profileRequests += 1;
         return Promise.resolve(json({ profiles: [profiles[0]] }));
@@ -150,7 +144,6 @@ describe("ProfilesPage", () => {
   test("loads profiles once when the Profiles page is first visited", async () => {
     let profileRequests = 0;
     globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input) === "/api/status") return Promise.resolve(json(status));
       if (String(input) === "/api/profiles/list") {
         profileRequests += 1;
         return Promise.resolve(json({ profiles: [profiles[0]] }));

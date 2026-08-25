@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { ConnectionStatus } from "./connection-status";
 import { Navigation } from "./navigation";
+import { ServerStatus } from "./server-status";
 
 type AppShellProps = {
   children: ComponentChildren;
@@ -17,10 +17,10 @@ export function AppShell({ children }: AppShellProps) {
         <div class="mt-8">
           <Navigation />
         </div>
-        <ConnectionStatus />
+        <ServerStatus />
       </aside>
       <header class="border-b border-base-300 bg-base-100 px-4 py-2 lg:hidden">
-        <ConnectionStatus compact />
+        <ServerStatus compact />
       </header>
       <main class="flex min-h-screen p-4 pb-24 sm:p-8 sm:pb-24 lg:ml-72 lg:p-10">
         <div class="flex w-full flex-col">{children}</div>

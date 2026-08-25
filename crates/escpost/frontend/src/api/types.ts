@@ -16,9 +16,6 @@ export type ServerStatusSnapshot = {
   config_path: string;
 };
 
-// Kept only until Task 4 removes the polling client in the next commit.
-export type StatusResponse = ServerStatusSnapshot;
-
 export type UsbConnection = {
   type: "usb";
   vendor_id: number;

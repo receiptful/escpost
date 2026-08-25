@@ -6,7 +6,6 @@ import type {
   DiscoveryNetworksResponse,
   PrintersResponse,
   ProfilesResponse,
-  StatusResponse,
 } from "./types";
 
 export class ApiRequestError extends Error {
@@ -103,10 +102,6 @@ function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise
     body: JSON.stringify(body),
     signal,
   });
-}
-
-export function getStatus(signal?: AbortSignal) {
-  return requestJson<StatusResponse>("/api/status", signal);
 }
 
 export function getPrinters(transport?: "usb" | "network", signal?: AbortSignal) {

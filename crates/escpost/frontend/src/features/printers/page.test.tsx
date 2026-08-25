@@ -2,9 +2,10 @@ import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { AppDataProvider } from "../../app/data";
+import { ServerStatusProvider } from "../../app/server-status-data";
 import { PrintersPage } from "./page";
 
-const status = { virtual_printer: null, jobs_processed: 0, config_path: "/tmp/printers.toml" };
+const serverStatus = { virtual_printer: null, jobs_processed: 0, config_path: "/tmp/printers.toml" };
 const printer = {
   name: "Kitchen",
   transport: "network",
@@ -39,7 +40,6 @@ function json(body: unknown, status = 200) {
 // them, so a stub that leaves them out breaks tests that are about
 // something else entirely.
 function shared(url: string) {
-  if (url === "/api/status") return json(status);
   if (url === "/api/profiles/list") return json({ profiles: [] });
   if (url === "/api/printers/discover/networks") return json(networks);
   return null;
@@ -62,8 +62,10 @@ class FakeEventSource {
   static urls: string[] = [];
   private readonly listeners = new Map<string, ((event: Event) => void)[]>();
 
-  constructor(url: string) {
-    FakeEventSource.urls.push(url);
+  constructor(readonly url: string) {
+    if (url !== "/api/status/events") {
+      FakeEventSource.urls.push(url);
+    }
     FakeEventSource.instances.push(this);
   }
 
@@ -85,6 +87,10 @@ class FakeEventSource {
 // The stream the page most recently opened.
 function stream() {
   return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
+}
+
+function statusStream() {
+  return [...FakeEventSource.instances].reverse().find((source) => source.url === "/api/status/events")!;
 }
 
 function discovered(overrides: Record<string, unknown> = {}) {
@@ -126,7 +132,18 @@ const originalEventSource = globalThis.EventSource;
 
 function renderPage(fetch: typeof globalThis.fetch) {
   globalThis.fetch = fetch;
-  return render(<AppDataProvider><PrintersPage /></AppDataProvider>);
+  return renderWithData(<PrintersPage />);
+}
+
+function renderWithData(children: preact.ComponentChildren) {
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  const view = render(
+    <ServerStatusProvider>
+      <AppDataProvider>{children}</AppDataProvider>
+    </ServerStatusProvider>,
+  );
+  act(() => statusStream().emit("status", serverStatus));
+  return view;
 }
 
 // Stands in for the router, which unmounts a route component on navigation
@@ -606,7 +623,7 @@ describe("PrintersPage", () => {
     // about the scan has to outlive it too — a route component is unmounted
     // by the router, and coming back must not offer a printer that has just
     // been registered.
-    render(<AppDataProvider><Navigable /></AppDataProvider>);
+    renderWithData(<Navigable />);
     await act(async () => {});
 
     await scan("Scan");
@@ -629,7 +646,7 @@ describe("PrintersPage", () => {
     // the page: narrowing a sweep to one segment and then walking to another
     // route may not quietly widen it back to every network this machine is
     // on, which is what `Rescan` would then send.
-    render(<AppDataProvider><Navigable /></AppDataProvider>);
+    renderWithData(<Navigable />);
     await act(async () => {});
 
     expandOptions();
@@ -691,7 +708,7 @@ describe("PrintersPage", () => {
       }
       return Promise.resolve(shared(url) ?? json({ printers: [] }));
     }) as typeof globalThis.fetch;
-    render(<AppDataProvider><Navigable /></AppDataProvider>);
+    renderWithData(<Navigable />);
     await act(async () => {});
 
     expandOptions();

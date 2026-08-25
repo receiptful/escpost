@@ -6,25 +6,30 @@ import { App } from "../app";
 import type { DiscoveryQuery } from "../api/discovery-stream";
 import type { VirtualPrinterStatus } from "../api/types";
 import { AppDataProvider, useAppData } from "./data";
+import { ServerStatusProvider } from "./server-status-data";
 import { AppShell } from "./shell";
 
 const originalFetch = globalThis.fetch;
 const originalEventSource = globalThis.EventSource;
 
-// What `/api/status` reports for the virtual printer, read on every poll
-// rather than captured at render, so a test can move the printer between
-// `ready` and `receiving` and let the next poll pick the change up.
 let virtualPrinter: VirtualPrinterStatus | null = null;
 
 beforeEach(() => {
   virtualPrinter = null;
-  globalThis.fetch = ((input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
-    String(input) === "/api/status"
-      ? { virtual_printer: virtualPrinter, jobs_processed: 0 }
-      : String(input) === "/api/jobs/current"
-        ? { receiving: false, profile: "REFERENCE", error: null, job: null }
-        : { printers: [] },
-  ), { headers: { "content-type": "application/json" } }))) as unknown as typeof globalThis.fetch;
+  FakeEventSource.instances = [];
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/api/status") {
+      return Promise.reject(new Error("unexpected request to /api/status"));
+    }
+    const body = path === "/api/jobs/current"
+      ? { receiving: false, profile: "REFERENCE", error: null, job: null }
+      : path === "/api/profiles/list"
+        ? { profiles: [] }
+        : { printers: [] };
+    return Promise.resolve(new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+  }) as unknown as typeof globalThis.fetch;
 });
 
 afterEach(() => {
@@ -48,7 +53,13 @@ async function flush() {
 
 function renderAt(path: string) {
   locationStub(path);
-  return render(<App />);
+  const view = render(<App />);
+  act(() => FakeEventSource.forUrl("/api/status/events")?.emit("status", {
+    virtual_printer: virtualPrinter,
+    jobs_processed: 0,
+    config_path: "/tmp/printers.toml",
+  }));
+  return view;
 }
 
 // Neither Bun's runtime nor the happy-dom registrator provides a global
@@ -68,6 +79,14 @@ class FakeEventSource {
   }
 
   close() {}
+
+  static forUrl(url: string) {
+    return [...FakeEventSource.instances].reverse().find((source) => source.url === url);
+  }
+
+  static forUrlPrefix(prefix: string) {
+    return [...FakeEventSource.instances].reverse().find((source) => source.url.startsWith(prefix));
+  }
 
   emit(name: string, data: unknown) {
     const event = new MessageEvent(name, { data: JSON.stringify(data) });
@@ -90,12 +109,19 @@ function ScanProbe() {
 async function renderShell(path: string) {
   locationStub(path);
   const view = render(
-    <AppDataProvider>
-      <LocationProvider scope="/app">
-        <AppShell><ScanProbe /></AppShell>
-      </LocationProvider>
-    </AppDataProvider>,
+    <ServerStatusProvider>
+      <AppDataProvider>
+        <LocationProvider scope="/app">
+          <AppShell><ScanProbe /></AppShell>
+        </LocationProvider>
+      </AppDataProvider>
+    </ServerStatusProvider>,
   );
+  act(() => FakeEventSource.forUrl("/api/status/events")?.emit("status", {
+    virtual_printer: virtualPrinter,
+    jobs_processed: 0,
+    config_path: "/tmp/printers.toml",
+  }));
   await act(async () => { await flush(); });
   return view;
 }
@@ -105,7 +131,7 @@ async function startScanInShell(path: string) {
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   const view = await renderShell(path);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
-  return { view, stream: FakeEventSource.instances[0]! };
+  return { view, stream: FakeEventSource.forUrlPrefix("/api/printers/discover")! };
 }
 
 // Both responsive variants render the progress block, and every assertion
@@ -363,8 +389,16 @@ describe("App", () => {
   });
 
   test("an arriving print job shows in both responsive status variants on any page", async () => {
-    virtualPrinter = receiving;
-    await renderShell("/app/profiles");
+    FakeEventSource.instances = [];
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    renderAt("/app/profiles");
+    const statusStream = FakeEventSource.forUrl("/api/status/events");
+
+    act(() => statusStream?.emit("status", {
+      virtual_printer: receiving,
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    }));
 
     for (const region of jobRegions()) {
       expect(within(region).getByText("Incoming print job")).toBeTruthy();
@@ -374,6 +408,52 @@ describe("App", () => {
       // and the indeterminate bar already say.
       expect(region.textContent).toBe("Incoming print jobView");
     }
+  });
+
+  test("refreshes printer inventory once when server status reconnects", async () => {
+    FakeEventSource.instances = [];
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    let printerRequests = 0;
+    let resolveInitialInventory!: (response: Response) => void;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      if (String(input) === "/api/printers/list") {
+        printerRequests += 1;
+        if (printerRequests === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveInitialInventory = resolve;
+          });
+        }
+      }
+      return Promise.resolve(new Response(JSON.stringify({ printers: [] }), {
+        headers: { "content-type": "application/json" },
+      }));
+    }) as unknown as typeof globalThis.fetch;
+
+    renderAt("/app/profiles");
+    expect(printerRequests).toBe(1);
+    const statusStream = FakeEventSource.forUrl("/api/status/events");
+
+    act(() => statusStream?.emit("error", null));
+    act(() => statusStream?.emit("status", {
+      virtual_printer: ready,
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    }));
+    expect(printerRequests).toBe(1);
+
+    resolveInitialInventory(new Response(JSON.stringify({ printers: [] }), {
+      headers: { "content-type": "application/json" },
+    }));
+    await act(async () => { await flush(); });
+    expect(printerRequests).toBe(2);
+
+    act(() => statusStream?.emit("status", {
+      virtual_printer: ready,
+      jobs_processed: 1,
+      config_path: "/tmp/printers.toml",
+    }));
+    await act(async () => { await flush(); });
+    expect(printerRequests).toBe(2);
   });
 
   test("shows no job block while the virtual printer is idle or absent", async () => {
@@ -463,7 +543,7 @@ describe("App", () => {
       expect(announcer.textContent).toBe("Incoming print job");
     }
     // The pill itself must stay out of any live region, or a screen reader
-    // reads the whole shell again on every poll that changes nothing.
+    // reads the whole shell again on every unchanged status event.
     for (const region of jobRegions()) {
       expect(region.closest("[aria-live]")).toBeNull();
     }
@@ -476,31 +556,31 @@ describe("App", () => {
     }
   });
 
-  // The provider keeps the last status response while the server is
+  // The provider keeps the last status snapshot while the server is
   // unreachable, so an unguarded pill would go on claiming a job is arriving
   // at a server nobody can reach — and would say so directly above a status
   // block reading "Disconnected".
   test("stops claiming a job is arriving once the server is unreachable", async () => {
-    jest.useFakeTimers();
     virtualPrinter = receiving;
     await renderShell("/app/jobs");
     expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
 
-    globalThis.fetch = (() => Promise.reject(new TypeError("failed to fetch"))) as unknown as typeof globalThis.fetch;
-    await act(async () => { jest.advanceTimersByTime(2_000); await flush(); });
+    act(() => FakeEventSource.forUrl("/api/status/events")?.emit("error", null));
 
     expect(screen.getAllByText("Disconnected")).toHaveLength(2);
     expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
   });
 
   test("drops the job block and its announcement once the job stops arriving", async () => {
-    jest.useFakeTimers();
     virtualPrinter = receiving;
     const view = await renderShell("/app/jobs");
     expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
 
-    virtualPrinter = ready;
-    await act(async () => { jest.advanceTimersByTime(2_000); await flush(); });
+    act(() => FakeEventSource.forUrl("/api/status/events")?.emit("status", {
+      virtual_printer: ready,
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    }));
 
     expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
     for (const announcer of announcers(view.container)) {

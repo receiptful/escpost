@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { addPrinter, ApiRequestError, getPrinters, getStatus } from "./client";
+import { addPrinter, ApiRequestError, getPrinters } from "./client";
 
 const originalFetch = globalThis.fetch;
 
@@ -41,15 +41,6 @@ describe("API client", () => {
       expect(error).toBeInstanceOf(ApiRequestError);
       expect(error).toMatchObject({ status: 500, code: "printer_inventory_unavailable", message: "Printer inventory is unavailable." });
     }
-  });
-
-  test("rejects an HTML response instead of treating it as JSON", async () => {
-    globalThis.fetch = jest.fn(() => Promise.resolve(new Response("<html></html>", {
-      status: 200,
-      headers: { "content-type": "text/html" },
-    }))) as unknown as typeof globalThis.fetch;
-
-    await expect(getStatus()).rejects.toMatchObject({ code: "unexpected_response" });
   });
 
   test("addPrinter posts a JSON body and returns the parsed response", async () => {

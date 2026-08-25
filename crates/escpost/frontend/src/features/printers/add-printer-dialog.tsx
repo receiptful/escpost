@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { addPrinter } from "../../api/client";
 import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
 import { useAppData } from "../../app/data";
+import { useServerStatus } from "../../app/server-status-data";
 import { endpointHex, usbHex } from "./usb";
 
 // Copied from `printers::add::AMBIGUOUS_USB_WARNING`, which is the source of
@@ -105,7 +106,8 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
   onClose: () => void;
   onAdded: (name: string, connection: AddPrinterBody["connection"]) => void;
 }) {
-  const { printers, profiles, ensureProfiles, status } = useAppData();
+  const { printers, profiles, ensureProfiles } = useAppData();
+  const status = useServerStatus();
   const connection = printer?.connection ?? null;
   const usb = connection?.type === "usb" ? connection : null;
   const discoveredNetwork = connection?.type === "network" ? connection : null;
@@ -264,14 +266,14 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
             needs exactly the same explanation.
 
             The path degrades to an empty string when the configuration
-            cannot be resolved, which is deliberate in `GET /api/status`: a
+            cannot be resolved, which is deliberate in the server status snapshot: a
             configuration problem must not present as a server that is down.
             The clause that would name the file goes with it rather than
             dangling over an empty code span. */}
         <p class="text-xs text-base-content/60">
           You can only print to printers you have added to your list of configured printers
-          {status?.config_path
-            ? <>, stored in <span class="font-mono">{status.config_path}</span></>
+          {status.snapshot?.config_path
+            ? <>, stored in <span class="font-mono">{status.snapshot.config_path}</span></>
             : ""}.
         </p>
 

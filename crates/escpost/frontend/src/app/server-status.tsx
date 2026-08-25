@@ -1,13 +1,15 @@
 import { useAppData } from "./data";
+import { useServerStatus } from "./server-status-data";
 
 // The shell's only global status surface: server reachability, plus whatever
 // the application is busy with. Both activities outlive the page that shows
 // their detail — a scan keeps running after you navigate away, and a print
 // job arrives whichever page you happen to be on — so this is where their
 // progress stays visible.
-export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
-  const { connection, statusError, scan, status } = useAppData();
-  const label = connection === "ready" ? "Ready" : connection === "disconnected" ? "Disconnected" : "Checking…";
+export function ServerStatus({ compact = false }: { compact?: boolean }) {
+  const { scan } = useAppData();
+  const { phase, snapshot, error } = useServerStatus();
+  const label = phase === "ready" ? "Ready" : phase === "disconnected" ? "Disconnected" : "Checking…";
   const scanning = scan.phase === "running";
   // The status payload carries one bit for the virtual printer, and the
   // server holds it from the first byte of a job until its render has been
@@ -16,12 +18,12 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   // reports that same bit, so no source here can tell them apart. The wording
   // covers the whole span rather than naming a phase nothing can prove.
   //
-  // Gated on the connection because the last status response survives the
+  // Gated on the connection because the last status snapshot survives the
   // server going away: without this the pill would go on reporting a job
   // arriving at a server nobody can reach, directly above a status block
   // saying the opposite. A scan needs no such guard — it is driven by a
   // stream that fails on its own when the server goes.
-  const receivingJob = connection !== "disconnected" && status?.virtual_printer?.state === "receiving";
+  const receivingJob = phase === "ready" && snapshot.virtual_printer?.state === "receiving";
   const busy = scanning || receivingJob;
   const activities = [
     scanning ? "Scanning printers" : null,
@@ -97,7 +99,7 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
       >
         <p class="font-medium">Server status</p>
         <p class="mt-1 text-base-content/70">{label}</p>
-        {statusError && <p role="alert" class="mt-2 text-warning">Status check unavailable: {statusError.message}</p>}
+        {phase === "disconnected" && <p role="alert" class="mt-2 text-warning">Status check unavailable: {error.message}</p>}
       </section>
     </div>
   );

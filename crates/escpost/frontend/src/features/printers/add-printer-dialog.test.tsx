@@ -1,10 +1,33 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
 import { AppDataProvider } from "../../app/data";
+import { ServerStatusProvider } from "../../app/server-status-data";
 import { AddPrinterDialog } from "./add-printer-dialog";
 
 const status = { virtual_printer: null, jobs_processed: 0, config_path: "/home/dev/.config/escpost/printers.toml" };
+const originalEventSource = globalThis.EventSource;
+
+class FakeEventSource {
+  static instance: FakeEventSource | null = null;
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>();
+
+  constructor(readonly url: string) {
+    FakeEventSource.instance = this;
+  }
+
+  addEventListener(name: string, handler: (event: Event) => void) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]);
+  }
+
+  close() {}
+
+  emit(name: string, data: unknown) {
+    for (const handler of this.listeners.get(name) ?? []) {
+      handler(new MessageEvent(name, { data: JSON.stringify(data) }));
+    }
+  }
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -92,18 +115,12 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
   configPath?: string;
 } = {}) {
   const posted: AddPrinterBody[] = [];
-  // Every path the dialog asked for, so a test about something the server
-  // said can wait for the answer rather than for a repaint that may never
-  // come — an empty configuration path changes nothing on screen.
-  const requested: string[] = [];
   const onClose = jest.fn();
   const onAdded = jest.fn();
+  FakeEventSource.instance = null;
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
-    requested.push(path);
-    if (path === "/api/status") {
-      return Promise.resolve(json({ ...status, config_path: options.configPath ?? status.config_path }));
-    }
     if (path === "/api/profiles/list") {
       return Promise.resolve(json({ profiles: (options.profiles ?? []).map(catalogued) }));
     }
@@ -120,25 +137,36 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
     return Promise.reject(new Error(`unexpected request to ${path}`));
   }) as typeof globalThis.fetch;
   const view = render(
-    <AppDataProvider>
-      <AddPrinterDialog printer={printer} onClose={onClose} onAdded={onAdded} />
-    </AppDataProvider>,
+    <ServerStatusProvider>
+      <AppDataProvider>
+        <AddPrinterDialog printer={printer} onClose={onClose} onAdded={onAdded} />
+      </AppDataProvider>
+    </ServerStatusProvider>,
   );
+  act(() => FakeEventSource.instance?.emit("status", {
+    ...status,
+    config_path: options.configPath ?? status.config_path,
+  }));
   // Hands the open dialog another device, which is the usage the owner is not
   // supposed to have but which must not silently register the wrong route.
   const hand = (next: DiscoveredPrinter | null) => view.rerender(
-    <AppDataProvider>
-      <AddPrinterDialog printer={next} onClose={onClose} onAdded={onAdded} />
-    </AppDataProvider>,
+    <ServerStatusProvider>
+      <AppDataProvider>
+        <AddPrinterDialog printer={next} onClose={onClose} onAdded={onAdded} />
+      </AppDataProvider>
+    </ServerStatusProvider>,
   );
-  return { view, hand, posted, requested, onClose, onAdded };
+  return { view, hand, posted, onClose, onAdded };
 }
 
 function addButton() {
   return screen.getByRole("button", { name: "Add printer" });
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  globalThis.EventSource = originalEventSource;
+});
 
 describe("AddPrinterDialog", () => {
   test("refuses a name the configuration already holds, in the CLI's own words", async () => {
@@ -208,8 +236,7 @@ describe("AddPrinterDialog", () => {
   // is deliberate — a config problem must not present as "server down" — so
   // the clause that would name it goes rather than dangling.
   test("an unresolvable configuration drops the clause naming the file", async () => {
-    const { view, requested } = renderDialog(null, { configPath: "" });
-    await waitFor(() => expect(requested).toContain("/api/status"));
+    const { view } = renderDialog(null, { configPath: "" });
 
     const explanation = screen.getByText(/^You can only print to printers/);
     expect(explanation.textContent).toBe(

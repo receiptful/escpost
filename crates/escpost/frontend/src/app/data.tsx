@@ -1,11 +1,10 @@
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
-import { NetworkRequestError, getPrinters, getProfiles, getStatus } from "../api/client";
+import { getPrinters, getProfiles } from "../api/client";
 import { openDiscoveryStream } from "../api/discovery-stream";
 import type { DiscoveryQuery, UsbDiscoveryFailure } from "../api/discovery-stream";
-import type { AddPrinterBody, DiscoveredPrinter, PrintersResponse, ProfilesResponse, StatusResponse } from "../api/types";
+import type { AddPrinterBody, DiscoveredPrinter, PrintersResponse, ProfilesResponse } from "../api/types";
 
-type ConnectionState = "loading" | "ready" | "disconnected";
 type ResourcePhase = "loading" | "ready" | "refreshing" | "error";
 // `stopped` is its own phase rather than a flag on `done`, because it is a
 // different fact about the same results: a scan that was interrupted knows
@@ -43,9 +42,6 @@ export type ProfileResource = {
 };
 
 type AppData = {
-  connection: ConnectionState;
-  status: StatusResponse | null;
-  statusError: Error | null;
   printers: PrinterResource;
   // `force` queues a fresh request behind one already in flight instead of
   // joining it. A caller that has just *changed* the inventory needs an
@@ -127,9 +123,6 @@ function registeredAs(discovered: DiscoveredPrinter, connection: AddPrinterBody[
 }
 
 export function AppDataProvider({ children }: { children: preact.ComponentChildren }) {
-  const [connection, setConnection] = useState<ConnectionState>("loading");
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [statusError, setStatusError] = useState<Error | null>(null);
   const [printers, setPrinters] = useState<PrinterResource>(initialPrinters);
   const [profiles, setProfiles] = useState<ProfileResource>(initialProfiles);
   const [scan, setScan] = useState<ScanState>(initialScan);
@@ -418,46 +411,7 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
 
   useEffect(() => {
     let active = true;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     let printerTimeout: ReturnType<typeof setTimeout> | undefined;
-    let statusAbort: AbortController | null = null;
-    let disconnected = false;
-
-    const poll = () => {
-      statusAbort = new AbortController();
-      void getStatus(statusAbort.signal)
-        .then((nextStatus) => {
-          if (!active) {
-            return;
-          }
-          setStatus(nextStatus);
-          setStatusError(null);
-          setConnection("ready");
-          if (disconnected) {
-            disconnected = false;
-            // Reconnecting is the same hazard as registering a printer: an
-            // inventory request issued while the server was unreachable
-            // cannot answer for the server that just came back.
-            void refreshPrinters({ force: true });
-          }
-        })
-        .catch((error: unknown) => {
-          if (!active || statusAbort?.signal.aborted) {
-            return;
-          }
-          const reported = error instanceof Error ? error : new Error("Status is unavailable.");
-          setStatusError(reported);
-          if (error instanceof NetworkRequestError) {
-            disconnected = true;
-            setConnection("disconnected");
-          }
-        })
-        .finally(() => {
-          if (active) {
-            timeout = setTimeout(poll, 2_000);
-          }
-        });
-    };
 
     // A poll against a dead printer can take several seconds now that the
     // backend retries before confirming it unreachable, so the settle-then-
@@ -497,29 +451,21 @@ export function AppDataProvider({ children }: { children: preact.ComponentChildr
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     pollPrinters();
-    poll();
     return () => {
       active = false;
-      if (timeout !== undefined) {
-        clearTimeout(timeout);
-      }
       if (printerTimeout !== undefined) {
         clearTimeout(printerTimeout);
       }
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      statusAbort?.abort();
       printerAbort.current?.abort();
       printerRefreshPending.current = null;
       profileAbort.current?.abort();
     };
-  }, [refreshPrinters, refreshProfiles]);
+  }, [refreshPrinters]);
 
   return (
     <AppDataContext.Provider
       value={{
-        connection,
-        status,
-        statusError,
         printers,
         refreshPrinters,
         profiles,
