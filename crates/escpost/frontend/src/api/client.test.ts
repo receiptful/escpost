@@ -43,6 +43,22 @@ describe("API client", () => {
     }
   });
 
+  test("rejects an HTML response with an unexpected-response API error", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(new Response("<html></html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    }))) as unknown as typeof globalThis.fetch;
+
+    const failure = await getPrinters().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ApiRequestError);
+    expect(failure).toMatchObject({
+      status: 200,
+      code: "unexpected_response",
+      message: "The server returned an unexpected response.",
+    });
+  });
+
   test("addPrinter posts a JSON body and returns the parsed response", async () => {
     const fetch = jest.fn(() => Promise.resolve(json({
       name: "kitchen",
