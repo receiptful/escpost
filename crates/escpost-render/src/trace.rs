@@ -80,6 +80,8 @@ pub enum DecodedCommand {
     RasterImage {
         width_dots: u32,
         height_dots: u32,
+        horizontal_scale: u8,
+        vertical_scale: u8,
     },
     /// A raster image the printer drops, because the line already has data.
     SkippedRasterImage,
@@ -363,11 +365,20 @@ fn describe_raster_image(bytes: &[u8]) -> Option<DecodedCommand> {
     if bytes.len() == 3 {
         return Some(DecodedCommand::SkippedRasterImage);
     }
+    let (horizontal_scale, vertical_scale) = match bytes.get(3).copied()? {
+        0 | 48 => (1, 1),
+        1 | 49 => (2, 1),
+        2 | 50 => (1, 2),
+        3 | 51 => (2, 2),
+        _ => return None,
+    };
     let width_bytes = u16::from_le_bytes([bytes.get(4).copied()?, bytes.get(5).copied()?]);
     let height_dots = u16::from_le_bytes([bytes.get(6).copied()?, bytes.get(7).copied()?]);
     Some(DecodedCommand::RasterImage {
         width_dots: u32::from(width_bytes).saturating_mul(8),
         height_dots: u32::from(height_dots),
+        horizontal_scale,
+        vertical_scale,
     })
 }
 
@@ -788,7 +799,18 @@ mod describe_tests {
             describe(&[0x1d, b'v', b'0', 0, 2, 0, 3, 0, 0, 0, 0, 0, 0, 0]),
             DecodedCommand::RasterImage {
                 width_dots: 16,
-                height_dots: 3
+                height_dots: 3,
+                horizontal_scale: 1,
+                vertical_scale: 1
+            }
+        );
+        assert_eq!(
+            describe(&[0x1d, b'v', b'0', 3, 1, 0, 1, 0, 0]),
+            DecodedCommand::RasterImage {
+                width_dots: 8,
+                height_dots: 1,
+                horizontal_scale: 2,
+                vertical_scale: 2
             }
         );
     }

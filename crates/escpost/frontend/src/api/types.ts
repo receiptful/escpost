@@ -147,6 +147,12 @@ export type JobCommand = {
   byte_end: number;
   name: string;
   detail: string;
+  /** The bytes that name the command, as uppercase hexadecimal. */
+  code_bytes: string;
+  /** The first parameter bytes, as uppercase hexadecimal. */
+  capped_parameter_bytes: string;
+  /** How many parameter bytes the command has in total. */
+  total_parameter_bytes: number;
   paint_lifecycle?: "buffered" | "committed";
   annotation?: { label: string; content: string };
   effects: CommandEffect[];

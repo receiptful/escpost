@@ -1,9 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import type { JobCommand } from "../../api/types";
-import { commandGroupView, groupAdjacentCommands, motionTerminals } from "./model";
+import {
+  PARAMETER_BYTES_SHOWN,
+  commandGroupView,
+  groupAdjacentCommands,
+  motionTerminals,
+} from "./model";
 
 function command(overrides: Partial<JobCommand> & Pick<JobCommand, "byte_start" | "byte_end" | "name">): JobCommand {
-  return { detail: overrides.name, effects: [], ...overrides };
+  return {
+    detail: overrides.name,
+    code_bytes: "",
+    capped_parameter_bytes: "",
+    total_parameter_bytes: 0,
+    effects: [],
+    ...overrides,
+  };
 }
 
 describe("job visualization model", () => {
@@ -26,6 +38,67 @@ describe("job visualization model", () => {
     ]);
     expect(commandGroupView(groups[0]).detail).toBe("Hi");
     expect(commandGroupView(groups[2]).detail).toBe("2x Print and line feed");
+  });
+
+  test("joins the parameter bytes of a grouped text run", () => {
+    const groups = groupAdjacentCommands([
+      command({
+        byte_start: 0,
+        byte_end: 1,
+        name: "Text",
+        detail: "H",
+        capped_parameter_bytes: "48",
+        total_parameter_bytes: 1,
+      }),
+      command({
+        byte_start: 1,
+        byte_end: 2,
+        name: "Text",
+        detail: "i",
+        capped_parameter_bytes: "69",
+        total_parameter_bytes: 1,
+      }),
+    ], 1);
+    const view = commandGroupView(groups[0]);
+
+    expect(view.codeBytes).toBe("");
+    expect(view.cappedParameterBytes).toBe("48 69");
+    expect(view.totalParameterBytes).toBe(2);
+  });
+
+  test("keeps one set of bytes for a command that is not grouped", () => {
+    const groups = groupAdjacentCommands([
+      command({
+        byte_start: 0,
+        byte_end: 3,
+        name: "ESC a",
+        code_bytes: "1B 61",
+        capped_parameter_bytes: "01",
+        total_parameter_bytes: 1,
+      }),
+    ], 1);
+    const view = commandGroupView(groups[0]);
+
+    expect(view.codeBytes).toBe("1B 61");
+    expect(view.cappedParameterBytes).toBe("01");
+    expect(view.totalParameterBytes).toBe(1);
+  });
+
+  test("stops joining bytes once the shown parameters are complete", () => {
+    const letters = Array.from({ length: 15 }, (_, index) =>
+      command({
+        byte_start: index,
+        byte_end: index + 1,
+        name: "Text",
+        detail: "a",
+        capped_parameter_bytes: "61",
+        total_parameter_bytes: 1,
+      }));
+    const groups = groupAdjacentCommands(letters, 1);
+    const view = commandGroupView(groups[0]);
+
+    expect(view.cappedParameterBytes.split(" ")).toHaveLength(PARAMETER_BYTES_SHOWN);
+    expect(view.totalParameterBytes).toBe(15);
   });
 
   test("derives line-feed terminals from preceding paint facts", () => {

@@ -13,11 +13,17 @@ export type GroupedJob = {
   groups: CommandGroup[];
 };
 
+/** How many parameter bytes a command shows before it counts the rest. */
+export const PARAMETER_BYTES_SHOWN = 12;
+
 export type CommandGroupView = {
   name: string;
   byteStart: number;
   byteEnd: number;
   detail: string;
+  codeBytes: string;
+  cappedParameterBytes: string;
+  totalParameterBytes: number;
   annotation?: JobCommand["annotation"];
   paintLifecycle?: "buffered" | "committed";
   effects: CommandEffect[];
@@ -61,10 +67,20 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
   const last = group.commands.at(-1) ?? first;
   const text = first.name === "Text";
   const lineFeeds = first.name === "LF" && group.commands.length > 1;
+  const shown = group.commands
+    .flatMap((command) => command.capped_parameter_bytes.split(" "))
+    .filter((byte) => byte !== "")
+    .slice(0, PARAMETER_BYTES_SHOWN);
   return {
     name: first.name,
     byteStart: first.byte_start,
     byteEnd: last.byte_end,
+    codeBytes: first.code_bytes,
+    cappedParameterBytes: shown.join(" "),
+    totalParameterBytes: group.commands.reduce(
+      (total, command) => total + command.total_parameter_bytes,
+      0,
+    ),
     detail: text
       ? group.commands.map((command) => command.detail).join("")
       : lineFeeds

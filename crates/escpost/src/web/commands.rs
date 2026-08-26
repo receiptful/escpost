@@ -133,7 +133,12 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
                     "cleared".to_owned()
                 } else {
                     format!(
-                        "column {}",
+                        "{} {}",
+                        if columns.len() == 1 {
+                            "column"
+                        } else {
+                            "columns"
+                        },
                         columns
                             .iter()
                             .map(u8::to_string)
@@ -356,9 +361,14 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::RasterImage {
             width_dots,
             height_dots,
+            horizontal_scale,
+            vertical_scale,
         } => (
             "GS v 0",
-            format!("Print raster bit image · {width_dots} × {height_dots} dots"),
+            format!(
+                "Print raster bit image · {width_dots} × {height_dots} dots{}",
+                magnification(*horizontal_scale, *vertical_scale)
+            ),
             3,
         ),
         DecodedCommand::SkippedRasterImage => (
@@ -391,6 +401,21 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         detail,
         code_length,
     }
+}
+
+/// Names the magnification of a raster image, which prints it larger.
+fn magnification(horizontal_scale: u8, vertical_scale: u8) -> String {
+    let mut scales = Vec::new();
+    if horizontal_scale > 1 {
+        scales.push("double-width");
+    }
+    if vertical_scale > 1 {
+        scales.push("double-height");
+    }
+    if scales.is_empty() {
+        return String::new();
+    }
+    format!(" · {}", scales.join(" · "))
 }
 
 fn switch(on: bool) -> &'static str {
@@ -668,6 +693,46 @@ mod tests {
     }
 
     #[test]
+    fn a_raster_image_says_when_the_printer_magnifies_it() {
+        assert_eq!(
+            described(DecodedCommand::RasterImage {
+                width_dots: 32,
+                height_dots: 22,
+                horizontal_scale: 1,
+                vertical_scale: 1
+            })
+            .1,
+            "Print raster bit image · 32 × 22 dots"
+        );
+        assert_eq!(
+            described(DecodedCommand::RasterImage {
+                width_dots: 32,
+                height_dots: 22,
+                horizontal_scale: 2,
+                vertical_scale: 2
+            })
+            .1,
+            "Print raster bit image · 32 × 22 dots · double-width · double-height"
+        );
+    }
+
+    #[test]
+    fn tab_positions_agree_in_number_with_the_columns_they_set() {
+        assert_eq!(
+            described(DecodedCommand::SetHorizontalTabPositions(vec![8])).1,
+            "Set horizontal tab positions · column 8"
+        );
+        assert_eq!(
+            described(DecodedCommand::SetHorizontalTabPositions(vec![8, 16])).1,
+            "Set horizontal tab positions · columns 8, 16"
+        );
+        assert_eq!(
+            described(DecodedCommand::SetHorizontalTabPositions(vec![])).1,
+            "Set horizontal tab positions · cleared"
+        );
+    }
+
+    #[test]
     fn a_cut_says_its_shape_and_any_feed_before_it() {
         assert_eq!(
             described(DecodedCommand::CutPaper {
@@ -815,6 +880,8 @@ mod tests {
             command: DecodedCommand::RasterImage {
                 width_dots: 16,
                 height_dots: 128,
+                horizontal_scale: 1,
+                vertical_scale: 1,
             },
             paint_lifecycle: None,
             effects: vec![],

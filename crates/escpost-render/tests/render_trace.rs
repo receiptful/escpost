@@ -162,7 +162,9 @@ fn raster_image_trace_uses_the_complete_logical_image_area() {
         command.command,
         DecodedCommand::RasterImage {
             width_dots: 8,
-            height_dots: 2
+            height_dots: 2,
+            horizontal_scale: 1,
+            vertical_scale: 1
         }
     );
     let [Effect::Paint { bounds }] = command.effects.as_slice() else {

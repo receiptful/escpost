@@ -1,5 +1,17 @@
 import { copyText, webUrl } from "./annotation";
-import { commandGroupView, groupEffectSummary, type CommandGroup } from "./model";
+import {
+  commandGroupView,
+  groupEffectSummary,
+  type CommandGroup,
+  type CommandGroupView,
+} from "./model";
+
+/** Shows the parameter bytes, and counts them when they do not all fit. */
+function parameterBytes(view: CommandGroupView): string {
+  const shown = view.cappedParameterBytes.split(" ").length;
+  if (shown >= view.totalParameterBytes) return view.cappedParameterBytes;
+  return `${view.cappedParameterBytes} … (${view.totalParameterBytes} bytes)`;
+}
 
 type Props = {
   groups: CommandGroup[];
@@ -54,6 +66,24 @@ export function CommandPanel(props: Props) {
                   <span class="font-mono text-xs text-base-content/55">{view.byteStart}..{view.byteEnd}</span>
                 </span>
                 <span class="mt-1 block break-words text-sm">{view.detail}</span>
+                <span class="mt-2 flex flex-wrap items-start gap-1 font-mono text-xs">
+                  {view.codeBytes && (
+                    <span
+                      aria-label="Command bytes"
+                      class="rounded border border-base-content/30 px-1.5 py-0.5 font-bold"
+                    >
+                      {view.codeBytes}
+                    </span>
+                  )}
+                  {view.cappedParameterBytes && (
+                    <span
+                      aria-label="Parameter bytes"
+                      class="min-w-0 break-all rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
+                    >
+                      {parameterBytes(view)}
+                    </span>
+                  )}
+                </span>
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>
                 )}
