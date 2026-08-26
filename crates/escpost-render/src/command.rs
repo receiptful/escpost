@@ -225,6 +225,16 @@ pub(crate) fn execute_esc_command<S: RenderSurface, C: CommandSink>(
             // Every ESC/POS character table shares printable ASCII. Remember a
             // known table even when its extended or multibyte range is outside
             // v1 so later ASCII can still be rendered faithfully.
+            if C::ENABLED {
+                let encoding = state.code_page_encoding(code_page).map(str::to_owned);
+                command_sink.describe_command(
+                    DecodedCommand::SelectCodeTable {
+                        table: code_page,
+                        encoding,
+                    },
+                    vec![],
+                );
+            }
             state.select_code_page(code_page);
             Ok(3)
         }
@@ -444,13 +454,7 @@ pub(crate) fn execute_gs_command<S: RenderSurface, C: CommandSink>(
         }
         0x6b => execute_gs_k(data, offset, state),
         0x56 => execute_gs_v(data, offset, state),
-        0x76 => {
-            let command_length = execute_gs_v0(data, offset, state)?;
-            if C::ENABLED && command_length > 3 {
-                command_sink.describe_command(DecodedCommand::RasterImage, vec![]);
-            }
-            Ok(command_length)
-        }
+        0x76 => execute_gs_v0(data, offset, state),
         0x77 => {
             let Some(width) = data.get(2).copied() else {
                 return Err(RenderError::TruncatedCommand {

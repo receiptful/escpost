@@ -18,7 +18,7 @@ pub use error::{LimitKind, RenderError, RenderWarning};
 pub use surface::MonoSurface;
 pub use trace::{
     CommandCode, CommandTrace, DecodedCommand, Effect, Justification, PaintLifecycle, PaintRegion,
-    Position, SheetTrace, StateChange, Trace,
+    Position, SheetTrace, StateChange, TRACED_COMMAND_BYTES, Trace,
 };
 
 use command::{execute_esc_command, execute_gs_command};
@@ -247,11 +247,7 @@ fn render_surfaces_with_sink<S: RenderSurface, C: CommandSink>(
         if C::ENABLED {
             state.end_command();
             state.begin_command(offset);
-            command_sink.begin_command(
-                state.trace_sheet_index(),
-                offset,
-                trace::fallback_command(&data[offset..]),
-            );
+            command_sink.begin_command(state.trace_sheet_index(), offset);
         }
         if byte != 0x0a {
             state.clear_pending_gs_v_0_lf();
@@ -281,8 +277,8 @@ fn render_surfaces_with_sink<S: RenderSurface, C: CommandSink>(
             byte => return Err(RenderError::UnsupportedDataByte { byte, offset }),
         };
         if C::ENABLED {
-            command_sink
-                .finish_command(offset + command_length, state.trace_paint_lifecycle(offset));
+            let end = (offset + command_length).min(data.len());
+            command_sink.finish_command(&data[offset..end], state.trace_paint_lifecycle(offset));
         }
         offset += command_length;
     }

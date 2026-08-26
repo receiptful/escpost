@@ -115,7 +115,7 @@ fn command_responses(commands: Vec<CommandTrace>) -> Vec<CommandResponse> {
                     "Print QR code · Function 181".to_owned(),
                     Some(qr_annotation(&data)),
                 ),
-                DecodedCommand::Unmodeled(code) => {
+                DecodedCommand::Unknown(code) => {
                     let (name, detail) = unmodeled_command(code);
                     (name, detail, None)
                 }
