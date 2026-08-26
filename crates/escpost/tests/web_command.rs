@@ -162,6 +162,12 @@ profile = "REFERENCE"
     );
     let printers: serde_json::Value = serde_json::from_slice(response_body(&printers))
         .expect("the printer response should be JSON");
+    assert_eq!(printers["warning"], serde_json::Value::Null);
+    assert!(
+        printers["updated_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z'))
+    );
     assert_eq!(printers["printers"].as_array().map(Vec::len), Some(1));
     assert_eq!(printers["printers"][0]["name"], "kitchen");
     assert_eq!(printers["printers"][0]["transport"], "network");
@@ -176,7 +182,13 @@ profile = "REFERENCE"
     let network_printers: serde_json::Value =
         serde_json::from_slice(response_body(&network_printers))
             .expect("the filtered printer response should be JSON");
-    assert_eq!(network_printers, printers);
+    assert_eq!(network_printers["warning"], serde_json::Value::Null);
+    assert!(
+        network_printers["updated_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z'))
+    );
+    assert_eq!(network_printers["printers"], printers["printers"]);
 
     assert_eq!(
         response_status(&invalid_transport),

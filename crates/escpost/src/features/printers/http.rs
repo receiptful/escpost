@@ -4,11 +4,13 @@ use axum::http::header;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use time::format_description::well_known::Rfc3339;
 
 use crate::web::WebState;
 use crate::web::error::ApiError;
 
 use super::list::{self, ConnectionFacts, Printer};
+use super::monitor;
 use super::{Availability, Transport};
 
 pub(crate) fn router() -> Router<WebState> {
@@ -45,26 +47,16 @@ async fn list_printers(
     ApiError,
 > {
     let Query(query) = query.map_err(|_| ApiError::invalid_query())?;
-    let response = list::execute_with_observer(
-        list::Request {
-            config: None,
-            transport: query.transport.map(transport),
-        },
-        |_| {},
-    )
+    let snapshot = monitor::collect_once(list::Request {
+        config: None,
+        transport: query.transport.map(transport),
+    })
     .await
     .map_err(|_| ApiError::printer_inventory_failure())?;
+    let response = ListResponse::try_from(snapshot)
+        .expect("a UTC inventory snapshot should always format as RFC 3339");
 
-    Ok((
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(ListResponse {
-            printers: response
-                .printers
-                .into_iter()
-                .map(PrinterResponse::from)
-                .collect(),
-        }),
-    ))
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(response)))
 }
 
 fn transport(transport: HttpTransport) -> Transport {
@@ -76,7 +68,25 @@ fn transport(transport: HttpTransport) -> Transport {
 
 #[derive(Serialize)]
 struct ListResponse {
+    updated_at: String,
+    warning: Option<String>,
     printers: Vec<PrinterResponse>,
+}
+
+impl TryFrom<monitor::Snapshot> for ListResponse {
+    type Error = time::error::Format;
+
+    fn try_from(snapshot: monitor::Snapshot) -> Result<Self, Self::Error> {
+        Ok(Self {
+            updated_at: snapshot.updated_at.format(&Rfc3339)?,
+            warning: snapshot.warning,
+            printers: snapshot
+                .printers
+                .into_iter()
+                .map(PrinterResponse::from)
+                .collect(),
+        })
+    }
 }
 
 #[derive(Serialize)]
