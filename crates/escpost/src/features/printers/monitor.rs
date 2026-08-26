@@ -142,7 +142,9 @@ impl PrinterMonitor {
     async fn run(self, generation: u64, refresh: Arc<Notify>) {
         let mut forced = true;
         loop {
-            self.collect_and_publish(generation, forced).await;
+            if !self.collect_and_publish(generation, forced).await {
+                return;
+            }
             forced = false;
             tokio::select! {
                 _ = tokio::time::sleep(COLLECTION_INTERVAL) => {}
@@ -151,8 +153,19 @@ impl PrinterMonitor {
         }
     }
 
-    async fn collect_and_publish(&self, generation: u64, forced: bool) {
+    async fn collect_and_publish(&self, generation: u64, forced: bool) -> bool {
         let _collection = self.inner.collection.lock().await;
+        let active = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .expect("the printer monitor state mutex should not be poisoned");
+            state.subscribers != 0 && state.generation == generation
+        };
+        if !active {
+            return false;
+        }
         let response = self
             .inner
             .collector
@@ -180,12 +193,13 @@ impl PrinterMonitor {
             .lock()
             .expect("the printer monitor state mutex should not be poisoned");
         if state.subscribers == 0 || state.generation != generation {
-            return;
+            return false;
         }
         let previous = self.inner.snapshots.borrow().clone();
         if should_publish(previous.as_ref(), &snapshot, forced) {
             self.inner.snapshots.send_replace(Some(snapshot));
         }
+        true
     }
 }
 
@@ -369,6 +383,91 @@ mod tests {
         assert_eq!(collector.maximum_active(), 1);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_queued_refresh_does_not_start_another_cycle_after_the_final_drop() {
+        let collector = BlockingSecondCollector::new([
+            success("retained"),
+            success("stale"),
+            success("unexpected"),
+        ]);
+        let monitor = test_monitor(collector.clone());
+
+        let mut first = monitor.subscribe();
+        assert_eq!(first.next().await.unwrap().printers[0].name, "retained");
+        drop(first);
+
+        let abandoned = monitor.subscribe();
+        wait_for_blocked_collector(&collector).await;
+        monitor.request_refresh();
+        drop(abandoned);
+        collector.release();
+
+        let extra_cycle = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            wait_for_collector_call(&collector, 3),
+        )
+        .await
+        .is_ok();
+
+        assert!(!extra_cycle);
+        assert_eq!(collector.calls(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_invalidated_generation_waiting_for_the_collection_gate_does_not_collect() {
+        let collector = ScriptedCollector::new([success("unexpected")]);
+        let monitor = test_monitor(collector.clone());
+        let gate = monitor.inner.collection.lock().await;
+        {
+            let mut state = monitor
+                .inner
+                .state
+                .lock()
+                .expect("the printer monitor state mutex should not be poisoned");
+            state.subscribers = 1;
+            state.generation = 1;
+        }
+        let waiting_monitor = monitor.clone();
+        let waiting = tokio::spawn(async move {
+            let _ = waiting_monitor.collect_and_publish(1, true).await;
+        });
+
+        tokio::task::yield_now().await;
+        {
+            let mut state = monitor
+                .inner
+                .state
+                .lock()
+                .expect("the printer monitor state mutex should not be poisoned");
+            state.subscribers = 0;
+            state.generation = 2;
+        }
+        drop(gate);
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .expect("the invalidated waiting collection should finish")
+            .expect("the waiting collection task should not panic");
+
+        assert_eq!(collector.calls(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn final_drop_cancels_a_generation_waiting_for_the_collection_gate() {
+        let collector = ScriptedCollector::new([success("unexpected")]);
+        let monitor = test_monitor(collector.clone());
+        let gate = monitor.inner.collection.lock().await;
+        let subscription = monitor.subscribe();
+
+        tokio::task::yield_now().await;
+        drop(subscription);
+        drop(gate);
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(collector.calls(), 0);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_stale_generation_is_fenced_from_publication() {
         let monitor = test_monitor(ScriptedCollector::new([success("stale")]));
@@ -390,7 +489,7 @@ mod tests {
             state.generation = 2;
         }
 
-        monitor.collect_and_publish(1, true).await;
+        let _ = monitor.collect_and_publish(1, true).await;
 
         assert!(!receiver.has_changed().unwrap());
         assert_eq!(
@@ -613,6 +712,16 @@ mod tests {
         }
     }
 
+    async fn wait_for_collector_call(collector: &BlockingSecondCollector, expected: usize) {
+        loop {
+            let started = collector.started.notified();
+            if collector.calls() >= expected {
+                return;
+            }
+            started.await;
+        }
+    }
+
     trait CallCounter {
         fn calls(&self) -> usize;
     }
@@ -730,6 +839,7 @@ mod tests {
         calls: Arc<AtomicUsize>,
         active: Arc<AtomicUsize>,
         maximum_active: Arc<AtomicUsize>,
+        started: Arc<Notify>,
         blocked: Arc<Notify>,
         overlap: Arc<Notify>,
         release: Arc<(Mutex<bool>, Condvar)>,
@@ -742,6 +852,7 @@ mod tests {
                 calls: Arc::new(AtomicUsize::new(0)),
                 active: Arc::new(AtomicUsize::new(0)),
                 maximum_active: Arc::new(AtomicUsize::new(0)),
+                started: Arc::new(Notify::new()),
                 blocked: Arc::new(Notify::new()),
                 overlap: Arc::new(Notify::new()),
                 release: Arc::new((Mutex::new(false), Condvar::new())),
@@ -770,6 +881,7 @@ mod tests {
     impl Collector for BlockingSecondCollector {
         fn collect(&self, _request: list::Request) -> CollectionFuture {
             let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            self.started.notify_waiters();
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.maximum_active.fetch_max(active, Ordering::SeqCst);
             if active > 1 {
