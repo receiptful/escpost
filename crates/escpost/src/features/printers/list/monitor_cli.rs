@@ -158,7 +158,7 @@ fn render_frame(snapshot: &Snapshot, transport: Option<Transport>) -> String {
     );
 
     if let Some(warning) = &snapshot.warning {
-        frame.push_str(&format!("Warning: {warning}\n"));
+        frame.push_str(&format!("Warning: {}\n", escape_terminal_controls(warning)));
     }
 
     let printers = snapshot
@@ -208,16 +208,7 @@ fn format_printer_row(printer: &Printer) -> String {
 }
 
 fn format_cell(value: &str, width: usize) -> String {
-    let sanitized = value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
+    let sanitized = value.chars().map(replace_control).collect::<String>();
     let cells = display_width(&sanitized);
     if cells <= width {
         return format!("{sanitized}{:width$}", "", width = width - cells);
@@ -240,6 +231,28 @@ fn format_cell(value: &str, width: usize) -> String {
         "",
         width = width - display_width(&result)
     )
+}
+
+fn replace_control(character: char) -> char {
+    if character.is_control() {
+        ' '
+    } else {
+        character
+    }
+}
+
+fn escape_terminal_controls(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '\n' => "\\n".to_owned(),
+            '\r' => "\\r".to_owned(),
+            '\t' => "\\t".to_owned(),
+            '\x1b' => "\\x1b".to_owned(),
+            character if character.is_control() => format!("\\x{:02x}", character as u32),
+            character => character.to_string(),
+        })
+        .collect()
 }
 
 fn display_width(value: &str) -> usize {
@@ -324,6 +337,21 @@ mod tests {
         );
 
         assert!(frame.contains("Warning: configuration is invalid"));
+    }
+
+    #[test]
+    fn frame_escapes_warning_controls_without_creating_terminal_rows() {
+        let frame = render_frame(
+            &Snapshot {
+                warning: Some("config\npath\r\ttab\x1b[2J\u{0007}".to_owned()),
+                ..snapshot()
+            },
+            None,
+        );
+
+        assert!(frame.contains("Warning: config\\npath\\r\\ttab\\x1b[2J\\x07"));
+        assert!(!frame.contains("Warning: config\npath"));
+        assert!(!frame.contains('\x1b'));
     }
 
     #[test]
