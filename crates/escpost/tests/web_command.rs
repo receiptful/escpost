@@ -759,7 +759,10 @@ fn web_mode_exposes_experimental_command_traces() {
     assert_eq!(commands[0]["byte_start"], 0);
     assert_eq!(commands[0]["byte_end"], 3);
     assert_eq!(commands[0]["name"], "ESC a");
-    assert_eq!(commands[0]["detail"], "Set justification: center");
+    assert_eq!(commands[0]["detail"], "Select justification · centered");
+    assert_eq!(commands[0]["code_bytes"], "1B 61");
+    assert_eq!(commands[0]["capped_parameter_bytes"], "01");
+    assert_eq!(commands[0]["total_parameter_bytes"], 1);
     assert!(commands[0].get("paint_lifecycle").is_none());
     assert_eq!(commands[0]["effects"][0]["type"], "state_change");
     assert_eq!(commands[1]["name"], "Text");
@@ -772,14 +775,17 @@ fn web_mode_exposes_experimental_command_traces() {
     assert_eq!(bounds["height"], 24);
     assert_eq!(commands[2]["name"], "LF");
     assert_eq!(commands[2]["effects"][0]["type"], "motion");
-    assert_eq!(commands[3]["name"], "GS (");
+    assert_eq!(commands[3]["name"], "GS ( k");
     assert_eq!(
         commands[3]["detail"],
-        "Parsed command · annotations not yet modeled"
+        "QR Code: Store the data in the symbol storage area · Function 180 · 20 bytes"
     );
     assert_eq!(commands[3]["effects"].as_array().unwrap().len(), 0);
     assert_eq!(commands[4]["name"], "GS ( k");
-    assert_eq!(commands[4]["detail"], "Print QR code · Function 181");
+    assert_eq!(
+        commands[4]["detail"],
+        "QR Code: Print the symbol data in the symbol storage area · Function 181"
+    );
     assert_eq!(commands[4]["paint_lifecycle"], "committed");
     assert_eq!(commands[4]["annotation"]["label"], "https://example.test");
     assert_eq!(commands[4]["annotation"]["content"], "https://example.test");
