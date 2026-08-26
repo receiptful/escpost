@@ -12,7 +12,7 @@ export function PrintersPage() {
   // provider because this component does not survive a route change while the
   // scan does — `Rescan` after a detour must repeat the sweep that was
   // configured, not the default one.
-  const { scan, scanQuery, startScan, cancelScan, refreshPrinters, flashPrinter, markScanResultConfigured } = useAppData();
+  const { scan, scanQuery, startScan, cancelScan, markScanResultConfigured } = useAppData();
   const [optionsOpen, setOptionsOpen] = useState(false);
   // `null` while nothing is being registered, and `{ printer: null }` for the
   // manual dialog — `AddPrinterDialog` closes the native element in its
@@ -36,18 +36,6 @@ export function PrintersPage() {
     // printer this machine has configured. The scan owns that fact, so a
     // route change cannot undo it.
     markScanResultConfigured(name, connection);
-    // Forced, because the inventory poll that may be in flight was issued
-    // before this printer existed and cannot report it.
-    //
-    // The flash is raised once that has landed rather than now: a forced
-    // refresh waits for the in-flight poll and then makes a request of its
-    // own, and a poll can take seconds when the backend is confirming a
-    // printer unreachable. Raised now, the window could expire before the row
-    // it belongs to existed. A printer that was just registered has no
-    // availability transition to diff against — it is absent from the
-    // previous inventory and present in the next — so this is the only place
-    // the flash can come from.
-    void refreshPrinters({ force: true }).then(() => flashPrinter(name, "found"));
   };
 
   return (

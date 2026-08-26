@@ -2,6 +2,7 @@ import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
 import { AppDataProvider } from "../../app/data";
+import { PrinterInventoryProvider } from "../../app/printer-inventory-data";
 import { ServerStatusProvider } from "../../app/server-status-data";
 import { AddPrinterDialog } from "./add-printer-dialog";
 
@@ -9,11 +10,13 @@ const status = { virtual_printer: null, jobs_processed: 0, config_path: "/home/d
 const originalEventSource = globalThis.EventSource;
 
 class FakeEventSource {
+  static instances: FakeEventSource[] = [];
   static instance: FakeEventSource | null = null;
   private readonly listeners = new Map<string, ((event: Event) => void)[]>();
 
   constructor(readonly url: string) {
     FakeEventSource.instance = this;
+    FakeEventSource.instances.push(this);
   }
 
   addEventListener(name: string, handler: (event: Event) => void) {
@@ -27,6 +30,8 @@ class FakeEventSource {
       handler(new MessageEvent(name, { data: JSON.stringify(data) }));
     }
   }
+
+  static forUrl(url: string) { return FakeEventSource.instances.find((source) => source.url === url); }
 }
 
 function json(body: unknown, status = 200) {
@@ -118,14 +123,12 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
   const onClose = jest.fn();
   const onAdded = jest.fn();
   FakeEventSource.instance = null;
+  FakeEventSource.instances = [];
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path === "/api/profiles/list") {
       return Promise.resolve(json({ profiles: (options.profiles ?? []).map(catalogued) }));
-    }
-    if (path.startsWith("/api/printers/list")) {
-      return Promise.resolve(json({ printers: (options.printers ?? []).map(configured) }));
     }
     if (path === "/api/printers/add") {
       const body = JSON.parse(String(init?.body)) as AddPrinterBody;
@@ -138,22 +141,25 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
   }) as typeof globalThis.fetch;
   const view = render(
     <ServerStatusProvider>
-      <AppDataProvider>
+      <PrinterInventoryProvider><AppDataProvider>
         <AddPrinterDialog printer={printer} onClose={onClose} onAdded={onAdded} />
-      </AppDataProvider>
+      </AppDataProvider></PrinterInventoryProvider>
     </ServerStatusProvider>,
   );
-  act(() => FakeEventSource.instance?.emit("message", {
+  act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", {
     ...status,
     config_path: options.configPath ?? status.config_path,
+  }));
+  act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", {
+    updated_at: "2026-08-26T14:32:10Z", warning: null, printers: (options.printers ?? []).map(configured),
   }));
   // Hands the open dialog another device, which is the usage the owner is not
   // supposed to have but which must not silently register the wrong route.
   const hand = (next: DiscoveredPrinter | null) => view.rerender(
     <ServerStatusProvider>
-      <AppDataProvider>
+      <PrinterInventoryProvider><AppDataProvider>
         <AddPrinterDialog printer={next} onClose={onClose} onAdded={onAdded} />
-      </AppDataProvider>
+      </AppDataProvider></PrinterInventoryProvider>
     </ServerStatusProvider>,
   );
   return { view, hand, posted, onClose, onAdded };

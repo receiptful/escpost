@@ -1,6 +1,6 @@
 import type { Printer, UsbConnection } from "../../api/types";
-import type { PrinterFlashes } from "../../app/data";
-import { useAppData } from "../../app/data";
+import type { PrinterFlashes } from "../../app/printer-inventory-data";
+import { usePrinterInventory } from "../../app/printer-inventory-data";
 import { usbHex } from "./usb";
 
 // The highlight a printer is currently carrying, or no class at all. Both
@@ -57,35 +57,36 @@ function connection(printer: Printer) {
 }
 
 export function PrinterList() {
-  const { printers, refreshPrinters, printerFlashes } = useAppData();
-  const printerData = printers.data?.printers;
+  const resource = usePrinterInventory();
+  const snapshot = resource.snapshot;
+  const printerData = snapshot?.printers;
 
   if (!printerData) {
-    if (printers.phase === "error") {
+    if (resource.phase === "disconnected") {
       return (
         <section class="rounded-box bg-base-100 p-5 shadow-sm" aria-live="polite">
-          <p>{printers.error?.message ?? "Unable to load printer inventory."}</p>
-          <button class="btn btn-primary mt-4" type="button" onClick={() => void refreshPrinters()}>Retry</button>
+          <p>Unable to connect; retrying automatically.</p>
         </section>
       );
     }
-    return <p aria-live="polite" class="text-base-content/70">Loading printers…</p>;
+    return <p aria-live="polite" class="text-base-content/70">Connecting to printer monitor…</p>;
   }
 
   return (
     <div class="space-y-4">
-      {printers.error && (
+      {resource.phase === "disconnected" && (
         <p role="alert" class="alert alert-warning">
-          Showing cached printer data. {printers.error.message}
+          Showing stale printer data; reconnecting automatically. {resource.error.message}
         </p>
       )}
+      {snapshot.warning && <p role="alert" class="alert alert-warning">{snapshot.warning}</p>}
       {printerData.length === 0 ? (
         <section class="rounded-box bg-base-100 p-5 shadow-sm"><p>No printers configured.</p></section>
       ) : <>
         <div class="hidden overflow-x-auto rounded-box bg-base-100 shadow-sm lg:block">
           <table class="table">
             <thead><tr><th>Name</th><th>Status</th><th>Profile</th><th>Connection</th></tr></thead>
-            <tbody>{printerData.map((printer) => <tr key={printer.name} class={flashClass(printerFlashes, printer.name)}>
+            <tbody>{printerData.map((printer) => <tr key={printer.name} class={flashClass(resource.printerFlashes, printer.name)}>
               <td>{printer.name}</td>
               <td>{titleCase(printer.availability)}</td>
               <td>{printer.profile ?? "No profile"}</td>
@@ -95,7 +96,7 @@ export function PrinterList() {
         </div>
         <div class="space-y-3 lg:hidden">
           {printerData.map((printer) => (
-            <article key={printer.name} class={["rounded-box bg-base-100 p-5 shadow-sm", flashClass(printerFlashes, printer.name)].join(" ").trim()}>
+            <article key={printer.name} class={["rounded-box bg-base-100 p-5 shadow-sm", flashClass(resource.printerFlashes, printer.name)].join(" ").trim()}>
               {/* The label column takes exactly the width of its longest
                   label rather than half the card, so a value sits next to
                   what names it instead of across a gulf from it. The gap
@@ -110,6 +111,7 @@ export function PrinterList() {
           ))}
         </div>
       </>}
+      <p class="text-sm text-base-content/60">Last updated <time dateTime={snapshot.updated_at}>{snapshot.updated_at}</time></p>
     </div>
   );
 }
