@@ -469,6 +469,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "crossterm",
  "directories",
  "escpost-profiles",
  "escpost-render",

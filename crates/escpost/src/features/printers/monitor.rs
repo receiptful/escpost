@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Adapters subscribe to the monitor in the following implementation task.
-
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
