@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use time::OffsetDateTime;
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Mutex as AsyncMutex, Notify, watch};
 use tokio::task::JoinHandle;
 
 use crate::application;
@@ -52,6 +52,7 @@ struct Inner {
     collector: Arc<dyn Collector>,
     clock: Arc<dyn Clock>,
     snapshots: watch::Sender<Option<Snapshot>>,
+    collection: AsyncMutex<()>,
     state: Mutex<State>,
 }
 
@@ -85,6 +86,7 @@ impl PrinterMonitor {
                 collector,
                 clock,
                 snapshots,
+                collection: AsyncMutex::new(()),
                 state: Mutex::new(State {
                     subscribers: 0,
                     generation: 0,
@@ -150,6 +152,7 @@ impl PrinterMonitor {
     }
 
     async fn collect_and_publish(&self, generation: u64, forced: bool) {
+        let _collection = self.inner.collection.lock().await;
         let response = self
             .inner
             .collector
@@ -325,14 +328,45 @@ mod tests {
 
         let mut resumed = monitor.subscribe();
         assert_eq!(resumed.next().await.unwrap().printers[0].name, "retained");
-        assert_eq!(resumed.next().await.unwrap().printers[0].name, "fresh");
-
         clock.release();
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "fresh");
         for _ in 0..10 {
             tokio::task::yield_now().await;
         }
 
         assert!(!resumed.receiver.has_changed().unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn abort_and_resubscribe_never_overlap_collection_cycles() {
+        let collector =
+            BlockingSecondCollector::new([success("retained"), success("stale"), success("fresh")]);
+        let monitor = test_monitor(collector.clone());
+
+        let mut first = monitor.subscribe();
+        assert_eq!(first.next().await.unwrap().printers[0].name, "retained");
+        drop(first);
+
+        let abandoned = monitor.subscribe();
+        wait_for_blocked_collector(&collector).await;
+        drop(abandoned);
+
+        let mut resumed = monitor.subscribe();
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "retained");
+        let overlap = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            collector.overlap.notified(),
+        )
+        .await
+        .is_ok();
+        collector.release();
+
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "fresh");
+        assert!(
+            !overlap,
+            "a resumed monitor must wait for the old collection"
+        );
+        assert_eq!(collector.maximum_active(), 1);
     }
 
     #[tokio::test(start_paused = true)]
@@ -569,6 +603,16 @@ mod tests {
         }
     }
 
+    async fn wait_for_blocked_collector(collector: &BlockingSecondCollector) {
+        loop {
+            let blocked = collector.blocked.notified();
+            if collector.calls() >= 2 {
+                return;
+            }
+            blocked.await;
+        }
+    }
+
     trait CallCounter {
         fn calls(&self) -> usize;
     }
@@ -677,6 +721,91 @@ mod tests {
                 .pop_front()
                 .expect("the test must script every collection");
             Box::pin(std::future::ready(response))
+        }
+    }
+
+    #[derive(Clone)]
+    struct BlockingSecondCollector {
+        responses: Arc<Mutex<VecDeque<application::Result<list::Response>>>>,
+        calls: Arc<AtomicUsize>,
+        active: Arc<AtomicUsize>,
+        maximum_active: Arc<AtomicUsize>,
+        blocked: Arc<Notify>,
+        overlap: Arc<Notify>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl BlockingSecondCollector {
+        fn new(responses: impl IntoIterator<Item = application::Result<list::Response>>) -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+                calls: Arc::new(AtomicUsize::new(0)),
+                active: Arc::new(AtomicUsize::new(0)),
+                maximum_active: Arc::new(AtomicUsize::new(0)),
+                blocked: Arc::new(Notify::new()),
+                overlap: Arc::new(Notify::new()),
+                release: Arc::new((Mutex::new(false), Condvar::new())),
+            }
+        }
+
+        fn maximum_active(&self) -> usize {
+            self.maximum_active.load(Ordering::SeqCst)
+        }
+
+        fn release(&self) {
+            let (released, wake) = &*self.release;
+            *released
+                .lock()
+                .expect("the collector release mutex should not be poisoned") = true;
+            wake.notify_all();
+        }
+    }
+
+    impl CallCounter for BlockingSecondCollector {
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Collector for BlockingSecondCollector {
+        fn collect(&self, _request: list::Request) -> CollectionFuture {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.maximum_active.fetch_max(active, Ordering::SeqCst);
+            if active > 1 {
+                self.overlap.notify_waiters();
+            }
+            let activity = ActiveCollection(Arc::clone(&self.active));
+            let response = self
+                .responses
+                .lock()
+                .expect("the scripted responses mutex should not be poisoned")
+                .pop_front()
+                .expect("the test must script every collection");
+            if call == 2 {
+                self.blocked.notify_waiters();
+                let (released, wake) = &*self.release;
+                let mut released = released
+                    .lock()
+                    .expect("the collector release mutex should not be poisoned");
+                while !*released {
+                    released = wake
+                        .wait(released)
+                        .expect("the collector release mutex should not be poisoned");
+                }
+            }
+            Box::pin(async move {
+                let _active = activity;
+                response
+            })
+        }
+    }
+
+    struct ActiveCollection(Arc<AtomicUsize>);
+
+    impl Drop for ActiveCollection {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
