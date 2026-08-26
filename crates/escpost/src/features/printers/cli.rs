@@ -155,9 +155,7 @@ pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Resul
     match arguments.command {
         PrintersCommand::List(list) => {
             if list.monitor {
-                if non_interactive || !io::stdout().is_terminal() {
-                    return Err(CliError::PrinterMonitorRequiresInteractive);
-                }
+                ensure_monitor_terminal(non_interactive, io::stdout().is_terminal())?;
                 return list::monitor_cli::run(
                     arguments.config,
                     list.transport.map(transport_filter),
@@ -200,6 +198,30 @@ fn transport_filter(transport: InventoryTransport) -> Transport {
         InventoryTransport::Network => Transport::Network,
     }
 }
+
+fn ensure_monitor_terminal(
+    non_interactive: bool,
+    stdout_is_terminal: bool,
+) -> Result<(), CliError> {
+    if non_interactive || !stdout_is_terminal {
+        return Err(CliError::PrinterMonitorRequiresInteractive);
+    }
+    Ok(())
+}
+
 pub(crate) fn add_interactively(config_path: Option<&std::path::Path>) -> Result<String, CliError> {
     super::add::cli::add_interactively(config_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_interactive_monitoring_is_rejected_even_with_a_terminal_stdout() {
+        let error = ensure_monitor_terminal(true, true)
+            .expect_err("non-interactive monitor mode must be rejected");
+
+        assert!(matches!(error, CliError::PrinterMonitorRequiresInteractive));
+    }
 }

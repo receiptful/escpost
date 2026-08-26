@@ -11,13 +11,18 @@ use crate::error::CliError;
 use crate::features::printers::monitor::{PrinterMonitor, Snapshot};
 use crate::features::printers::{Availability, Transport};
 
+const NAME_WIDTH: usize = 20;
+const TRANSPORT_WIDTH: usize = 10;
+const PROFILE_WIDTH: usize = 16;
+const STATUS_WIDTH: usize = 12;
+
 pub(crate) async fn run(
     config: Option<PathBuf>,
     transport: Option<Transport>,
 ) -> Result<(), CliError> {
     let monitor = PrinterMonitor::new(config);
     let mut subscription = monitor.subscribe();
-    let mut terminal = TerminalSession::enter(io::stdout().lock())?;
+    let mut terminal = TerminalSession::enter(CrosstermTerminal::new(io::stdout().lock()))?;
     terminal.draw_text("Checking configured printers…\n\nPress Ctrl+C to stop.\n")?;
 
     loop {
@@ -27,29 +32,87 @@ pub(crate) async fn run(
                 None => return Ok(()),
             },
             signal = tokio::signal::ctrl_c() => {
-                signal.map_err(CliError::PrinterMonitorSignal)?;
-                return Ok(());
+                return terminal.finish_signal(signal);
             }
         }
     }
 }
 
-struct TerminalSession<W: Write> {
+trait TerminalCommands {
+    fn enter_alternate_screen(&mut self) -> io::Result<()>;
+    fn hide_cursor(&mut self) -> io::Result<()>;
+    fn clear(&mut self) -> io::Result<()>;
+    fn move_home(&mut self) -> io::Result<()>;
+    fn write_text(&mut self, text: &str) -> io::Result<()>;
+    fn show_cursor(&mut self) -> io::Result<()>;
+    fn leave_alternate_screen(&mut self) -> io::Result<()>;
+}
+
+struct CrosstermTerminal<W: Write> {
     output: W,
 }
 
-impl<W: Write> TerminalSession<W> {
-    fn enter(output: W) -> Result<Self, CliError> {
-        let mut terminal = Self { output };
-        execute!(
-            terminal.output,
-            EnterAlternateScreen,
-            cursor::Hide,
-            Clear(ClearType::All),
-            cursor::MoveTo(0, 0),
-        )
-        .map_err(CliError::WriteHumanOutput)?;
-        Ok(terminal)
+impl<W: Write> CrosstermTerminal<W> {
+    fn new(output: W) -> Self {
+        Self { output }
+    }
+}
+
+impl<W: Write> TerminalCommands for CrosstermTerminal<W> {
+    fn enter_alternate_screen(&mut self) -> io::Result<()> {
+        execute!(self.output, EnterAlternateScreen)
+    }
+
+    fn hide_cursor(&mut self) -> io::Result<()> {
+        execute!(self.output, cursor::Hide)
+    }
+
+    fn clear(&mut self) -> io::Result<()> {
+        execute!(self.output, Clear(ClearType::All))
+    }
+
+    fn move_home(&mut self) -> io::Result<()> {
+        execute!(self.output, cursor::MoveTo(0, 0))
+    }
+
+    fn write_text(&mut self, text: &str) -> io::Result<()> {
+        self.output.write_all(text.as_bytes())?;
+        self.output.flush()
+    }
+
+    fn show_cursor(&mut self) -> io::Result<()> {
+        execute!(self.output, cursor::Show)
+    }
+
+    fn leave_alternate_screen(&mut self) -> io::Result<()> {
+        execute!(self.output, LeaveAlternateScreen)
+    }
+}
+
+struct TerminalSession<T: TerminalCommands> {
+    terminal: T,
+}
+
+impl<T: TerminalCommands> TerminalSession<T> {
+    fn enter(terminal: T) -> Result<Self, CliError> {
+        let mut session = Self { terminal };
+        session
+            .terminal
+            .enter_alternate_screen()
+            .map_err(CliError::WriteHumanOutput)?;
+        session
+            .terminal
+            .hide_cursor()
+            .map_err(CliError::WriteHumanOutput)?;
+        session
+            .terminal
+            .clear()
+            .map_err(CliError::WriteHumanOutput)?;
+        session
+            .terminal
+            .move_home()
+            .map_err(CliError::WriteHumanOutput)?;
+        Ok(session)
     }
 
     fn draw_snapshot(
@@ -61,18 +124,25 @@ impl<W: Write> TerminalSession<W> {
     }
 
     fn draw_text(&mut self, text: &str) -> Result<(), CliError> {
-        execute!(self.output, cursor::MoveTo(0, 0), Clear(ClearType::All))
+        self.terminal
+            .move_home()
             .map_err(CliError::WriteHumanOutput)?;
-        self.output
-            .write_all(text.as_bytes())
-            .and_then(|()| self.output.flush())
+        self.terminal.clear().map_err(CliError::WriteHumanOutput)?;
+        self.terminal
+            .write_text(text)
             .map_err(CliError::WriteHumanOutput)
+    }
+
+    fn finish_signal(self, signal: io::Result<()>) -> Result<(), CliError> {
+        drop(self);
+        signal.map_err(CliError::PrinterMonitorSignal)
     }
 }
 
-impl<W: Write> Drop for TerminalSession<W> {
+impl<T: TerminalCommands> Drop for TerminalSession<T> {
     fn drop(&mut self) {
-        let _ = execute!(self.output, cursor::Show, LeaveAlternateScreen);
+        let _ = self.terminal.show_cursor();
+        let _ = self.terminal.leave_alternate_screen();
     }
 }
 
@@ -101,7 +171,10 @@ fn render_frame(snapshot: &Snapshot, transport: Option<Transport>) -> String {
             frame.push_str("\nNo printers match the transport filter.\n");
         }
     } else {
-        frame.push_str("\nNAME                 STATUS       CONNECTION\n");
+        frame.push_str(&format!(
+            "\n{:<NAME_WIDTH$} {:<TRANSPORT_WIDTH$} {:<PROFILE_WIDTH$} {:<STATUS_WIDTH$} CONNECTION\n",
+            "NAME", "TRANSPORT", "PROFILE", "STATUS"
+        ));
         for printer in printers {
             frame.push_str(&format_printer_row(printer));
         }
@@ -116,11 +189,31 @@ fn format_printer_row(printer: &Printer) -> String {
         Availability::Unavailable => "unavailable",
     };
     format!(
-        "{:<20} {:<12} {}\n",
-        printer.name,
+        "{:<NAME_WIDTH$} {:<TRANSPORT_WIDTH$} {:<PROFILE_WIDTH$} {:<STATUS_WIDTH$} {}\n",
+        truncate_column(&printer.name, NAME_WIDTH),
+        transport_label(printer.transport),
+        truncate_column(
+            printer.profile.as_deref().unwrap_or("unassigned"),
+            PROFILE_WIDTH
+        ),
         status,
         connection_summary(&printer.connection),
     )
+}
+
+fn truncate_column(value: &str, width: usize) -> String {
+    if value.chars().count() <= width {
+        return value.to_owned();
+    }
+    let visible = width.saturating_sub(3);
+    format!("{}...", value.chars().take(visible).collect::<String>())
+}
+
+fn transport_label(transport: Transport) -> &'static str {
+    match transport {
+        Transport::Usb => "usb",
+        Transport::Network => "network",
+    }
 }
 
 fn connection_summary(connection: &ConnectionFacts) -> String {
@@ -134,6 +227,11 @@ fn connection_summary(connection: &ConnectionFacts) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::io;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
     use time::OffsetDateTime;
 
     use super::*;
@@ -149,6 +247,8 @@ mod tests {
 
         assert!(frame.contains("Known printers — updated 14:32:10"));
         assert!(frame.contains("NAME"));
+        assert!(frame.contains("TRANSPORT"));
+        assert!(frame.contains("PROFILE"));
         assert!(frame.contains("STATUS"));
         assert!(frame.contains("CONNECTION"));
         assert!(frame.contains("kitchen"));
@@ -208,6 +308,126 @@ mod tests {
         assert!(!frame.contains("counter"));
     }
 
+    #[test]
+    fn frame_uses_fixed_columns_for_long_names_and_profiles() {
+        let frame = render_frame(
+            &Snapshot {
+                printers: vec![Printer {
+                    name: "this-is-a-very-long-printer-name".to_owned(),
+                    transport: Transport::Network,
+                    availability: Availability::Unavailable,
+                    profile: Some("this-is-a-very-long-profile".to_owned()),
+                    connection: ConnectionFacts::Network(NetworkConnectionFacts {
+                        host: "192.168.1.40".to_owned(),
+                        port: 9100,
+                    }),
+                }],
+                ..snapshot()
+            },
+            None,
+        );
+
+        assert!(frame.contains("NAME                 TRANSPORT  PROFILE          STATUS"));
+        assert!(frame.contains(
+            "this-is-a-very-lo... network    this-is-a-ver... unavailable  192.168.1.40:9100"
+        ));
+    }
+
+    #[test]
+    fn frame_lists_all_transport_and_profile_values() {
+        let frame = render_frame(&snapshot(), None);
+
+        assert!(frame.contains("kitchen              network    REFERENCE"));
+        assert!(frame.contains("counter              usb        unassigned"));
+    }
+
+    #[test]
+    fn terminal_session_emits_enter_redraw_and_normal_drop_commands() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        {
+            let mut session = TerminalSession::enter(RecordingTerminal::new(events.clone(), false))
+                .expect("the terminal session should enter");
+            session
+                .draw_text("snapshot")
+                .expect("the frame should be drawn");
+        }
+
+        assert_eq!(
+            *events.borrow(),
+            [
+                "enter", "hide", "clear", "home", "home", "clear", "write", "show", "leave"
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_session_restores_after_a_write_error() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        {
+            let mut session = TerminalSession::enter(RecordingTerminal::new(events.clone(), true))
+                .expect("the terminal session should enter");
+            assert!(session.draw_text("snapshot").is_err());
+        }
+
+        assert_eq!(
+            *events.borrow(),
+            [
+                "enter", "hide", "clear", "home", "home", "clear", "write", "show", "leave"
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_session_restores_when_the_monitor_exits_for_a_signal_error() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+
+        let error = TerminalSession::enter(RecordingTerminal::new(events.clone(), false))
+            .expect("the terminal session should enter")
+            .finish_signal(Err(io::Error::other("injected signal failure")))
+            .expect_err("a failed signal wait should be reported");
+
+        assert!(matches!(error, CliError::PrinterMonitorSignal(_)));
+        assert_eq!(
+            *events.borrow(),
+            ["enter", "hide", "clear", "home", "show", "leave"]
+        );
+    }
+
+    #[test]
+    fn terminal_session_drop_restores_the_terminal_while_unwinding() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _session = TerminalSession::enter(RecordingTerminal::new(events.clone(), false))
+                .expect("the terminal session should enter");
+            panic!("simulate an unexpected monitor failure");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(
+            *events.borrow(),
+            ["enter", "hide", "clear", "home", "show", "leave"]
+        );
+    }
+
+    #[test]
+    fn crossterm_terminal_writes_the_exact_lifecycle_sequences() {
+        let bytes = Rc::new(RefCell::new(Vec::new()));
+        {
+            let mut session =
+                TerminalSession::enter(CrosstermTerminal::new(SharedBytes(bytes.clone())))
+                    .expect("the terminal session should enter");
+            session
+                .draw_text("frame")
+                .expect("the frame should be drawn");
+        }
+
+        assert_eq!(
+            bytes.borrow().as_slice(),
+            b"\x1b[?1049h\x1b[?25l\x1b[2J\x1b[1;1H\x1b[1;1H\x1b[2Jframe\x1b[?25h\x1b[?1049l"
+        );
+    }
+
     fn snapshot() -> Snapshot {
         Snapshot {
             updated_at: OffsetDateTime::from_unix_timestamp(52_330)
@@ -247,6 +467,74 @@ mod tests {
                 out_endpoints: vec![1],
                 in_endpoints: Vec::new(),
             }),
+        }
+    }
+
+    struct RecordingTerminal {
+        events: Rc<RefCell<Vec<&'static str>>>,
+        fail_write: bool,
+    }
+
+    impl RecordingTerminal {
+        fn new(events: Rc<RefCell<Vec<&'static str>>>, fail_write: bool) -> Self {
+            Self { events, fail_write }
+        }
+
+        fn record(&self, event: &'static str) {
+            self.events.borrow_mut().push(event);
+        }
+    }
+
+    impl TerminalCommands for RecordingTerminal {
+        fn enter_alternate_screen(&mut self) -> io::Result<()> {
+            self.record("enter");
+            Ok(())
+        }
+
+        fn hide_cursor(&mut self) -> io::Result<()> {
+            self.record("hide");
+            Ok(())
+        }
+
+        fn clear(&mut self) -> io::Result<()> {
+            self.record("clear");
+            Ok(())
+        }
+
+        fn move_home(&mut self) -> io::Result<()> {
+            self.record("home");
+            Ok(())
+        }
+
+        fn write_text(&mut self, _text: &str) -> io::Result<()> {
+            self.record("write");
+            if self.fail_write {
+                return Err(io::Error::other("injected write failure"));
+            }
+            Ok(())
+        }
+
+        fn show_cursor(&mut self) -> io::Result<()> {
+            self.record("show");
+            Ok(())
+        }
+
+        fn leave_alternate_screen(&mut self) -> io::Result<()> {
+            self.record("leave");
+            Ok(())
+        }
+    }
+
+    struct SharedBytes(Rc<RefCell<Vec<u8>>>);
+
+    impl io::Write for SharedBytes {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
 }
