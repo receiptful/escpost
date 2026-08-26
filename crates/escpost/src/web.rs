@@ -29,6 +29,7 @@ const LAST_AUTOMATIC_PORT: u16 = 9099;
 pub(crate) struct WebState {
     jobs: JobStore,
     status_metadata: status::ServerStatusMetadata,
+    pub(crate) printer_monitor: crate::features::printers::monitor::PrinterMonitor,
 }
 
 /// Current wall-clock time in Unix epoch milliseconds, for job completion.
@@ -287,6 +288,7 @@ pub(crate) async fn serve(
         .with_state(WebState {
             jobs,
             status_metadata,
+            printer_monitor: crate::features::printers::monitor::PrinterMonitor::new(None),
         });
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())

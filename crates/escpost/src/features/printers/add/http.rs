@@ -9,6 +9,7 @@
 //! printer the CLI would have refused. This adapter only translates shapes
 //! and translates the resulting `ApplicationError` into a stable HTTP code.
 
+use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::{HeaderName, StatusCode, header};
 use axum::routing::post;
@@ -18,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::web::WebState;
 use crate::web::error::ApiError;
 
-use super::AMBIGUOUS_USB_WARNING;
+use super::{AMBIGUOUS_USB_WARNING, execute_monitored};
 
 pub(crate) fn router() -> Router<WebState> {
     Router::new().route(
@@ -112,6 +113,7 @@ struct AddResponseBody {
 }
 
 async fn add_printer(
+    State(state): State<WebState>,
     body: Result<Json<AddRequestBody>, JsonRejection>,
 ) -> Result<
     (
@@ -125,7 +127,8 @@ async fn add_printer(
     let ambiguous = body.connection.ambiguous_without_serial();
     let request = super::Request::new(None, body.name, body.profile, body.connection.into())
         .map_err(ApiError::from_application)?;
-    let response = super::execute(request).map_err(ApiError::from_application)?;
+    let response =
+        execute_monitored(request, &state.printer_monitor).map_err(ApiError::from_application)?;
 
     Ok((
         StatusCode::CREATED,

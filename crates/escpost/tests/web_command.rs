@@ -572,6 +572,7 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
         "/api/status",
         "/api/status/events",
         "/api/printers/list",
+        "/api/printers/list/events",
         "/api/printers/discover",
         "/api/printers/discover/networks",
         "/api/profiles/list",
@@ -746,6 +747,34 @@ fn api_status_events_starts_with_the_current_complete_snapshot() {
         serde_json::from_str::<serde_json::Value>(data).unwrap(),
         serde_json::from_slice::<serde_json::Value>(response_body(&snapshot)).unwrap()
     );
+}
+
+#[test]
+fn printer_inventory_stream_starts_with_an_unnamed_complete_snapshot() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let event = http_get_first_event(port, "/api/printers/list/events");
+    let invalid_query = http_get_bytes(port, "/api/printers/list/events?transport=usb");
+    stop(&mut child);
+
+    assert!(event.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(event.contains("content-type: text/event-stream"));
+    assert!(event.contains("cache-control: no-store"));
+    assert!(
+        !event.contains("event:"),
+        "a printer inventory snapshot should use the standard message event"
+    );
+    let snapshot: serde_json::Value = serde_json::from_str(event_data(&event)).unwrap();
+    assert!(snapshot["updated_at"].is_string());
+    assert!(snapshot["warning"].is_null());
+    assert!(snapshot["printers"].is_array());
+
+    assert_eq!(response_status(&invalid_query), "HTTP/1.1 400 Bad Request");
+    let invalid_query: serde_json::Value = serde_json::from_slice(response_body(&invalid_query))
+        .expect("the invalid query response should be JSON");
+    assert_eq!(invalid_query["error"]["code"], "invalid_query");
 }
 
 #[test]
