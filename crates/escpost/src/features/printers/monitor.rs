@@ -1,8 +1,204 @@
+#![allow(dead_code)] // Adapters subscribe to the monitor in the following implementation task.
+
+use std::future::Future;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
 use time::OffsetDateTime;
+use tokio::sync::{Notify, watch};
+use tokio::task::JoinHandle;
 
 use crate::application;
 
 use super::list;
+
+const COLLECTION_INTERVAL: Duration = Duration::from_secs(5);
+
+type CollectionFuture = Pin<Box<dyn Future<Output = application::Result<list::Response>> + Send>>;
+
+trait Collector: Send + Sync {
+    fn collect(&self, request: list::Request) -> CollectionFuture;
+}
+
+trait Clock: Send + Sync {
+    fn now(&self) -> OffsetDateTime;
+}
+
+struct SystemCollector;
+
+impl Collector for SystemCollector {
+    fn collect(&self, request: list::Request) -> CollectionFuture {
+        Box::pin(list::execute_with_observer(request, |_| {}))
+    }
+}
+
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct PrinterMonitor {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    config: Option<PathBuf>,
+    collector: Arc<dyn Collector>,
+    clock: Arc<dyn Clock>,
+    snapshots: watch::Sender<Option<Snapshot>>,
+    refresh: Notify,
+    state: Mutex<State>,
+}
+
+struct State {
+    subscribers: usize,
+    task: Option<JoinHandle<()>>,
+}
+
+pub(crate) struct Subscription {
+    receiver: watch::Receiver<Option<Snapshot>>,
+    has_observed_snapshot: bool,
+    monitor: PrinterMonitor,
+}
+
+impl PrinterMonitor {
+    pub(crate) fn new(config: Option<PathBuf>) -> Self {
+        Self::with_dependencies(config, Arc::new(SystemCollector), Arc::new(SystemClock))
+    }
+
+    fn with_dependencies(
+        config: Option<PathBuf>,
+        collector: Arc<dyn Collector>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        let (snapshots, _) = watch::channel(None);
+        Self {
+            inner: Arc::new(Inner {
+                config,
+                collector,
+                clock,
+                snapshots,
+                refresh: Notify::new(),
+                state: Mutex::new(State {
+                    subscribers: 0,
+                    task: None,
+                }),
+            }),
+        }
+    }
+
+    pub(crate) fn subscribe(&self) -> Subscription {
+        let receiver = self.inner.snapshots.subscribe();
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("the printer monitor state mutex should not be poisoned");
+        state.subscribers += 1;
+        if state.subscribers == 1 {
+            let monitor = self.clone();
+            state.task = Some(tokio::spawn(async move {
+                monitor.run().await;
+            }));
+        }
+        Subscription {
+            receiver,
+            has_observed_snapshot: false,
+            monitor: self.clone(),
+        }
+    }
+
+    pub(crate) fn request_refresh(&self) {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("the printer monitor state mutex should not be poisoned");
+        if state.subscribers != 0 {
+            self.inner.refresh.notify_one();
+        }
+    }
+
+    async fn run(self) {
+        let mut forced = true;
+        loop {
+            self.collect_and_publish(forced).await;
+            forced = false;
+            tokio::select! {
+                _ = tokio::time::sleep(COLLECTION_INTERVAL) => {}
+                _ = self.inner.refresh.notified() => {}
+            }
+        }
+    }
+
+    async fn collect_and_publish(&self, forced: bool) {
+        let response = self
+            .inner
+            .collector
+            .collect(list::Request {
+                config: self.inner.config.clone(),
+                transport: None,
+            })
+            .await;
+        let snapshot = match response {
+            Ok(response) => snapshot_from_response(response, self.inner.clock.now()),
+            Err(error) => Snapshot {
+                updated_at: self.inner.clock.now(),
+                warning: Some(error.to_string()),
+                printers: self
+                    .inner
+                    .snapshots
+                    .borrow()
+                    .as_ref()
+                    .map_or_else(Vec::new, |snapshot| snapshot.printers.clone()),
+            },
+        };
+        let previous = self.inner.snapshots.borrow().clone();
+        if should_publish(previous.as_ref(), &snapshot, forced) {
+            self.inner.snapshots.send_replace(Some(snapshot));
+        }
+    }
+}
+
+impl Subscription {
+    pub(crate) async fn next(&mut self) -> Option<Snapshot> {
+        if !self.has_observed_snapshot {
+            self.has_observed_snapshot = true;
+            if let Some(snapshot) = self.receiver.borrow_and_update().clone() {
+                return Some(snapshot);
+            }
+        }
+        loop {
+            self.receiver.changed().await.ok()?;
+            if let Some(snapshot) = self.receiver.borrow_and_update().clone() {
+                return Some(snapshot);
+            }
+        }
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        let mut state = self
+            .monitor
+            .inner
+            .state
+            .lock()
+            .expect("the printer monitor state mutex should not be poisoned");
+        state.subscribers -= 1;
+        if state.subscribers == 0
+            && let Some(task) = state.task.take()
+        {
+            task.abort();
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Snapshot {
@@ -24,9 +220,20 @@ fn snapshot_from_response(response: list::Response, updated_at: OffsetDateTime) 
     }
 }
 
+fn should_publish(previous: Option<&Snapshot>, next: &Snapshot, forced: bool) -> bool {
+    forced
+        || previous.is_none()
+        || previous.is_some_and(|previous| {
+            previous.warning != next.warning || previous.printers != next.printers
+        })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::features::printers::list::{ConnectionFacts, NetworkConnectionFacts};
@@ -46,6 +253,295 @@ mod tests {
         assert_eq!(snapshot.updated_at, now);
         assert_eq!(snapshot.warning, None);
         assert_eq!(snapshot.printers[0].name, "kitchen");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_subscriber_gets_retained_then_forced_fresh_snapshot() {
+        let collector = ScriptedCollector::new([success("old"), success("old")]);
+        let monitor = test_monitor(collector.clone());
+
+        let mut first = monitor.subscribe();
+        assert_eq!(first.next().await.unwrap().printers[0].name, "old");
+        drop(first);
+
+        let mut resumed = monitor.subscribe();
+        let retained = resumed.next().await.unwrap();
+        let fresh = resumed.next().await.unwrap();
+
+        assert_eq!(retained.printers, fresh.printers);
+        assert!(fresh.updated_at > retained.updated_at);
+        assert_eq!(collector.calls(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn two_subscribers_share_one_collection_loop() {
+        let collector = ScriptedCollector::new([success("kitchen")]);
+        let monitor = test_monitor(collector.clone());
+
+        let mut first = monitor.subscribe();
+        let mut second = monitor.subscribe();
+
+        assert_eq!(first.next().await.unwrap().printers[0].name, "kitchen");
+        assert_eq!(second.next().await.unwrap().printers[0].name, "kitchen");
+        assert_eq!(collector.calls(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unchanged_ordinary_ticks_emit_nothing() {
+        let collector = ScriptedCollector::new([success("kitchen"), success("kitchen")]);
+        let monitor = test_monitor(collector.clone());
+        let mut subscription = monitor.subscribe();
+
+        subscription.next().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        wait_for_calls(&collector, 2).await;
+
+        assert!(!subscription.receiver.has_changed().unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changed_inventory_emits_a_snapshot() {
+        let collector = ScriptedCollector::new([success("kitchen"), success("bar")]);
+        let monitor = test_monitor(collector.clone());
+        let mut subscription = monitor.subscribe();
+
+        subscription.next().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+
+        assert_eq!(subscription.next().await.unwrap().printers[0].name, "bar");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropping_the_final_subscription_aborts_a_blocked_collection() {
+        let collector = BlockingCollector::new();
+        let monitor = test_monitor(collector.clone());
+        let subscription = monitor.subscribe();
+
+        wait_for_calls(&collector, 1).await;
+        drop(subscription);
+        wait_for_cancellation(&collector).await;
+
+        assert!(collector.was_cancelled());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_subscribers_produce_no_collection_calls() {
+        let collector = ScriptedCollector::new([]);
+        let _monitor = test_monitor(collector.clone());
+
+        tokio::task::yield_now().await;
+
+        assert_eq!(collector.calls(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failure_retains_printers_and_emits_a_warning() {
+        let collector = ScriptedCollector::new([success("kitchen"), failure()]);
+        let monitor = test_monitor(collector);
+        let mut subscription = monitor.subscribe();
+
+        let initial = subscription.next().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        let failed = subscription.next().await.unwrap();
+
+        assert_eq!(failed.printers, initial.printers);
+        assert_eq!(
+            failed.warning.as_deref(),
+            Some("printer name must not be blank")
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeated_identical_failure_is_silent() {
+        let collector = ScriptedCollector::new([success("kitchen"), failure(), failure()]);
+        let monitor = test_monitor(collector.clone());
+        let mut subscription = monitor.subscribe();
+
+        subscription.next().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        subscription.next().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        wait_for_calls(&collector, 3).await;
+
+        assert!(!subscription.receiver.has_changed().unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn recovery_clears_a_warning() {
+        let collector = ScriptedCollector::new([success("kitchen"), failure(), success("kitchen")]);
+        let monitor = test_monitor(collector);
+        let mut subscription = monitor.subscribe();
+
+        subscription.next().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        assert!(subscription.next().await.unwrap().warning.is_some());
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+
+        assert_eq!(subscription.next().await.unwrap().warning, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn request_refresh_wakes_an_active_monitor_but_does_nothing_while_idle() {
+        let collector = ScriptedCollector::new([success("kitchen"), success("kitchen")]);
+        let monitor = test_monitor(collector.clone());
+        let mut subscription = monitor.subscribe();
+
+        subscription.next().await.unwrap();
+        monitor.request_refresh();
+        wait_for_calls(&collector, 2).await;
+        drop(subscription);
+
+        monitor.request_refresh();
+        tokio::task::yield_now().await;
+        assert_eq!(collector.calls(), 2);
+    }
+
+    fn test_monitor(collector: impl Collector + 'static) -> PrinterMonitor {
+        PrinterMonitor::with_dependencies(
+            None,
+            Arc::new(collector),
+            Arc::new(ScriptedClock::starting_at(1_787_754_730)),
+        )
+    }
+
+    fn success(name: &str) -> application::Result<list::Response> {
+        Ok(list::Response {
+            config_path: PathBuf::from("/tmp/printers.toml"),
+            printers: vec![network_printer(name, Availability::Connected)],
+        })
+    }
+
+    fn failure() -> application::Result<list::Response> {
+        Err(application::ApplicationError::BlankPrinterName)
+    }
+
+    async fn wait_for_calls(collector: &impl CallCounter, expected: usize) {
+        for _ in 0..10 {
+            if collector.calls() >= expected {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the collector should have received {expected} calls");
+    }
+
+    async fn wait_for_cancellation(collector: &BlockingCollector) {
+        for _ in 0..10 {
+            if collector.was_cancelled() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the blocked collection should have been cancelled");
+    }
+
+    trait CallCounter {
+        fn calls(&self) -> usize;
+    }
+
+    #[derive(Clone)]
+    struct ScriptedCollector {
+        responses: Arc<Mutex<VecDeque<application::Result<list::Response>>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ScriptedCollector {
+        fn new(responses: impl IntoIterator<Item = application::Result<list::Response>>) -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    impl CallCounter for ScriptedCollector {
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Collector for ScriptedCollector {
+        fn collect(&self, _request: list::Request) -> CollectionFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let response = self
+                .responses
+                .lock()
+                .expect("the scripted responses mutex should not be poisoned")
+                .pop_front()
+                .expect("the test must script every collection");
+            Box::pin(std::future::ready(response))
+        }
+    }
+
+    #[derive(Clone)]
+    struct BlockingCollector {
+        calls: Arc<AtomicUsize>,
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl BlockingCollector {
+        fn new() -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                cancelled: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn was_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
+        }
+    }
+
+    impl CallCounter for BlockingCollector {
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Collector for BlockingCollector {
+        fn collect(&self, _request: list::Request) -> CollectionFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let cancelled = Arc::clone(&self.cancelled);
+            Box::pin(async move {
+                let _cancel = CancelOnDrop(cancelled);
+                std::future::pending().await
+            })
+        }
+    }
+
+    struct CancelOnDrop(Arc<AtomicBool>);
+
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    struct ScriptedClock {
+        next_timestamp: Mutex<OffsetDateTime>,
+    }
+
+    impl ScriptedClock {
+        fn starting_at(timestamp: i64) -> Self {
+            Self {
+                next_timestamp: Mutex::new(
+                    OffsetDateTime::from_unix_timestamp(timestamp)
+                        .expect("the fixed test timestamp should be valid"),
+                ),
+            }
+        }
+    }
+
+    impl Clock for ScriptedClock {
+        fn now(&self) -> OffsetDateTime {
+            let mut timestamp = self
+                .next_timestamp
+                .lock()
+                .expect("the scripted clock mutex should not be poisoned");
+            let now = *timestamp;
+            *timestamp += time::Duration::seconds(1);
+            now
+        }
     }
 
     fn network_printer(name: &str, availability: Availability) -> list::Printer {
