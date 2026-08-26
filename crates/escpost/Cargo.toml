@@ -34,6 +34,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 crossterm.workspace = true
+unicode-width.workspace = true
 toml.workspace = true
 webbrowser.workspace = true
 

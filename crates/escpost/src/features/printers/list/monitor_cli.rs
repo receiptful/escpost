@@ -5,6 +5,7 @@ use crossterm::{
     cursor, execute,
     terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use unicode_width::UnicodeWidthChar;
 
 use super::{ConnectionFacts, Printer};
 use crate::error::CliError;
@@ -15,6 +16,7 @@ const NAME_WIDTH: usize = 20;
 const TRANSPORT_WIDTH: usize = 10;
 const PROFILE_WIDTH: usize = 16;
 const STATUS_WIDTH: usize = 12;
+const CONNECTION_WIDTH: usize = 30;
 
 pub(crate) async fn run(
     config: Option<PathBuf>,
@@ -172,8 +174,12 @@ fn render_frame(snapshot: &Snapshot, transport: Option<Transport>) -> String {
         }
     } else {
         frame.push_str(&format!(
-            "\n{:<NAME_WIDTH$} {:<TRANSPORT_WIDTH$} {:<PROFILE_WIDTH$} {:<STATUS_WIDTH$} CONNECTION\n",
-            "NAME", "TRANSPORT", "PROFILE", "STATUS"
+            "\n{} {} {} {} {}\n",
+            format_cell("NAME", NAME_WIDTH),
+            format_cell("STATUS", STATUS_WIDTH),
+            format_cell("TRANSPORT", TRANSPORT_WIDTH),
+            format_cell("CONNECTION", CONNECTION_WIDTH),
+            format_cell("PROFILE", PROFILE_WIDTH),
         ));
         for printer in printers {
             frame.push_str(&format_printer_row(printer));
@@ -189,24 +195,58 @@ fn format_printer_row(printer: &Printer) -> String {
         Availability::Unavailable => "unavailable",
     };
     format!(
-        "{:<NAME_WIDTH$} {:<TRANSPORT_WIDTH$} {:<PROFILE_WIDTH$} {:<STATUS_WIDTH$} {}\n",
-        truncate_column(&printer.name, NAME_WIDTH),
-        transport_label(printer.transport),
-        truncate_column(
+        "{} {} {} {} {}\n",
+        format_cell(&printer.name, NAME_WIDTH),
+        format_cell(status, STATUS_WIDTH),
+        format_cell(transport_label(printer.transport), TRANSPORT_WIDTH),
+        format_cell(&connection_summary(&printer.connection), CONNECTION_WIDTH),
+        format_cell(
             printer.profile.as_deref().unwrap_or("unassigned"),
             PROFILE_WIDTH
         ),
-        status,
-        connection_summary(&printer.connection),
     )
 }
 
-fn truncate_column(value: &str, width: usize) -> String {
-    if value.chars().count() <= width {
-        return value.to_owned();
+fn format_cell(value: &str, width: usize) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let cells = display_width(&sanitized);
+    if cells <= width {
+        return format!("{sanitized}{:width$}", "", width = width - cells);
     }
-    let visible = width.saturating_sub(3);
-    format!("{}...", value.chars().take(visible).collect::<String>())
+    let marker = if width >= 3 { "..." } else { "" };
+    let available = width - display_width(marker);
+    let mut result = String::new();
+    let mut used = 0;
+    for character in sanitized.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width > available {
+            break;
+        }
+        result.push(character);
+        used += character_width;
+    }
+    result.push_str(marker);
+    format!(
+        "{result}{:width$}",
+        "",
+        width = width - display_width(&result)
+    )
+}
+
+fn display_width(value: &str) -> usize {
+    value
+        .chars()
+        .map(|character| UnicodeWidthChar::width(character).unwrap_or(0))
+        .sum()
 }
 
 fn transport_label(transport: Transport) -> &'static str {
@@ -309,6 +349,23 @@ mod tests {
     }
 
     #[test]
+    fn cells_use_display_width_and_replace_terminal_controls() {
+        assert_eq!(format_cell("厨房\u{0301}\n", 8), "厨房́    ");
+        assert_eq!(format_cell("abcdefghijk", 8), "abcde...");
+    }
+
+    #[test]
+    fn frame_uses_the_approved_fixed_column_order() {
+        let frame = render_frame(&snapshot(), None);
+        let header = frame.lines().find(|line| line.starts_with("NAME")).unwrap();
+
+        assert_eq!(
+            header.split_whitespace().collect::<Vec<_>>(),
+            ["NAME", "STATUS", "TRANSPORT", "CONNECTION", "PROFILE"]
+        );
+    }
+
+    #[test]
     fn frame_uses_fixed_columns_for_long_names_and_profiles() {
         let frame = render_frame(
             &Snapshot {
@@ -327,18 +384,24 @@ mod tests {
             None,
         );
 
-        assert!(frame.contains("NAME                 TRANSPORT  PROFILE          STATUS"));
-        assert!(frame.contains(
-            "this-is-a-very-lo... network    this-is-a-ver... unavailable  192.168.1.40:9100"
-        ));
+        assert!(frame.contains("NAME                 STATUS       TRANSPORT  CONNECTION"));
+        let row = frame
+            .lines()
+            .find(|line| line.starts_with("this-is-a-very-lo..."))
+            .expect("the long printer should have a row");
+        assert_eq!(&row[..20], "this-is-a-very-lo...");
+        assert_eq!(&row[21..33], "unavailable ");
+        assert_eq!(&row[34..44], "network   ");
+        assert!(row[45..75].starts_with("192.168.1.40:9100"));
+        assert!(row[76..].starts_with("this-is-a-ver..."));
     }
 
     #[test]
     fn frame_lists_all_transport_and_profile_values() {
         let frame = render_frame(&snapshot(), None);
 
-        assert!(frame.contains("kitchen              network    REFERENCE"));
-        assert!(frame.contains("counter              usb        unassigned"));
+        assert!(frame.contains("kitchen              connected    network"));
+        assert!(frame.contains("counter              connected    usb"));
     }
 
     #[test]
