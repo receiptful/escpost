@@ -52,18 +52,19 @@ struct Inner {
     collector: Arc<dyn Collector>,
     clock: Arc<dyn Clock>,
     snapshots: watch::Sender<Option<Snapshot>>,
-    refresh: Notify,
     state: Mutex<State>,
 }
 
 struct State {
     subscribers: usize,
+    generation: u64,
+    refresh: Option<Arc<Notify>>,
     task: Option<JoinHandle<()>>,
 }
 
 pub(crate) struct Subscription {
     receiver: watch::Receiver<Option<Snapshot>>,
-    has_observed_snapshot: bool,
+    retained_snapshot: Option<Snapshot>,
     monitor: PrinterMonitor,
 }
 
@@ -84,9 +85,10 @@ impl PrinterMonitor {
                 collector,
                 clock,
                 snapshots,
-                refresh: Notify::new(),
                 state: Mutex::new(State {
                     subscribers: 0,
+                    generation: 0,
+                    refresh: None,
                     task: None,
                 }),
             }),
@@ -94,7 +96,8 @@ impl PrinterMonitor {
     }
 
     pub(crate) fn subscribe(&self) -> Subscription {
-        let receiver = self.inner.snapshots.subscribe();
+        let mut receiver = self.inner.snapshots.subscribe();
+        let retained_snapshot = receiver.borrow_and_update().clone();
         let mut state = self
             .inner
             .state
@@ -102,42 +105,51 @@ impl PrinterMonitor {
             .expect("the printer monitor state mutex should not be poisoned");
         state.subscribers += 1;
         if state.subscribers == 1 {
+            state.generation += 1;
+            let generation = state.generation;
+            let refresh = Arc::new(Notify::new());
+            state.refresh = Some(Arc::clone(&refresh));
             let monitor = self.clone();
             state.task = Some(tokio::spawn(async move {
-                monitor.run().await;
+                monitor.run(generation, refresh).await;
             }));
         }
         Subscription {
             receiver,
-            has_observed_snapshot: false,
+            retained_snapshot,
             monitor: self.clone(),
         }
     }
 
     pub(crate) fn request_refresh(&self) {
-        let state = self
-            .inner
-            .state
-            .lock()
-            .expect("the printer monitor state mutex should not be poisoned");
-        if state.subscribers != 0 {
-            self.inner.refresh.notify_one();
+        let refresh = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .expect("the printer monitor state mutex should not be poisoned");
+            (state.subscribers != 0)
+                .then(|| state.refresh.as_ref().map(Arc::clone))
+                .flatten()
+        };
+        if let Some(refresh) = refresh {
+            refresh.notify_one();
         }
     }
 
-    async fn run(self) {
+    async fn run(self, generation: u64, refresh: Arc<Notify>) {
         let mut forced = true;
         loop {
-            self.collect_and_publish(forced).await;
+            self.collect_and_publish(generation, forced).await;
             forced = false;
             tokio::select! {
                 _ = tokio::time::sleep(COLLECTION_INTERVAL) => {}
-                _ = self.inner.refresh.notified() => {}
+                _ = refresh.notified() => {}
             }
         }
     }
 
-    async fn collect_and_publish(&self, forced: bool) {
+    async fn collect_and_publish(&self, generation: u64, forced: bool) {
         let response = self
             .inner
             .collector
@@ -159,6 +171,14 @@ impl PrinterMonitor {
                     .map_or_else(Vec::new, |snapshot| snapshot.printers.clone()),
             },
         };
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("the printer monitor state mutex should not be poisoned");
+        if state.subscribers == 0 || state.generation != generation {
+            return;
+        }
         let previous = self.inner.snapshots.borrow().clone();
         if should_publish(previous.as_ref(), &snapshot, forced) {
             self.inner.snapshots.send_replace(Some(snapshot));
@@ -168,11 +188,8 @@ impl PrinterMonitor {
 
 impl Subscription {
     pub(crate) async fn next(&mut self) -> Option<Snapshot> {
-        if !self.has_observed_snapshot {
-            self.has_observed_snapshot = true;
-            if let Some(snapshot) = self.receiver.borrow_and_update().clone() {
-                return Some(snapshot);
-            }
+        if let Some(snapshot) = self.retained_snapshot.take() {
+            return Some(snapshot);
         }
         loop {
             self.receiver.changed().await.ok()?;
@@ -195,6 +212,8 @@ impl Drop for Subscription {
         if state.subscribers == 0
             && let Some(task) = state.task.take()
         {
+            state.generation += 1;
+            state.refresh = None;
             task.abort();
         }
     }
@@ -233,7 +252,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Condvar, Mutex};
 
     use super::*;
     use crate::features::printers::list::{ConnectionFacts, NetworkConnectionFacts};
@@ -271,6 +290,79 @@ mod tests {
         assert_eq!(retained.printers, fresh.printers);
         assert!(fresh.updated_at > retained.updated_at);
         assert_eq!(collector.calls(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resumed_subscription_delivers_retained_before_an_already_published_fresh_snapshot() {
+        let collector = ScriptedCollector::new([success("retained"), success("fresh")]);
+        let monitor = test_monitor(collector.clone());
+
+        let mut first = monitor.subscribe();
+        assert_eq!(first.next().await.unwrap().printers[0].name, "retained");
+        drop(first);
+
+        let mut resumed = monitor.subscribe();
+        wait_for_calls(&collector, 2).await;
+
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "retained");
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "fresh");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_aborted_generation_cannot_publish_after_a_new_generation_starts() {
+        let collector =
+            ScriptedCollector::new([success("retained"), success("stale"), success("fresh")]);
+        let clock = BlockingSecondClock::starting_at(1_787_754_730);
+        let monitor = test_monitor_with_clock(collector, clock.clone());
+
+        let mut first = monitor.subscribe();
+        assert_eq!(first.next().await.unwrap().printers[0].name, "retained");
+        drop(first);
+
+        let abandoned = monitor.subscribe();
+        wait_for_blocked_clock(&clock).await;
+        drop(abandoned);
+
+        let mut resumed = monitor.subscribe();
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "retained");
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "fresh");
+
+        clock.release();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+
+        assert!(!resumed.receiver.has_changed().unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stale_generation_is_fenced_from_publication() {
+        let monitor = test_monitor(ScriptedCollector::new([success("stale")]));
+        let mut receiver = monitor.inner.snapshots.subscribe();
+        monitor.inner.snapshots.send_replace(Some(Snapshot {
+            updated_at: OffsetDateTime::from_unix_timestamp(1_787_754_730)
+                .expect("the fixed test timestamp should be valid"),
+            warning: None,
+            printers: vec![network_printer("retained", Availability::Connected)],
+        }));
+        receiver.borrow_and_update();
+        {
+            let mut state = monitor
+                .inner
+                .state
+                .lock()
+                .expect("the printer monitor state mutex should not be poisoned");
+            state.subscribers = 1;
+            state.generation = 2;
+        }
+
+        monitor.collect_and_publish(1, true).await;
+
+        assert!(!receiver.has_changed().unwrap());
+        assert_eq!(
+            monitor.inner.snapshots.borrow().as_ref().unwrap().printers[0].name,
+            "retained"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -396,12 +488,44 @@ mod tests {
         assert_eq!(collector.calls(), 2);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_refresh_queued_during_an_aborted_collection_does_not_leak_into_the_next_generation()
+    {
+        let collector = PausingSecondCollector::new([
+            success("retained"),
+            success("fresh"),
+            success("unexpected"),
+        ]);
+        let monitor = test_monitor(collector.clone());
+
+        let mut first = monitor.subscribe();
+        assert_eq!(first.next().await.unwrap().printers[0].name, "retained");
+        drop(first);
+
+        let abandoned = monitor.subscribe();
+        wait_for_calls(&collector, 2).await;
+        monitor.request_refresh();
+        drop(abandoned);
+
+        let mut resumed = monitor.subscribe();
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "retained");
+        assert_eq!(resumed.next().await.unwrap().printers[0].name, "fresh");
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(collector.calls(), 3);
+    }
+
     fn test_monitor(collector: impl Collector + 'static) -> PrinterMonitor {
-        PrinterMonitor::with_dependencies(
-            None,
-            Arc::new(collector),
-            Arc::new(ScriptedClock::starting_at(1_787_754_730)),
-        )
+        test_monitor_with_clock(collector, ScriptedClock::starting_at(1_787_754_730))
+    }
+
+    fn test_monitor_with_clock(
+        collector: impl Collector + 'static,
+        clock: impl Clock + 'static,
+    ) -> PrinterMonitor {
+        PrinterMonitor::with_dependencies(None, Arc::new(collector), Arc::new(clock))
     }
 
     fn success(name: &str) -> application::Result<list::Response> {
@@ -433,6 +557,16 @@ mod tests {
             tokio::task::yield_now().await;
         }
         panic!("the blocked collection should have been cancelled");
+    }
+
+    async fn wait_for_blocked_clock(clock: &BlockingSecondClock) {
+        loop {
+            let blocked = clock.blocked.notified();
+            if clock.is_blocked() {
+                return;
+            }
+            blocked.await;
+        }
     }
 
     trait CallCounter {
@@ -509,6 +643,43 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct PausingSecondCollector {
+        responses: Arc<Mutex<VecDeque<application::Result<list::Response>>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl PausingSecondCollector {
+        fn new(responses: impl IntoIterator<Item = application::Result<list::Response>>) -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    impl CallCounter for PausingSecondCollector {
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Collector for PausingSecondCollector {
+        fn collect(&self, _request: list::Request) -> CollectionFuture {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if call == 2 {
+                return Box::pin(std::future::pending());
+            }
+            let response = self
+                .responses
+                .lock()
+                .expect("the scripted responses mutex should not be poisoned")
+                .pop_front()
+                .expect("the test must script every collection");
+            Box::pin(std::future::ready(response))
+        }
+    }
+
     struct CancelOnDrop(Arc<AtomicBool>);
 
     impl Drop for CancelOnDrop {
@@ -540,6 +711,68 @@ mod tests {
                 .expect("the scripted clock mutex should not be poisoned");
             let now = *timestamp;
             *timestamp += time::Duration::seconds(1);
+            now
+        }
+    }
+
+    #[derive(Clone)]
+    struct BlockingSecondClock {
+        calls: Arc<AtomicUsize>,
+        blocked: Arc<Notify>,
+        next_timestamp: Arc<Mutex<OffsetDateTime>>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl BlockingSecondClock {
+        fn starting_at(timestamp: i64) -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                blocked: Arc::new(Notify::new()),
+                next_timestamp: Arc::new(Mutex::new(
+                    OffsetDateTime::from_unix_timestamp(timestamp)
+                        .expect("the fixed test timestamp should be valid"),
+                )),
+                release: Arc::new((Mutex::new(false), Condvar::new())),
+            }
+        }
+
+        fn is_blocked(&self) -> bool {
+            self.calls.load(Ordering::SeqCst) >= 2
+        }
+
+        fn release(&self) {
+            let (released, wake) = &*self.release;
+            *released
+                .lock()
+                .expect("the clock release mutex should not be poisoned") = true;
+            wake.notify_all();
+        }
+    }
+
+    impl Clock for BlockingSecondClock {
+        fn now(&self) -> OffsetDateTime {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let now = {
+                let mut timestamp = self
+                    .next_timestamp
+                    .lock()
+                    .expect("the scripted clock mutex should not be poisoned");
+                let now = *timestamp;
+                *timestamp += time::Duration::seconds(1);
+                now
+            };
+            if call == 2 {
+                self.blocked.notify_waiters();
+                let (released, wake) = &*self.release;
+                let mut released = released
+                    .lock()
+                    .expect("the clock release mutex should not be poisoned");
+                while !*released {
+                    released = wake
+                        .wait(released)
+                        .expect("the clock release mutex should not be poisoned");
+                }
+            }
             now
         }
     }
