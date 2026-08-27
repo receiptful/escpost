@@ -4,11 +4,17 @@ import { AppDataProvider, useAppData } from "./data";
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
+  static order = 0;
   closed = false;
+  readonly constructedAt: number;
+  closedAt: number | null = null;
   private readonly listeners = new Map<string, ((event: Event) => void)[]>();
-  constructor(readonly url: string) { FakeEventSource.instances.push(this); }
+  constructor(readonly url: string) {
+    this.constructedAt = FakeEventSource.order++;
+    FakeEventSource.instances.push(this);
+  }
   addEventListener(name: string, handler: (event: Event) => void) { this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]); }
-  close() { this.closed = true; }
+  close() { this.closed = true; this.closedAt = FakeEventSource.order++; }
   emit(name: string, data: unknown) {
     for (const handler of this.listeners.get(name) ?? []) handler(new MessageEvent(name, { data: JSON.stringify(data) }));
   }
@@ -27,12 +33,13 @@ function Probe() {
     <button type="button" onClick={() => markScanResultConfigured("USB one", { type: "usb", vendor_id: 1046, product_id: 20497, serial_number: null, interface_number: 0, out_endpoint: 1, in_endpoint: null })}>Configure USB</button>
     <p>{`${profiles.phase}:${profiles.data?.profiles.length ?? "none"}`}</p>
     <p>{`${scan.phase}:${scan.printers.length}:${scan.failures.map((failure) => failure.product_id).join(",")}`}</p>
-    <p data-testid="configured">{scan.printers.map((printer) => printer.configured_names.join(",")).join(";")}</p>
+    <p data-testid="configured">{JSON.stringify(scan.printers.map((printer) => printer.configured_names))}</p>
   </>;
 }
 
 function renderProvider() {
   FakeEventSource.instances = [];
+  FakeEventSource.order = 0;
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   return render(<AppDataProvider><Probe /></AppDataProvider>);
 }
@@ -53,7 +60,7 @@ describe("AppDataProvider", () => {
     expect(screen.getByText("ready:0")).toBeTruthy();
   });
 
-  test("keeps discovery stream ownership separate from inventory and preserves ordered USB failures", () => {
+  test("closes a discovery source before constructing its replacement and preserves ordered USB failures", () => {
     const fetch = jest.fn((_input: RequestInfo | URL) => Promise.reject(new Error("unexpected request")));
     globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
     renderProvider();
@@ -66,6 +73,8 @@ describe("AppDataProvider", () => {
     act(() => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
     expect(first.closed).toBe(true);
     expect(FakeEventSource.instances).toHaveLength(2);
+    expect(first.closedAt).not.toBeNull();
+    expect(first.closedAt as number).toBeLessThan(FakeEventSource.instances[1]!.constructedAt);
   });
 
   test("marks only matching network and one ambiguous USB discovery result configured", () => {
@@ -77,10 +86,11 @@ describe("AppDataProvider", () => {
       connection: { type: "usb", vendor_id: 1046, product_id: 20497, bus: "003", address: 7, manufacturer: null, product: host, serial_number: null, interface_number: 0, out_endpoints: [1], in_endpoints: [] },
     });
     act(() => source.emit("printer", { transport: "network", configured_names: [], configured_profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } }));
+    act(() => source.emit("printer", { transport: "network", configured_names: [], configured_profile: null, connection: { type: "network", host: "10.0.0.9", port: 9100 } }));
     act(() => source.emit("printer", usb("first")));
     act(() => source.emit("printer", usb("second")));
     fireEvent.click(screen.getByRole("button", { name: "Configure network" }));
     fireEvent.click(screen.getByRole("button", { name: "Configure USB" }));
-    expect(screen.getByTestId("configured").textContent).toBe("Kitchen;USB one;");
+    expect(screen.getByTestId("configured").textContent).toBe("[[\"Kitchen\"],[],[\"USB one\"],[]]");
   });
 });

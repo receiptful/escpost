@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { AppDataProvider } from "../../app/data";
 import { PrinterInventoryProvider } from "../../app/printer-inventory-data";
@@ -21,18 +21,31 @@ const originalFetch = globalThis.fetch;
 let fetchMock: ReturnType<typeof jest.fn>;
 const inventory = (printers: unknown[], warning: string | null = null) => ({ updated_at: "2026-08-26T14:32:10Z", warning, printers });
 
+function pageFetch(input: RequestInfo | URL, init?: RequestInit) {
+  const path = String(input);
+  const method = init?.method ?? "GET";
+  if (method === "GET" && path === "/api/printers/discover/networks") {
+    return Promise.resolve(new Response(JSON.stringify({
+      networks: [{ subnet: "10.0.0.0/24", interface: "eth0", hosts: 253 }],
+      skipped: [], default_port: 9100, default_timeout_ms: 1000,
+    }), { headers: { "content-type": "application/json" } }));
+  }
+  if (method === "GET" && path === "/api/profiles/list") {
+    return Promise.resolve(new Response(JSON.stringify({ profiles: [] }), { headers: { "content-type": "application/json" } }));
+  }
+  if (method === "POST" && path === "/api/printers/add") {
+    const body = JSON.parse(String(init?.body)) as { name: string; profile: string | null; connection: { type: "usb" | "network" } };
+    return Promise.resolve(new Response(JSON.stringify({ name: body.name, transport: body.connection.type, profile: body.profile, warnings: [] }), {
+      status: 201, headers: { "content-type": "application/json" },
+    }));
+  }
+  return Promise.reject(new Error(`unexpected ${method} ${path}`));
+}
+
 function renderPage() {
   FakeEventSource.instances = [];
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-  fetchMock = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
-    const path = String(input);
-    const body = path === "/api/printers/add"
-      ? { name: JSON.parse(String(init?.body)).name, transport: "network", profile: null, warnings: [] }
-      : path === "/api/printers/discover/networks"
-        ? { networks: [{ subnet: "10.0.0.0/24", interface: "eth0", hosts: 253 }], skipped: [], default_port: 9100, default_timeout_ms: 1000 }
-        : { profiles: [] };
-    return Promise.resolve(new Response(JSON.stringify(body), { status: path === "/api/printers/add" ? 201 : 200, headers: { "content-type": "application/json" } }));
-  });
+  fetchMock = jest.fn(pageFetch);
   globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
   render(<ServerStatusProvider><PrinterInventoryProvider><AppDataProvider><PrintersPage /></AppDataProvider></PrinterInventoryProvider></ServerStatusProvider>);
   act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", { virtual_printer: null, jobs_processed: 0, config_path: "/tmp/printers.toml" }));
@@ -49,12 +62,7 @@ function ToggleablePrintersPage() {
 function renderToggleablePage() {
   FakeEventSource.instances = [];
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-  fetchMock = jest.fn((input: RequestInfo | URL) => {
-    const body = String(input) === "/api/printers/discover/networks"
-      ? { networks: [{ subnet: "10.0.0.0/24", interface: "eth0", hosts: 253 }], skipped: [], default_port: 9100, default_timeout_ms: 1000 }
-      : { profiles: [] };
-    return Promise.resolve(new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
-  });
+  fetchMock = jest.fn(pageFetch);
   globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
   render(<ServerStatusProvider><PrinterInventoryProvider><AppDataProvider><ToggleablePrintersPage /></AppDataProvider></PrinterInventoryProvider></ServerStatusProvider>);
   act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", { virtual_printer: null, jobs_processed: 0, config_path: "/tmp/printers.toml" }));
@@ -64,6 +72,28 @@ function renderToggleablePage() {
 afterEach(() => { cleanup(); globalThis.EventSource = originalEventSource; globalThis.fetch = originalFetch; });
 
 describe("PrintersPage", () => {
+  test("renders every configured-printer fact in both responsive layouts", () => {
+    renderPage();
+    act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", inventory([
+      { name: "Kitchen", transport: "network", availability: "connected", profile: "REFERENCE", connection: { type: "network", host: "10.0.0.8", port: 9100 } },
+      { name: "Counter", transport: "usb", availability: "unavailable", profile: null, connection: { type: "usb", vendor_id: 1046, product_id: 20497, bus: "003", address: 4, manufacturer: null, product: null, serial_number: "B120300001", interface_number: 0, out_endpoints: [1], in_endpoints: [] } },
+    ])));
+    const rows = screen.getAllByRole("row").filter((row) => row.querySelector("td"));
+    const cards = [...document.querySelectorAll("article")];
+    const expected = [
+      ["Kitchen", "Connected", "REFERENCE", "IP", "10.0.0.8:9100"],
+      ["Counter", "Unavailable", "No profile", "USB", "USB 0416:5011, bus 003 address 4, serial B120300001, interface 0"],
+    ];
+    expect(rows).toHaveLength(2);
+    expect(cards).toHaveLength(2);
+    for (const [index, facts] of expected.entries()) {
+      for (const fact of facts) {
+        expect(within(rows[index]!).getByText(fact)).toBeTruthy();
+        expect(within(cards[index]!).getByText(fact)).toBeTruthy();
+      }
+    }
+  });
+
   test("uses monitor states, complete inventory snapshots, warning, and timestamp", () => {
     renderPage();
     expect(screen.getByText("Connecting to printer monitor…")).toBeTruthy();
@@ -142,9 +172,16 @@ describe("PrintersPage", () => {
       connection: { type: "network", host: "10.0.0.45", port: 9100 },
     }));
     expect(screen.getByText("10.0.0.45:9100")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add 10.0.0.45:9100" }));
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Kitchen" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add printer" }));
+    await waitFor(() => expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain("/api/printers/add"));
+    await act(async () => { for (let turn = 0; turn < 12; turn += 1) await Promise.resolve(); });
+    expect(screen.queryByRole("button", { name: "Add 10.0.0.45:9100" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Leave printers" }));
     fireEvent.click(screen.getByRole("button", { name: "Leave printers" }));
-    expect(screen.getByText("10.0.0.45:9100")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add 10.0.0.45:9100" })).toBeNull();
+    expect(screen.getByText("1 printer found (0 new)")).toBeTruthy();
   });
 
   test("keeps the chosen scan scope when the printers page remounts", async () => {
