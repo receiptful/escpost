@@ -2,9 +2,11 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1249,32 +1251,85 @@ fn non_loopback_listener_prints_a_receipt_exposure_warning() {
     let port = unused_loopback_port();
     let case_directory =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            case_directory
-                .to_str()
-                .expect("the case path should be UTF-8"),
-            "--web-listen",
-            &format!("0.0.0.0:{port}"),
-            "--non-interactive",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start");
-    let stderr_reader = capture_stderr(&mut child);
-
-    wait_until_listening(&mut child, port);
-    wait_until_stderr_contains(
-        &mut child,
-        &stderr_reader,
-        "warning: receipt data is exposed beyond loopback",
+    let mut child = WebChild::new(
+        Command::new(env!("CARGO_BIN_EXE_escpost"))
+            .args([
+                "render",
+                case_directory
+                    .to_str()
+                    .expect("the case path should be UTF-8"),
+                "--web-listen",
+                &format!("0.0.0.0:{port}"),
+                "--non-interactive",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the escpost command should start"),
     );
-    stop(&mut child);
-    let stderr = finish_stderr(stderr_reader);
+    child.capture_stderr();
+
+    child.wait_until_listening(port);
+    child.wait_until_stderr_contains(
+        "warning: receipt data is exposed beyond loopback",
+        Duration::from_secs(5),
+    );
+    let stderr = child.stop();
 
     assert!(stderr.contains("warning: receipt data is exposed beyond loopback"));
+}
+
+#[test]
+fn failed_warning_wait_releases_the_child_listener_and_stderr_reader() {
+    let port = unused_loopback_port();
+    let completion = Arc::new(AtomicBool::new(false));
+    let completion_for_child = Arc::clone(&completion);
+    let reaped = Arc::new(AtomicBool::new(false));
+    let reaped_for_child = Arc::clone(&reaped);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let case_directory =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
+        let mut child = WebChild::new(
+            Command::new(env!("CARGO_BIN_EXE_escpost"))
+                .args([
+                    "render",
+                    case_directory
+                        .to_str()
+                        .expect("the case path should be UTF-8"),
+                    "--web-listen",
+                    &format!("0.0.0.0:{port}"),
+                    "--non-interactive",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("the escpost command should start"),
+        );
+        child.capture_stderr_with(completion_for_child);
+        child.observe_reaped(reaped_for_child);
+
+        child.wait_until_listening(port);
+        child.wait_until_stderr_contains(
+            "warning that this command never writes",
+            Duration::from_millis(100),
+        );
+    }));
+
+    assert!(
+        result.is_err(),
+        "the deliberately missing warning must time out"
+    );
+    assert!(
+        completion.load(Ordering::SeqCst),
+        "the stderr reader should complete during unwind cleanup"
+    );
+    assert!(
+        reaped.load(Ordering::SeqCst),
+        "unwind cleanup should reap the child process"
+    );
+    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+        .expect("unwind cleanup should release the listener port");
 }
 
 fn start_case_web(case: &str, port: u16) -> Child {
@@ -1403,39 +1458,166 @@ fn wait_until_listening(child: &mut Child, port: u16) {
     }
 }
 
+struct WebChild {
+    child: Child,
+    stderr: Option<StderrReader>,
+    reaped: Option<Arc<AtomicBool>>,
+}
+
+impl WebChild {
+    fn new(child: Child) -> Self {
+        Self {
+            child,
+            stderr: None,
+            reaped: None,
+        }
+    }
+
+    fn capture_stderr(&mut self) {
+        self.capture_stderr_with(Arc::new(AtomicBool::new(false)));
+    }
+
+    fn capture_stderr_with(&mut self, completed: Arc<AtomicBool>) {
+        assert!(self.stderr.is_none(), "stderr should only be captured once");
+        let stderr = self.child.stderr.take().expect("stderr should be piped");
+        self.stderr = Some(StderrReader::new(stderr, completed));
+    }
+
+    fn observe_reaped(&mut self, reaped: Arc<AtomicBool>) {
+        assert!(
+            self.reaped.is_none(),
+            "child reaping should only be observed once"
+        );
+        self.reaped = Some(reaped);
+    }
+
+    fn wait_until_listening(&mut self, port: u16) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_ok() {
+                return;
+            }
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .expect("the child status should be readable")
+            {
+                let stderr = self.finish_stderr();
+                panic!("web command exited early with {status}:\n{stderr}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "web command did not listen on port {port}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn wait_until_stderr_contains(&mut self, expected: &str, patience: Duration) {
+        let stderr = self
+            .stderr
+            .as_ref()
+            .expect("stderr must be captured before waiting for it");
+        wait_until_stderr_contains(&mut self.child, stderr, expected, patience);
+    }
+
+    fn stop(&mut self) -> String {
+        self.stop_child()
+            .expect("the web command should be stoppable");
+        self.finish_stderr()
+    }
+
+    fn stop_child(&mut self) -> std::io::Result<()> {
+        if self.child.try_wait()?.is_none() {
+            let _ = self.child.kill();
+        }
+        self.child.wait()?;
+        self.mark_reaped();
+        Ok(())
+    }
+
+    fn finish_stderr(&mut self) -> String {
+        self.stderr
+            .take()
+            .map(StderrReader::finish)
+            .unwrap_or_default()
+    }
+
+    fn mark_reaped(&self) {
+        if let Some(reaped) = &self.reaped {
+            reaped.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for WebChild {
+    fn drop(&mut self) {
+        // Drop must not depend on `try_wait`: a panic from an assertion can
+        // otherwise leave a live child behind because `Child` itself does not
+        // kill on drop. Reap first so the piped stderr reaches EOF, then join
+        // the reader without risking a blocked join.
+        let _ = self.child.kill();
+        if self.child.wait().is_ok() {
+            self.mark_reaped();
+        }
+        if let Some(stderr) = self.stderr.take() {
+            stderr.finish_silently();
+        }
+    }
+}
+
 struct StderrReader {
     lines: mpsc::Receiver<String>,
     complete: thread::JoinHandle<String>,
 }
 
-/// Start consuming a child's stderr before waiting for a particular startup
-/// line. Keeping the reader on a separate thread lets the test wait for the
-/// line while the long-running child remains alive, instead of making EOF
-/// (which arrives only after `stop`) the first observation point.
-fn capture_stderr(child: &mut Child) -> StderrReader {
-    let stderr = child.stderr.take().expect("stderr should be piped");
-    let (sender, lines) = mpsc::channel();
-    let complete = thread::spawn(move || {
-        let mut output = String::new();
-        for line in BufReader::new(stderr).lines() {
-            let line = line.expect("stderr should be readable");
-            output.push_str(&line);
-            output.push('\n');
-            if sender.send(line).is_err() {
-                break;
+impl StderrReader {
+    /// Start consuming stderr before waiting for a particular startup line.
+    /// The reader remains owned by `WebChild`, whose cleanup stops and reaps
+    /// the process before joining this thread, so EOF cannot deadlock cleanup.
+    fn new(stderr: std::process::ChildStderr, completed: Arc<AtomicBool>) -> Self {
+        let (sender, lines) = mpsc::channel();
+        let complete = thread::spawn(move || {
+            let mut output = String::new();
+            for line in BufReader::new(stderr).lines() {
+                let line = match line {
+                    Ok(line) => line,
+                    Err(_) => break,
+                };
+                output.push_str(&line);
+                output.push('\n');
+                if sender.send(line).is_err() {
+                    break;
+                }
             }
-        }
-        output
-    });
-    StderrReader { lines, complete }
+            completed.store(true, Ordering::SeqCst);
+            output
+        });
+        Self { lines, complete }
+    }
+
+    fn finish(self) -> String {
+        self.complete
+            .join()
+            .expect("the stderr reader should not panic")
+    }
+
+    fn finish_silently(self) {
+        let _ = self.complete.join();
+    }
 }
 
 /// The socket can accept connections as soon as Axum binds it, while the CLI
 /// writes its status and exposure warning immediately afterward. Wait for the
 /// asserted line before killing the process so test cleanup cannot race that
 /// stdout/stderr observation. The timeout is a startup bound, not a sleep.
-fn wait_until_stderr_contains(child: &mut Child, stderr: &StderrReader, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+fn wait_until_stderr_contains(
+    child: &mut Child,
+    stderr: &StderrReader,
+    expected: &str,
+    patience: Duration,
+) {
+    let deadline = Instant::now() + patience;
     loop {
         let remaining = deadline
             .checked_duration_since(Instant::now())
@@ -1467,13 +1649,6 @@ fn wait_until_stderr_contains(child: &mut Child, stderr: &StderrReader, expected
             }
         }
     }
-}
-
-fn finish_stderr(stderr: StderrReader) -> String {
-    stderr
-        .complete
-        .join()
-        .expect("the stderr reader should not panic")
 }
 
 fn http_get(port: u16, path: &str) -> String {
