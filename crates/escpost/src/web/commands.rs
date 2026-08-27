@@ -111,23 +111,23 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::Initialize => ("ESC @", "Initialize printer".to_owned(), 2),
         DecodedCommand::SetRightSideCharacterSpacing(spacing) => (
             "ESC SP",
-            format!("Set right-side character spacing · {spacing} × horizontal motion unit"),
+            format!("Set right-side character spacing: {spacing} × horizontal motion unit"),
             2,
         ),
         DecodedCommand::SetAbsolutePrintPosition(position) => (
             "ESC $",
-            format!("Set absolute print position · {position} × horizontal motion unit"),
+            format!("Set absolute print position: {position} × horizontal motion unit"),
             2,
         ),
         DecodedCommand::SelectPrintMode(mode) => (
             "ESC !",
-            format!("Select print mode(s) · {}", print_mode(*mode)),
+            format!("Set print mode(s): {}", print_mode(*mode)),
             2,
         ),
         DecodedCommand::SelectBitImageMode { mode, columns } => (
             "ESC *",
             format!(
-                "Select bit-image mode · {} · {columns} dots wide",
+                "Set bit-image mode: {} · {columns} dots wide",
                 bit_image_mode(*mode)
             ),
             2,
@@ -135,7 +135,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::SetUnderline(thickness) => (
             "ESC -",
             format!(
-                "Turn underline mode on/off · {}",
+                "Turn underline mode: {}",
                 match thickness {
                     0 => "off".to_owned(),
                     1 => "on, 1 dot thick".to_owned(),
@@ -145,17 +145,17 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
             2,
         ),
         DecodedCommand::SelectDefaultLineSpacing => {
-            ("ESC 2", "Select default line spacing".to_owned(), 2)
+            ("ESC 2", "Set default line spacing".to_owned(), 2)
         }
         DecodedCommand::SetLineSpacing(spacing) => (
             "ESC 3",
-            format!("Set line spacing · {spacing} × vertical motion unit"),
+            format!("Set line spacing: {spacing} × vertical motion unit"),
             2,
         ),
         DecodedCommand::SetHorizontalTabPositions(columns) => (
             "ESC D",
             format!(
-                "Set horizontal tab positions · {}",
+                "Set horizontal tab positions: {}",
                 if columns.is_empty() {
                     "cleared".to_owned()
                 } else {
@@ -176,38 +176,36 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
             ),
             2,
         ),
-        DecodedCommand::SetEmphasis(on) => (
-            "ESC E",
-            format!("Turn emphasized mode on/off · {}", switch(*on)),
-            2,
-        ),
+        DecodedCommand::SetEmphasis(on) => {
+            ("ESC E", format!("Turn emphasized mode: {}", switch(*on)), 2)
+        }
         DecodedCommand::PrintAndFeedPaper(distance) => (
             "ESC J",
-            format!("Print and feed paper · {distance} × vertical motion unit"),
+            format!("Print and feed paper: {distance} × vertical motion unit"),
             2,
         ),
         DecodedCommand::SelectCharacterFont(font) => (
             "ESC M",
-            format!("Select character font · {}", font_name(*font)),
+            format!("Set character font: {}", font_name(*font)),
             2,
         ),
         DecodedCommand::SelectInternationalCharacterSet(set) => (
             "ESC R",
             format!(
-                "Select an international character set · {}",
+                "Set international character set: {}",
                 international_character_set(*set)
             ),
             2,
         ),
         DecodedCommand::SetRelativePrintPosition(position) => (
             "ESC \\",
-            format!("Set relative print position · {position} × horizontal motion unit"),
+            format!("Set relative print position: {position} × horizontal motion unit"),
             2,
         ),
         DecodedCommand::SetJustification(justification) => (
             "ESC a",
             format!(
-                "Select justification · {}",
+                "Set justification: {}",
                 match justification {
                     Justification::Left => "left",
                     Justification::Center => "centered",
@@ -219,7 +217,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::PrintAndFeedLines(lines) => (
             "ESC d",
             format!(
-                "Print and feed n lines · {lines} {}",
+                "Print and feed n lines: {lines} {}",
                 if *lines == 1 { "line" } else { "lines" }
             ),
             2,
@@ -231,7 +229,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         } => (
             "ESC p",
             format!(
-                "Generate pulse · drawer kick-out connector pin {} · {} ms on · {} ms off",
+                "Generate pulse: drawer kick-out connector pin {} · {} ms on · {} ms off",
                 if *connector == 0 { 2 } else { 5 },
                 u16::from(*on_time) * 2,
                 u16::from(*off_time) * 2
@@ -241,7 +239,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::SelectCodeTable { table, encoding } => (
             "ESC t",
             format!(
-                "Select character code table · {}",
+                "Set character code table: {}",
                 match encoding {
                     Some(encoding) => encoding.clone(),
                     None => format!("page {table}"),
@@ -252,7 +250,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::SelectCharacterSize(size) => (
             "GS !",
             format!(
-                "Select character size · {} × width · {} × height",
+                "Set character size: {} × width · {} × height",
                 ((size >> 4) & 0x07) + 1,
                 (size & 0x07) + 1
             ),
@@ -260,16 +258,13 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         ),
         DecodedCommand::SetReversePrint(on) => (
             "GS B",
-            format!(
-                "Turn white/black reverse print mode on/off · {}",
-                switch(*on)
-            ),
+            format!("Turn white/black reverse print mode: {}", switch(*on)),
             2,
         ),
         DecodedCommand::SelectHriPosition(position) => (
             "GS H",
             format!(
-                "Select print position of HRI characters · {}",
+                "Set print position of HRI characters: {}",
                 match position {
                     0 => "not printed",
                     1 => "above the barcode",
@@ -281,7 +276,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         ),
         DecodedCommand::SetLeftMargin(margin) => (
             "GS L",
-            format!("Set left margin · {margin} × horizontal motion unit"),
+            format!("Set left margin: {margin} × horizontal motion unit"),
             2,
         ),
         DecodedCommand::SetMotionUnits {
@@ -290,7 +285,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         } => (
             "GS P",
             format!(
-                "Set horizontal and vertical motion units · {} × {}",
+                "Set horizontal and vertical motion units: {} × {}",
                 motion_unit(*horizontal),
                 motion_unit(*vertical)
             ),
@@ -298,24 +293,24 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         ),
         DecodedCommand::SetPrintAreaWidth(width) => (
             "GS W",
-            format!("Set print area width · {width} × horizontal motion unit"),
+            format!("Set print area width: {width} × horizontal motion unit"),
             2,
         ),
         DecodedCommand::SelectHriFont(font) => (
             "GS f",
-            format!("Select font for HRI characters · {}", font_name(*font)),
+            format!("Set font for HRI characters: {}", font_name(*font)),
             2,
         ),
         DecodedCommand::SetBarcodeHeight(height) => {
-            ("GS h", format!("Set barcode height · {height} dots"), 2)
+            ("GS h", format!("Set barcode height: {height} dots"), 2)
         }
         DecodedCommand::SetBarcodeWidth(width) => {
-            ("GS w", format!("Set barcode width · {width} dots"), 2)
+            ("GS w", format!("Set barcode width: {width} dots"), 2)
         }
         DecodedCommand::PrintBarcode { system, data } => (
             "GS k",
             format!(
-                "Print barcode · {} · {}",
+                "Print barcode: {} · {}",
                 barcode_system(*system),
                 readable(data)
             ),
@@ -324,7 +319,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::CutPaper { full, feed } => (
             "GS V",
             format!(
-                "Select cut mode and cut paper · {} cut{}",
+                "Set cut mode and cut paper: {} cut{}",
                 if *full { "full" } else { "partial" },
                 match feed {
                     Some(feed) => format!(" · feeds {feed} × vertical motion unit first"),
@@ -335,7 +330,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         ),
         DecodedCommand::PrintBufferedGraphics => (
             "GS ( L",
-            "Print the graphics data in the print buffer · Function 50".to_owned(),
+            "Print the graphics data in the print buffer: Function 50".to_owned(),
             3,
         ),
         DecodedCommand::StoreRasterGraphics {
@@ -345,13 +340,13 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         } => (
             if *extended_length { "GS 8 L" } else { "GS ( L" },
             format!(
-                "Store the graphics data in the print buffer (raster format) · Function 112 · {width_dots} × {height_dots} dots"
+                "Store the graphics data in the print buffer (raster format): Function 112 · {width_dots} × {height_dots} dots"
             ),
             3,
         ),
         DecodedCommand::SelectQrModel(model) => (
             "GS ( k",
-            format!("QR Code: Select the model · Function 165 · model {model}"),
+            format!("QR Code: Set the model · Function 165 · model {model}"),
             3,
         ),
         DecodedCommand::SetQrModuleSize(size) => (
@@ -362,7 +357,7 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         DecodedCommand::SelectQrErrorCorrection(level) => (
             "GS ( k",
             format!(
-                "QR Code: Select the error correction level · Function 169 · level {}",
+                "QR Code: Set the error correction level · Function 169 · level {}",
                 match level {
                     0 => 'L',
                     1 => 'M',
@@ -393,14 +388,14 @@ fn display(command: &DecodedCommand) -> CommandDisplay {
         } => (
             "GS v 0",
             format!(
-                "Print raster bit image · {width_dots} × {height_dots} dots{}",
+                "Print raster bit image: {width_dots} × {height_dots} dots{}",
                 magnification(*horizontal_scale, *vertical_scale)
             ),
             3,
         ),
         DecodedCommand::SkippedRasterImage => (
             "GS v 0",
-            "Print raster bit image · skipped, the line already holds data".to_owned(),
+            "Print raster bit image: skipped, the line already holds data".to_owned(),
             3,
         ),
         DecodedCommand::TextByte(byte) => (
@@ -738,11 +733,11 @@ mod tests {
     fn print_mode_lists_every_style_it_turns_on() {
         assert_eq!(
             described(DecodedCommand::SelectPrintMode(0x00)).1,
-            "Select print mode(s) · Font A"
+            "Set print mode(s): Font A"
         );
         assert_eq!(
             described(DecodedCommand::SelectPrintMode(0xb9)).1,
-            "Select print mode(s) · Font B · emphasized · double-height · double-width · underline"
+            "Set print mode(s): Font B · emphasized · double-height · double-width · underline"
         );
     }
 
@@ -750,11 +745,11 @@ mod tests {
     fn character_size_resolves_both_magnifications() {
         assert_eq!(
             described(DecodedCommand::SelectCharacterSize(0x00)).1,
-            "Select character size · 1 × width · 1 × height"
+            "Set character size: 1 × width · 1 × height"
         );
         assert_eq!(
             described(DecodedCommand::SelectCharacterSize(0x11)).1,
-            "Select character size · 2 × width · 2 × height"
+            "Set character size: 2 × width · 2 × height"
         );
     }
 
@@ -768,7 +763,7 @@ mod tests {
                 vertical_scale: 1
             })
             .1,
-            "Print raster bit image · 32 × 22 dots"
+            "Print raster bit image: 32 × 22 dots"
         );
         assert_eq!(
             described(DecodedCommand::RasterImage {
@@ -778,7 +773,7 @@ mod tests {
                 vertical_scale: 2
             })
             .1,
-            "Print raster bit image · 32 × 22 dots · double-width · double-height"
+            "Print raster bit image: 32 × 22 dots · double-width · double-height"
         );
     }
 
@@ -786,15 +781,15 @@ mod tests {
     fn tab_positions_agree_in_number_with_the_columns_they_set() {
         assert_eq!(
             described(DecodedCommand::SetHorizontalTabPositions(vec![8])).1,
-            "Set horizontal tab positions · column 8"
+            "Set horizontal tab positions: column 8"
         );
         assert_eq!(
             described(DecodedCommand::SetHorizontalTabPositions(vec![8, 16])).1,
-            "Set horizontal tab positions · columns 8, 16"
+            "Set horizontal tab positions: columns 8, 16"
         );
         assert_eq!(
             described(DecodedCommand::SetHorizontalTabPositions(vec![])).1,
-            "Set horizontal tab positions · cleared"
+            "Set horizontal tab positions: cleared"
         );
     }
 
@@ -882,7 +877,7 @@ mod tests {
             }),
             (
                 "GS V".to_owned(),
-                "Select cut mode and cut paper · full cut".to_owned()
+                "Set cut mode and cut paper: full cut".to_owned()
             )
         );
         assert_eq!(
@@ -891,7 +886,7 @@ mod tests {
                 feed: Some(24)
             })
             .1,
-            "Select cut mode and cut paper · partial cut · feeds 24 × vertical motion unit first"
+            "Set cut mode and cut paper: partial cut · feeds 24 × vertical motion unit first"
         );
     }
 
@@ -904,7 +899,7 @@ mod tests {
             }),
             (
                 "GS k".to_owned(),
-                "Print barcode · Code 128 · \"{B1234\"".to_owned()
+                "Print barcode: Code 128 · \"{B1234\"".to_owned()
             )
         );
     }
@@ -917,7 +912,7 @@ mod tests {
                 encoding: Some("CP850".to_owned())
             })
             .1,
-            "Select character code table · CP850"
+            "Set character code table: CP850"
         );
         assert_eq!(
             described(DecodedCommand::SelectCodeTable {
@@ -925,7 +920,7 @@ mod tests {
                 encoding: None
             })
             .1,
-            "Select character code table · page 2"
+            "Set character code table: page 2"
         );
     }
 
@@ -935,7 +930,7 @@ mod tests {
             described(DecodedCommand::SelectQrErrorCorrection(1)),
             (
                 "GS ( k".to_owned(),
-                "QR Code: Select the error correction level · Function 169 · level M".to_owned()
+                "QR Code: Set the error correction level · Function 169 · level M".to_owned()
             )
         );
         assert_eq!(
@@ -954,7 +949,7 @@ mod tests {
             }),
             (
                 "GS ( L".to_owned(),
-                "Store the graphics data in the print buffer (raster format) · Function 112 · 576 × 128 dots".to_owned()
+                "Store the graphics data in the print buffer (raster format): Function 112 · 576 × 128 dots".to_owned()
             )
         );
         assert_eq!(

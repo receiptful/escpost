@@ -802,7 +802,7 @@ fn web_mode_exposes_experimental_command_traces() {
     assert_eq!(commands[0]["byte_start"], 0);
     assert_eq!(commands[0]["byte_end"], 3);
     assert_eq!(commands[0]["name"], "ESC a");
-    assert_eq!(commands[0]["detail"], "Select justification · centered");
+    assert_eq!(commands[0]["detail"], "Set justification: centered");
     assert_eq!(commands[0]["code_bytes"], "1B 61");
     assert_eq!(commands[0]["capped_parameter_bytes"], "01");
     assert_eq!(commands[0]["total_parameter_bytes"], 1);
