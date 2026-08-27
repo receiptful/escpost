@@ -16,6 +16,8 @@ class FakeEventSource {
     this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]);
   }
 
+  listenerNames() { return [...this.listeners.keys()]; }
+
   close() { this.closed = true; }
 
   emit(name: string, payload?: unknown) {
@@ -45,10 +47,57 @@ describe("openPrinterInventoryStream", () => {
     source.emit("message", snapshot);
 
     expect(source.url).toBe("/api/printers/list/events");
+    expect(source.listenerNames()).toEqual(["message", "error"]);
+    expect(source.listenerNames()).not.toContain("printer");
+    expect(source.listenerNames()).not.toContain("status");
     expect(onSnapshot).toHaveBeenCalledWith(snapshot);
     expect(onError).not.toHaveBeenCalled();
     close();
     expect(source.closed).toBe(true);
+  });
+
+  test("rejects every malformed snapshot shape, retains no bad data, and recovers with a valid message", () => {
+    FakeEventSource.instances = [];
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    const onSnapshot = jest.fn();
+    const onError = jest.fn();
+    openPrinterInventoryStream({ onSnapshot, onError });
+    const source = FakeEventSource.instances[0]!;
+    const networkPrinter = {
+      name: "Kitchen", transport: "network", availability: "connected", profile: null,
+      connection: { type: "network", host: "10.0.0.8", port: 9100 },
+    };
+    const usbPrinter = {
+      name: "Counter", transport: "usb", availability: "unavailable", profile: "REFERENCE",
+      connection: {
+        type: "usb", vendor_id: 1046, product_id: 20497, bus: "003", address: 7,
+        manufacturer: null, product: "POS-58", serial_number: null, interface_number: 0,
+        out_endpoints: [1], in_endpoints: [],
+      },
+    };
+    const valid = { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [networkPrinter, usbPrinter] };
+
+    for (const invalid of [
+      null,
+      [],
+      { updated_at: 0, warning: null, printers: [] },
+      { updated_at: "not-a-date", warning: null, printers: [] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: 3, printers: [] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: {} },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, name: 3 }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, profile: false }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, transport: "usb" }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, availability: "offline" }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, connection: { type: "network", host: 3, port: "9100" } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, vendor_id: "1046" } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, out_endpoints: ["1"] } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, connection: { type: "serial" } }] },
+    ]) source.emit("message", invalid);
+
+    expect(onSnapshot).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(14);
+    source.emit("message", valid);
+    expect(onSnapshot).toHaveBeenCalledWith(valid);
   });
 
   test("reports malformed JSON without closing automatic reconnection", () => {

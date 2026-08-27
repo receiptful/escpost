@@ -61,6 +61,16 @@ describe("PrinterInventoryProvider", () => {
     expect(screen.getByText("ready::none:{}:Backend warning")).toBeTruthy();
   });
 
+  test("retains the last good snapshot for a syntactically valid but malformed stream message", () => {
+    renderProvider();
+    const source = FakeEventSource.instances[0]!;
+    act(() => source.emit("message", snapshot([kitchen()], "Monitor lagging")));
+    act(() => source.emit("message", { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: {} }));
+    expect(screen.getByText("disconnected:Kitchen:The server sent an invalid printer inventory.:{}:Monitor lagging")).toBeTruthy();
+    act(() => source.emit("message", snapshot([], null)));
+    expect(screen.getByText("ready::none:{}:none")).toBeTruthy();
+  });
+
   test("flashes new and recovered printers, and clears flashes after 1.2 seconds", () => {
     jest.useFakeTimers();
     renderProvider();

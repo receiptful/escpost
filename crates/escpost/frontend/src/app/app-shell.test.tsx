@@ -6,6 +6,7 @@ import { App } from "../app";
 import type { DiscoveryQuery } from "../api/discovery-stream";
 import type { VirtualPrinterStatus } from "../api/types";
 import { AppDataProvider, useAppData } from "./data";
+import { PrinterInventoryProvider } from "./printer-inventory-data";
 import { ServerStatusProvider } from "./server-status-data";
 import { AppShell } from "./shell";
 
@@ -59,6 +60,9 @@ function renderAt(path: string) {
     jobs_processed: 0,
     config_path: "/tmp/printers.toml",
   }));
+  act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", {
+    updated_at: "2026-08-27T10:00:00Z", warning: null, printers: [],
+  }));
   return view;
 }
 
@@ -110,17 +114,20 @@ async function renderShell(path: string) {
   locationStub(path);
   const view = render(
     <ServerStatusProvider>
-      <AppDataProvider>
+      <PrinterInventoryProvider><AppDataProvider>
         <LocationProvider scope="/app">
           <AppShell><ScanProbe /></AppShell>
         </LocationProvider>
-      </AppDataProvider>
+      </AppDataProvider></PrinterInventoryProvider>
     </ServerStatusProvider>,
   );
   act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", {
     virtual_printer: virtualPrinter,
     jobs_processed: 0,
     config_path: "/tmp/printers.toml",
+  }));
+  act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", {
+    updated_at: "2026-08-27T10:00:00Z", warning: null, printers: [],
   }));
   await act(async () => { await flush(); });
   return view;

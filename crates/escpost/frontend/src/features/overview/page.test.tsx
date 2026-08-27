@@ -17,12 +17,14 @@ class FakeEventSource {
 const originalEventSource = globalThis.EventSource;
 afterEach(() => { cleanup(); globalThis.EventSource = originalEventSource; });
 
-function renderOverview(printers: unknown[] = [], warning: string | null = null) {
+function renderOverview(printers: unknown[] = [], warning: string | null = null, emitInventory = true) {
   FakeEventSource.instances = [];
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   render(<ServerStatusProvider><PrinterInventoryProvider><AppDataProvider><OverviewPage /></AppDataProvider></PrinterInventoryProvider></ServerStatusProvider>);
   act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", { virtual_printer: { state: "receiving", address: "127.0.0.1:9100" }, jobs_processed: 7, config_path: "" }));
-  act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", { updated_at: "2026-08-26T14:32:10Z", warning, printers }));
+  const source = FakeEventSource.forUrl("/api/printers/list/events")!;
+  if (emitInventory) act(() => source.emit("message", { updated_at: "2026-08-26T14:32:10Z", warning, printers }));
+  return source;
 }
 
 describe("OverviewPage", () => {
@@ -42,5 +44,21 @@ describe("OverviewPage", () => {
     renderOverview([], "Monitor is catching up");
     expect(screen.getByText("0 configured")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("Monitor is catching up");
+  });
+
+  test("distinguishes cold monitor and disconnected monitor without a snapshot", () => {
+    const source = renderOverview([], null, false);
+    expect(screen.getByText("Connecting to printer monitor…")).toBeTruthy();
+    act(() => source.emit("error", {}));
+    expect(screen.getByText("Unable to connect; retrying automatically.")).toBeTruthy();
+  });
+
+  test("keeps snapshot facts visible and marks them stale while reconnecting", () => {
+    const source = renderOverview([
+      { name: "Kitchen", transport: "network", availability: "connected", profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } },
+    ]);
+    act(() => source.emit("error", {}));
+    expect(screen.getByText("1 configured")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Showing stale printer data; reconnecting automatically.");
   });
 });
