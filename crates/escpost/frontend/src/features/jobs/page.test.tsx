@@ -366,3 +366,17 @@ describe("characters beside their bytes", () => {
     expect(within(row).getByText("Print and line feed")).toBeTruthy();
   });
 });
+
+describe("byte cells of any command", () => {
+  test("shades every second byte of a command that prints no text", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const qr = await screen.findByRole("button", { name: /^GS \( k 3\.\.3010:/ });
+    const cells = [...within(qr).getByLabelText("Parameter bytes").querySelectorAll("[data-byte]")];
+
+    expect(cells).toHaveLength(5);
+    expect(cells[0].className).toBe(cells[2].className);
+    expect(cells[1].className).not.toBe(cells[0].className);
+  });
+});

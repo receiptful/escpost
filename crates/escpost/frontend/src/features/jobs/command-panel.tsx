@@ -37,9 +37,10 @@ function ParameterBytes({ view, active, onPreview, onPreviewEnd }: {
         <span
           key={index}
           data-byte={index}
-          class={`flex w-[2.5ch] flex-col items-center leading-tight ${
-            pairing && active === index ? "rounded-sm font-bold ring-1 ring-base-content/40" : ""
-          }`}
+          class={`flex w-[2.5ch] flex-col items-center rounded-sm leading-tight ${
+            // A shade on every second byte keeps one cell apart from the next.
+            index % 2 === 1 ? "bg-base-content/5" : ""
+          } ${pairing && active === index ? "font-bold ring-1 ring-base-content/40" : ""}`}
           onPointerEnter={pairing ? () => onPreview(index) : undefined}
           onPointerLeave={pairing ? onPreviewEnd : undefined}
         >

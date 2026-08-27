@@ -64,4 +64,15 @@ describe("a byte beside the character it printed", () => {
     const held = cells[1].querySelector("[data-character]")?.textContent ?? "";
     expect([...held].map((letter) => letter.codePointAt(0))).toEqual([0x20]);
   });
+
+  test("shades every second byte, so one cell stands apart from the next", () => {
+    const cells = show([
+      character(0, "N", "4E"),
+      character(1, "O", "4F"),
+      character(2, "R", "52"),
+    ]);
+
+    expect(cells[0].className).toBe(cells[2].className);
+    expect(cells[1].className).not.toBe(cells[0].className);
+  });
 });
