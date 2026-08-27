@@ -325,6 +325,27 @@ describe("character highlighting", () => {
     expect(within(row).getByLabelText("Parameter bytes")).toBeTruthy();
   });
 
+  test("names the byte of the character on the sheet", async () => {
+    const { regions, view } = await textRun();
+
+    fireEvent.pointerEnter(regions[1]);
+    const label = view.container.querySelector(".trace-character-label");
+
+    expect(label?.textContent).toContain("69");
+    // The label lies over the characters below it, thus it must not take the
+    // pointer away from them.
+    expect(label?.getAttribute("pointer-events")).toBe("none");
+  });
+
+  test("takes the byte off the sheet once the pointer leaves", async () => {
+    const { regions, view } = await textRun();
+
+    fireEvent.pointerEnter(regions[1]);
+    fireEvent.pointerLeave(regions[1]);
+
+    expect(view.container.querySelector(".trace-character-label")).toBeNull();
+  });
+
   test("forgets the character once the pointer leaves", async () => {
     const { bytes, regions, view } = await textRun();
 

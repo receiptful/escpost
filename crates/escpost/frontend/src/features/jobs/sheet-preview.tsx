@@ -151,6 +151,12 @@ function TraceGroup(props: TraceGroupProps) {
             {runBoxes(paints.map((paint) => paint.bounds)).map((box, index) => (
               <rect key={`run-${index}`} class="trace-region" pointer-events="none" {...box} />
             ))}
+            {props.previewedCharacter !== null && paints[props.previewedCharacter] && (
+              <CharacterLabel
+                hex={view.parameterBytes[props.previewedCharacter]?.hex ?? ""}
+                bounds={paints[props.previewedCharacter].bounds}
+              />
+            )}
             {paints.map((paint, index) => (
               <rect
                 key={`character-${index}`}
@@ -178,6 +184,25 @@ function TraceGroup(props: TraceGroupProps) {
       {motions.map((motion, index) => (
         <MotionDecoration key={`motion-${index}`} groups={props.sheetGroups} groupIndex={props.groupIndex} motion={motion} markerId={props.markerId} />
       ))}
+    </g>
+  );
+}
+
+/** Names the byte of the character the pointer rests on, beside it on the
+ * sheet, the way a QR code names its content. */
+function CharacterLabel({ hex, bounds }: {
+  hex: string;
+  bounds: Extract<CommandEffect, { type: "paint" }>["bounds"];
+}) {
+  const labelWidth = Math.max(24, hex.length * 8 + 10);
+  const labelX = bounds.x + bounds.width / 2 - labelWidth / 2;
+  const labelY = bounds.y + bounds.height + 11;
+  return (
+    // The label lies over whatever the printer put below this character, thus
+    // it never takes the pointer from it.
+    <g class="trace-label trace-character-label" pointer-events="none">
+      <rect x={labelX} y={labelY - 9} width={labelWidth} height="18" rx="2" />
+      <text x={labelX + labelWidth / 2} y={labelY} dy="0.35em" text-anchor="middle">{hex}</text>
     </g>
   );
 }
