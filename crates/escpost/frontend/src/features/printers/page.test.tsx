@@ -94,6 +94,31 @@ describe("PrintersPage", () => {
     }
   });
 
+  test("keeps desktop printer columns fixed when their content lengths differ", () => {
+    renderPage();
+    act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", inventory([
+      {
+        name: "A-printer-name-that-is-much-longer-than-the-other-values",
+        transport: "network",
+        availability: "connected",
+        profile: "AN-EXCEPTIONALLY-LONG-PROFILE-NAME",
+        connection: { type: "network", host: "printer-with-a-long-hostname.example.internal", port: 9100 },
+      },
+    ])));
+
+    const table = screen.getByRole("table") as HTMLTableElement;
+    expect(table.style.tableLayout).toBe("fixed");
+    expect([...table.querySelectorAll("col")].map((column) => (column as HTMLElement).style.width)).toEqual([
+      "20%",
+      "15%",
+      "20%",
+      "45%",
+    ]);
+    for (const cell of table.querySelectorAll("tbody td")) {
+      expect((cell as HTMLElement).style.overflowWrap).toBe("anywhere");
+    }
+  });
+
   test("uses monitor states, complete inventory snapshots, warning, and timestamp", () => {
     renderPage();
     expect(screen.getByText("Connecting to printer monitor…")).toBeTruthy();

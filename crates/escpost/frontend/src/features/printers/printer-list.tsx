@@ -84,13 +84,19 @@ export function PrinterList() {
         <section class="rounded-box bg-base-100 p-5 shadow-sm"><p>No printers configured.</p></section>
       ) : <>
         <div class="hidden overflow-x-auto rounded-box bg-base-100 shadow-sm lg:block">
-          <table class="table">
+          <table class="table w-full" style={{ tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "45%" }} />
+            </colgroup>
             <thead><tr><th>Name</th><th>Status</th><th>Profile</th><th>Connection</th></tr></thead>
             <tbody>{printerData.map((printer) => <tr key={printer.name} class={flashClass(resource.printerFlashes, printer.name)}>
-              <td>{printer.name}</td>
-              <td>{titleCase(printer.availability)}</td>
-              <td>{printer.profile ?? "No profile"}</td>
-              <td>{connection(printer)}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{printer.name}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{titleCase(printer.availability)}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{printer.profile ?? "No profile"}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{connection(printer)}</td>
             </tr>)}</tbody>
           </table>
         </div>
