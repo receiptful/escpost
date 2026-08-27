@@ -451,5 +451,9 @@ describe("where the job furniture sits", () => {
     expect(column).not.toBeNull();
     expect(column?.contains(sheets)).toBe(true);
     expect(column?.contains(panel)).toBe(false);
+    // The column and the panel are cells of one row of the grid, which is what
+    // gives them the same top and the same height.
+    expect(panel.parentElement).toBe(column?.parentElement ?? null);
+    expect(panel.parentElement?.getAttribute("class")).toContain("grid");
   });
 });
