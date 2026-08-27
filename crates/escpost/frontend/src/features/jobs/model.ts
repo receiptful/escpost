@@ -14,6 +14,9 @@ export type CommandGroup = {
   /** The style in force while the group printed. A command that changes the
    * style carries the style it produced, thus its own group shows that one. */
   textStyle?: TextStyle;
+  /** What the group shows, built once for the job rather than on each render.
+   * Nothing in it follows the pointer, thus it holds while the job holds. */
+  view: CommandGroupView;
 };
 
 export type GroupedSheet = JobSheet & { groups: CommandGroup[] };
@@ -84,7 +87,8 @@ export type CommandGroupView = {
 };
 
 export function groupAdjacentCommands(commands: JobCommand[], sheetNumber: number): CommandGroup[] {
-  const groups: CommandGroup[] = [];
+  // A group holds its view once it is whole, thus the run is gathered first.
+  const groups: Omit<CommandGroup, "view">[] = [];
   for (const command of commands) {
     const previous = groups.at(-1);
     const previousCommand = previous?.commands.at(-1);
@@ -101,10 +105,13 @@ export function groupAdjacentCommands(commands: JobCommand[], sheetNumber: numbe
       commands: [command],
     });
   }
-  return groups.map((group) => ({
-    ...group,
-    id: `sheet-${sheetNumber}:bytes-${group.commands[0].byte_start}-${group.commands.at(-1)?.byte_end}`,
-  }));
+  return groups.map((group) => {
+    const named = {
+      ...group,
+      id: `sheet-${sheetNumber}:bytes-${group.commands[0].byte_start}-${group.commands.at(-1)?.byte_end}`,
+    };
+    return { ...named, view: commandGroupView(named) };
+  });
 }
 
 export function groupJobCommands(job: CurrentJob): GroupedJob {
@@ -121,6 +128,9 @@ export function groupJobCommands(job: CurrentJob): GroupedJob {
       if (command.text_style) textStyle = command.text_style;
     }
     group.textStyle = textStyle;
+    // The style arrives with the fold, thus the view is built once the group
+    // knows the style it printed with.
+    group.view = commandGroupView(group);
   }
   const byteCount = Math.max(
     0,
@@ -129,7 +139,9 @@ export function groupJobCommands(job: CurrentJob): GroupedJob {
   return { sheets, groups, byteCount };
 }
 
-export function commandGroupView(group: CommandGroup): CommandGroupView {
+/** Builds what a group shows. It reads the commands and the style of the
+ * group, thus it does not need the view the group ends up holding. */
+export function commandGroupView(group: Omit<CommandGroup, "view">): CommandGroupView {
   const first = group.commands[0];
   const last = group.commands.at(-1) ?? first;
   const text = first.name === "Text";

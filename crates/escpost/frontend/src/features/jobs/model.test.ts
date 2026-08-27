@@ -324,4 +324,46 @@ describe("job visualization model", () => {
     expect(reaches("GS v 0")).toBe(false);
     expect(reaches("GS V")).toBe(false);
   });
+
+  test("gives each group its view, built once with the style in force", () => {
+    const style = {
+      font: "A" as const,
+      emphasized: true,
+      underline_thickness: 0,
+      width_magnification: 1,
+      height_magnification: 1,
+      reversed: false,
+      justification: "left" as const,
+      code_page: 0,
+      international_character_set: "U.S.A.",
+      right_side_character_spacing_dots: 0,
+      line_spacing_dots: 30,
+    };
+    const job = {
+      sheets: [{
+        number: 1,
+        commands: [
+          command({ byte_start: 0, byte_end: 3, name: "ESC E", text_style: style }),
+          command({ byte_start: 3, byte_end: 4, name: "Text", detail: "A", capped_parameter_bytes: "41", total_parameter_bytes: 1 }),
+        ],
+      }],
+    };
+
+    const groups = groupJobCommands(job as never).groups;
+
+    // The view holds the style the fold carried in, thus it is built after the
+    // fold rather than on every render of a row.
+    expect(groups[1].view.textStyle?.emphasized).toBe(true);
+    expect(groups[1].view.parameterBytes).toEqual([{ hex: "41", character: "A" }]);
+    // The same view comes back each time, rather than a fresh one.
+    expect(groups[1].view).toBe(groups[1].view);
+  });
+
+  test("gives a group its view even without a job to fold over", () => {
+    const groups = groupAdjacentCommands([
+      command({ byte_start: 0, byte_end: 3, name: "ESC a" }),
+    ], 1);
+
+    expect(groups[0].view.name).toBe("ESC a");
+  });
 });

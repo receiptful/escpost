@@ -2,7 +2,7 @@ import { copyText, webUrl } from "./annotation";
 import { STICKY_HEADER } from "./reveal";
 import type preact from "preact";
 import type { StyleDefaults, TextStyle } from "../../api/types";
-import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
+import type { CommandGroup, CommandGroupView } from "./model";
 
 type Props = {
   groups: CommandGroup[];
@@ -228,7 +228,7 @@ export function CommandPanel(props: Props) {
       </div>
       <ol class="divide-y divide-base-300">
         {props.groups.map((group, row) => {
-          const view = commandGroupView(group);
+          const view = group.view;
           const previewed = props.previewedGroupId === group.id;
           const pinned = props.pinnedGroupId === group.id;
           const href = view.annotation ? webUrl(view.annotation.content) : null;

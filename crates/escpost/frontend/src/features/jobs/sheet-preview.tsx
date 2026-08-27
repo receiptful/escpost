@@ -1,12 +1,6 @@
 import type { CommandEffect } from "../../api/types";
 import { activateAnnotation, webUrl } from "./annotation";
-import {
-  commandGroupView,
-  motionTerminals,
-  runBoxes,
-  type CommandGroup,
-  type GroupedSheet,
-} from "./model";
+import { motionTerminals, runBoxes, type CommandGroup, type GroupedSheet } from "./model";
 
 type Props = {
   sheet: GroupedSheet;
@@ -115,7 +109,7 @@ type TraceGroupProps = {
 };
 
 function TraceGroup(props: TraceGroupProps) {
-  const view = commandGroupView(props.group);
+  const view = props.group.view;
   const paints = view.effects.filter(
     (effect): effect is Extract<CommandEffect, { type: "paint" }> => effect.type === "paint",
   );
