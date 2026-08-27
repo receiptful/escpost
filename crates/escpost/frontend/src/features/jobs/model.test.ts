@@ -5,6 +5,7 @@ import {
   commandGroupView,
   groupAdjacentCommands,
   motionTerminals,
+  runBoxes,
 } from "./model";
 
 function command(overrides: Partial<JobCommand> & Pick<JobCommand, "byte_start" | "byte_end" | "name">): JobCommand {
@@ -178,5 +179,38 @@ describe("job visualization model", () => {
       sourceBottom: 24,
       targetBottom: 38,
     });
+  });
+
+  test("draws one box around the characters of a line", () => {
+    const boxes = runBoxes([
+      { x: 0, y: 0, width: 12, height: 24 },
+      { x: 12, y: 0, width: 12, height: 24 },
+      { x: 24, y: 0, width: 12, height: 24 },
+    ]);
+
+    expect(boxes).toEqual([{ x: 0, y: 0, width: 36, height: 24 }]);
+  });
+
+  test("starts a new box where a run continues on the next line", () => {
+    const boxes = runBoxes([
+      { x: 24, y: 0, width: 12, height: 24 },
+      { x: 36, y: 0, width: 12, height: 24 },
+      { x: 0, y: 30, width: 12, height: 24 },
+      { x: 12, y: 30, width: 12, height: 24 },
+    ]);
+
+    expect(boxes).toEqual([
+      { x: 24, y: 0, width: 24, height: 24 },
+      { x: 0, y: 30, width: 24, height: 24 },
+    ]);
+  });
+
+  test("keeps a taller character inside the box of its line", () => {
+    const boxes = runBoxes([
+      { x: 0, y: 12, width: 12, height: 24 },
+      { x: 12, y: 12, width: 24, height: 48 },
+    ]);
+
+    expect(boxes).toEqual([{ x: 0, y: 12, width: 36, height: 48 }]);
   });
 });

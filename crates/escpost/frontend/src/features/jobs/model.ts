@@ -111,6 +111,34 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
   };
 }
 
+export type PaintBounds = Extract<CommandEffect, { type: "paint" }>["bounds"];
+
+/**
+ * Joins the cells of a run of characters into one box per printed line.
+ *
+ * A run holds no line feed, but the printer still wraps a line that reaches
+ * the end of the print area, thus a run can cover more than one line.
+ */
+export function runBoxes(cells: PaintBounds[]): PaintBounds[] {
+  const boxes: PaintBounds[] = [];
+  let previous: PaintBounds | null = null;
+  for (const cell of cells) {
+    const box = boxes.at(-1);
+    if (!box || !previous || cell.y !== previous.y || cell.x < previous.x) {
+      boxes.push({ ...cell });
+    } else {
+      const right = Math.max(box.x + box.width, cell.x + cell.width);
+      const bottom = Math.max(box.y + box.height, cell.y + cell.height);
+      box.x = Math.min(box.x, cell.x);
+      box.y = Math.min(box.y, cell.y);
+      box.width = right - box.x;
+      box.height = bottom - box.y;
+    }
+    previous = cell;
+  }
+  return boxes;
+}
+
 export type MotionTerminals = {
   sourceX: number;
   sourceTop: number;

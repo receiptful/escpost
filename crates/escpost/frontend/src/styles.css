@@ -99,13 +99,18 @@
   pointer-events: all;
 }
 
-/* The one character the pointer rests on, apart from the rest of its group. */
-.trace-group :is(:hover, :focus-visible) > .trace-region-active,
-.trace-group:is(.trace-previewed, .trace-pinned) .trace-region-active,
-.trace-group:is(:hover, :focus-visible) .trace-region-active {
+/* Each character of a run answers to the pointer, but stays without a box of
+   its own until the pointer rests on it. */
+.trace-character {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.5;
+  pointer-events: all;
+}
+
+.trace-group:is(:hover, :focus-visible, .trace-previewed, .trace-pinned) .trace-character-active {
   fill: var(--trace-fill-strong);
   stroke: var(--trace-color);
-  stroke-width: 2.5;
 }
 
 .trace-motion,

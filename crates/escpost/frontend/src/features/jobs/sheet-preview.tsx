@@ -1,6 +1,6 @@
 import type { CommandEffect } from "../../api/types";
 import { activateAnnotation, webUrl } from "./annotation";
-import { commandGroupView, motionTerminals, type CommandGroup, type GroupedSheet } from "./model";
+import { commandGroupView, motionTerminals, runBoxes, type CommandGroup, type GroupedSheet } from "./model";
 
 type Props = {
   sheet: GroupedSheet;
@@ -142,26 +142,39 @@ function TraceGroup(props: TraceGroupProps) {
         }
       }}
     >
-      {paints.map((paint, index) => (
-        <g key={`paint-${index}`}>
-          <rect
-            class={`trace-region ${
-              pairing && props.previewedCharacter === index ? "trace-region-active" : ""
-            }`}
-            onPointerEnter={pairing
-              ? () => {
-                props.onPreview(props.group.id);
-                props.onPreviewCharacter(index);
-              }
-              : undefined}
-            onPointerLeave={pairing ? props.onPreviewCharacterEnd : undefined}
-            {...paint.bounds}
-          />
-          {view.annotation && (props.previewed || props.pinned) && (
-            <AnnotationLabel annotation={view.annotation} bounds={paint.bounds} />
-          )}
-        </g>
-      ))}
+      {/* A run of characters shows one box per printed line. A single
+          character shows its own box only while the pointer rests on it, the
+          way the row marks the byte that printed it. */}
+      {pairing
+        ? (
+          <>
+            {runBoxes(paints.map((paint) => paint.bounds)).map((box, index) => (
+              <rect key={`run-${index}`} class="trace-region" pointer-events="none" {...box} />
+            ))}
+            {paints.map((paint, index) => (
+              <rect
+                key={`character-${index}`}
+                class={`trace-character ${
+                  props.previewedCharacter === index ? "trace-character-active" : ""
+                }`}
+                onPointerEnter={() => {
+                  props.onPreview(props.group.id);
+                  props.onPreviewCharacter(index);
+                }}
+                onPointerLeave={props.onPreviewCharacterEnd}
+                {...paint.bounds}
+              />
+            ))}
+          </>
+        )
+        : paints.map((paint, index) => (
+          <g key={`paint-${index}`}>
+            <rect class="trace-region" {...paint.bounds} />
+            {view.annotation && (props.previewed || props.pinned) && (
+              <AnnotationLabel annotation={view.annotation} bounds={paint.bounds} />
+            )}
+          </g>
+        ))}
       {motions.map((motion, index) => (
         <MotionDecoration key={`motion-${index}`} groups={props.sheetGroups} groupIndex={props.groupIndex} motion={motion} markerId={props.markerId} />
       ))}

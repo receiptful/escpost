@@ -289,8 +289,8 @@ describe("character highlighting", () => {
     const view = render(<JobsPage />);
     const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
     const bytes = [...within(row).getByLabelText("Parameter bytes").querySelectorAll("[data-byte]")];
-    const regions = [...view.container.querySelectorAll(".trace-region")];
-    return { row, bytes, regions };
+    const regions = [...view.container.querySelectorAll(".trace-character")];
+    return { row, bytes, regions, view };
   }
 
   test("hovering a character marks its byte and only that byte", async () => {
@@ -307,17 +307,26 @@ describe("character highlighting", () => {
 
     fireEvent.pointerEnter(bytes[0]);
 
-    expect(regions[0].getAttribute("class")).toContain("trace-region-active");
-    expect(regions[1].getAttribute("class")).not.toContain("trace-region-active");
+    expect(regions[0].getAttribute("class")).toContain("trace-character-active");
+    expect(regions[1].getAttribute("class")).not.toContain("trace-character-active");
+  });
+
+  test("draws one box for the run and none for a single character", async () => {
+    const { row, view } = await textRun();
+    const boxes = [...view.container.querySelectorAll(".trace-region")];
+
+    // Two characters and the QR code, thus one box for the run and one for QR.
+    expect(boxes).toHaveLength(2);
+    expect(within(row).getByLabelText("Parameter bytes")).toBeTruthy();
   });
 
   test("forgets the character once the pointer leaves", async () => {
-    const { bytes, regions } = await textRun();
+    const { bytes, regions, view } = await textRun();
 
     fireEvent.pointerEnter(regions[0]);
     fireEvent.pointerLeave(regions[0]);
 
     expect(bytes[0].className).not.toContain("font-bold");
-    expect(regions[0].getAttribute("class")).not.toContain("trace-region-active");
+    expect(regions[0].getAttribute("class")).not.toContain("trace-character-active");
   });
 });
