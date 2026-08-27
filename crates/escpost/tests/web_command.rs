@@ -2,9 +2,11 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -120,6 +122,12 @@ profile = "REFERENCE"
     );
     let printers: serde_json::Value = serde_json::from_slice(response_body(&printers))
         .expect("the printer response should be JSON");
+    assert_eq!(printers["warning"], serde_json::Value::Null);
+    assert!(
+        printers["updated_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z'))
+    );
     assert_eq!(printers["printers"].as_array().map(Vec::len), Some(1));
     assert_eq!(printers["printers"][0]["name"], "kitchen");
     assert_eq!(printers["printers"][0]["transport"], "network");
@@ -134,7 +142,13 @@ profile = "REFERENCE"
     let network_printers: serde_json::Value =
         serde_json::from_slice(response_body(&network_printers))
             .expect("the filtered printer response should be JSON");
-    assert_eq!(network_printers, printers);
+    assert_eq!(network_printers["warning"], serde_json::Value::Null);
+    assert!(
+        network_printers["updated_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z'))
+    );
+    assert_eq!(network_printers["printers"], printers["printers"]);
 
     assert_eq!(
         response_status(&invalid_transport),
@@ -518,6 +532,7 @@ fn known_api_routes_reject_non_get_methods_with_json_errors() {
         "/api/status",
         "/api/status/events",
         "/api/printers/list",
+        "/api/printers/list/events",
         "/api/printers/discover",
         "/api/printers/discover/networks",
         "/api/profiles/list",
@@ -698,6 +713,34 @@ fn api_status_events_starts_with_the_current_complete_snapshot() {
         serde_json::from_str::<serde_json::Value>(data).unwrap(),
         serde_json::from_slice::<serde_json::Value>(response_body(&snapshot)).unwrap()
     );
+}
+
+#[test]
+fn printer_inventory_stream_starts_with_an_unnamed_complete_snapshot() {
+    let port = unused_loopback_port();
+    let mut child = start_case_web("single-sheet", port);
+
+    wait_until_listening(&mut child, port);
+    let event = http_get_first_event(port, "/api/printers/list/events");
+    let invalid_query = http_get_bytes(port, "/api/printers/list/events?transport=usb");
+    stop(&mut child);
+
+    assert!(event.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(event.contains("content-type: text/event-stream"));
+    assert!(event.contains("cache-control: no-store"));
+    assert!(
+        !event.contains("event:"),
+        "a printer inventory snapshot should use the standard message event"
+    );
+    let snapshot: serde_json::Value = serde_json::from_str(event_data(&event)).unwrap();
+    assert!(snapshot["updated_at"].is_string());
+    assert!(snapshot["warning"].is_null());
+    assert!(snapshot["printers"].is_array());
+
+    assert_eq!(response_status(&invalid_query), "HTTP/1.1 400 Bad Request");
+    let invalid_query: serde_json::Value = serde_json::from_slice(response_body(&invalid_query))
+        .expect("the invalid query response should be JSON");
+    assert_eq!(invalid_query["error"]["code"], "invalid_query");
 }
 
 #[test]
@@ -1153,32 +1196,85 @@ fn non_loopback_listener_prints_a_receipt_exposure_warning() {
     let port = unused_loopback_port();
     let case_directory =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            case_directory
-                .to_str()
-                .expect("the case path should be UTF-8"),
-            "--web-listen",
-            &format!("0.0.0.0:{port}"),
-            "--non-interactive",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start");
+    let mut child = WebChild::new(
+        Command::new(env!("CARGO_BIN_EXE_escpost"))
+            .args([
+                "render",
+                case_directory
+                    .to_str()
+                    .expect("the case path should be UTF-8"),
+                "--web-listen",
+                &format!("0.0.0.0:{port}"),
+                "--non-interactive",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the escpost command should start"),
+    );
+    child.capture_stderr();
 
-    wait_until_listening(&mut child, port);
-    stop(&mut child);
-    let mut stderr = String::new();
-    child
-        .stderr
-        .take()
-        .expect("stderr should be piped")
-        .read_to_string(&mut stderr)
-        .expect("stderr should be readable");
+    child.wait_until_listening(port);
+    child.wait_until_stderr_contains(
+        "warning: receipt data is exposed beyond loopback",
+        Duration::from_secs(5),
+    );
+    let stderr = child.stop();
 
     assert!(stderr.contains("warning: receipt data is exposed beyond loopback"));
+}
+
+#[test]
+fn failed_warning_wait_releases_the_child_listener_and_stderr_reader() {
+    let port = unused_loopback_port();
+    let completion = Arc::new(AtomicBool::new(false));
+    let completion_for_child = Arc::clone(&completion);
+    let reaped = Arc::new(AtomicBool::new(false));
+    let reaped_for_child = Arc::clone(&reaped);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let case_directory =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
+        let mut child = WebChild::new(
+            Command::new(env!("CARGO_BIN_EXE_escpost"))
+                .args([
+                    "render",
+                    case_directory
+                        .to_str()
+                        .expect("the case path should be UTF-8"),
+                    "--web-listen",
+                    &format!("0.0.0.0:{port}"),
+                    "--non-interactive",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("the escpost command should start"),
+        );
+        child.capture_stderr_with(completion_for_child);
+        child.observe_reaped(reaped_for_child);
+
+        child.wait_until_listening(port);
+        child.wait_until_stderr_contains(
+            "warning that this command never writes",
+            Duration::from_millis(100),
+        );
+    }));
+
+    assert!(
+        result.is_err(),
+        "the deliberately missing warning must time out"
+    );
+    assert!(
+        completion.load(Ordering::SeqCst),
+        "the stderr reader should complete during unwind cleanup"
+    );
+    assert!(
+        reaped.load(Ordering::SeqCst),
+        "unwind cleanup should reap the child process"
+    );
+    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+        .expect("unwind cleanup should release the listener port");
 }
 
 fn start_case_web(case: &str, port: u16) -> Child {
@@ -1304,6 +1400,199 @@ fn wait_until_listening(child: &mut Child, port: u16) {
             "web command did not listen on port {port}"
         );
         thread::sleep(Duration::from_millis(25));
+    }
+}
+
+struct WebChild {
+    child: Child,
+    stderr: Option<StderrReader>,
+    reaped: Option<Arc<AtomicBool>>,
+}
+
+impl WebChild {
+    fn new(child: Child) -> Self {
+        Self {
+            child,
+            stderr: None,
+            reaped: None,
+        }
+    }
+
+    fn capture_stderr(&mut self) {
+        self.capture_stderr_with(Arc::new(AtomicBool::new(false)));
+    }
+
+    fn capture_stderr_with(&mut self, completed: Arc<AtomicBool>) {
+        assert!(self.stderr.is_none(), "stderr should only be captured once");
+        let stderr = self.child.stderr.take().expect("stderr should be piped");
+        self.stderr = Some(StderrReader::new(stderr, completed));
+    }
+
+    fn observe_reaped(&mut self, reaped: Arc<AtomicBool>) {
+        assert!(
+            self.reaped.is_none(),
+            "child reaping should only be observed once"
+        );
+        self.reaped = Some(reaped);
+    }
+
+    fn wait_until_listening(&mut self, port: u16) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_ok() {
+                return;
+            }
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .expect("the child status should be readable")
+            {
+                let stderr = self.finish_stderr();
+                panic!("web command exited early with {status}:\n{stderr}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "web command did not listen on port {port}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn wait_until_stderr_contains(&mut self, expected: &str, patience: Duration) {
+        let stderr = self
+            .stderr
+            .as_ref()
+            .expect("stderr must be captured before waiting for it");
+        wait_until_stderr_contains(&mut self.child, stderr, expected, patience);
+    }
+
+    fn stop(&mut self) -> String {
+        self.stop_child()
+            .expect("the web command should be stoppable");
+        self.finish_stderr()
+    }
+
+    fn stop_child(&mut self) -> std::io::Result<()> {
+        if self.child.try_wait()?.is_none() {
+            let _ = self.child.kill();
+        }
+        self.child.wait()?;
+        self.mark_reaped();
+        Ok(())
+    }
+
+    fn finish_stderr(&mut self) -> String {
+        self.stderr
+            .take()
+            .map(StderrReader::finish)
+            .unwrap_or_default()
+    }
+
+    fn mark_reaped(&self) {
+        if let Some(reaped) = &self.reaped {
+            reaped.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for WebChild {
+    fn drop(&mut self) {
+        // Drop must not depend on `try_wait`: a panic from an assertion can
+        // otherwise leave a live child behind because `Child` itself does not
+        // kill on drop. Reap first so the piped stderr reaches EOF, then join
+        // the reader without risking a blocked join.
+        let _ = self.child.kill();
+        if self.child.wait().is_ok() {
+            self.mark_reaped();
+        }
+        if let Some(stderr) = self.stderr.take() {
+            stderr.finish_silently();
+        }
+    }
+}
+
+struct StderrReader {
+    lines: mpsc::Receiver<String>,
+    complete: thread::JoinHandle<String>,
+}
+
+impl StderrReader {
+    /// Start consuming stderr before waiting for a particular startup line.
+    /// The reader remains owned by `WebChild`, whose cleanup stops and reaps
+    /// the process before joining this thread, so EOF cannot deadlock cleanup.
+    fn new(stderr: std::process::ChildStderr, completed: Arc<AtomicBool>) -> Self {
+        let (sender, lines) = mpsc::channel();
+        let complete = thread::spawn(move || {
+            let mut output = String::new();
+            for line in BufReader::new(stderr).lines() {
+                let line = match line {
+                    Ok(line) => line,
+                    Err(_) => break,
+                };
+                output.push_str(&line);
+                output.push('\n');
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+            completed.store(true, Ordering::SeqCst);
+            output
+        });
+        Self { lines, complete }
+    }
+
+    fn finish(self) -> String {
+        self.complete
+            .join()
+            .expect("the stderr reader should not panic")
+    }
+
+    fn finish_silently(self) {
+        let _ = self.complete.join();
+    }
+}
+
+/// The socket can accept connections as soon as Axum binds it, while the CLI
+/// writes its status and exposure warning immediately afterward. Wait for the
+/// asserted line before killing the process so test cleanup cannot race that
+/// stdout/stderr observation. The timeout is a startup bound, not a sleep.
+fn wait_until_stderr_contains(
+    child: &mut Child,
+    stderr: &StderrReader,
+    expected: &str,
+    patience: Duration,
+) {
+    let deadline = Instant::now() + patience;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .unwrap_or_else(|| {
+                let status = child
+                    .try_wait()
+                    .expect("the child status should be readable");
+                panic!(
+                    "web command did not write {expected:?} before the startup deadline; status: {status:?}"
+                );
+            });
+        match stderr.lines.recv_timeout(remaining) {
+            Ok(line) if line.contains(expected) => return,
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let status = child
+                    .try_wait()
+                    .expect("the child status should be readable");
+                panic!(
+                    "web command did not write {expected:?} before the startup deadline; status: {status:?}"
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let status = child
+                    .try_wait()
+                    .expect("the child status should be readable");
+                panic!("web command closed stderr before writing {expected:?}; status: {status:?}");
+            }
+        }
     }
 }
 

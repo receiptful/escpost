@@ -15,6 +15,10 @@ default:
 docker-build:
     {{docker_cargo}} build -p escpost
 
+# Clear the shared Cargo build cache.
+docker-cargo-clean:
+    docker compose run --rm --no-deps --entrypoint sh escpost -c 'find "$CARGO_TARGET_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
+
 # Run the test suite in the container.
 docker-test:
     {{docker_cargo}} test --workspace --exclude escpost-python

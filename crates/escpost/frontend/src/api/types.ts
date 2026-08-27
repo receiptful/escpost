@@ -45,6 +45,8 @@ export type Printer = {
 };
 
 export type PrintersResponse = {
+  updated_at: string;
+  warning: string | null;
   printers: Printer[];
 };
 

@@ -1,275 +1,96 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
-import type { DiscoveryQuery } from "../api/discovery-stream";
 import { AppDataProvider, useAppData } from "./data";
 
-const printerInventory = { printers: [] };
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function Probe() {
-  const { printers } = useAppData();
-  return <p>{printers.phase}</p>;
-}
-
-function FlashProbe() {
-  const { printerFlashes } = useAppData();
-  return <span data-testid="flashes">{JSON.stringify(printerFlashes)}</span>;
-}
-
-const scanQuery: DiscoveryQuery = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
-
-// The product ids of every USB failure the scan has reported, in the order
-// the provider is holding them.
-function ScanFailureProbe() {
-  const { scan } = useAppData();
-  return <span data-testid="failures">{scan.failures.map((failure) => failure.product_id).join(",")}</span>;
-}
-
-function ScanProbe() {
-  const { startScan } = useAppData();
-  return <button type="button" onClick={() => startScan(scanQuery)}>Scan</button>;
-}
-
-// Neither Bun's runtime nor the happy-dom registrator used by the test setup
-// provides a global `EventSource`, so `startScan` (which calls the real
-// `openDiscoveryStream`) is exercised against a small stand-in, the same way
-// `discovery-stream.test.ts` stands in for it. Each instance stamps its own
-// construction and closure with a shared monotonic counter, so a test can
-// assert not just that a stream eventually closed but that it closed before
-// the next one was constructed — the actual ordering guarantee that matters,
-// since closing the `EventSource` is the only way a scan is cancelled
-// server-side.
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
-  private static sequence = 0;
-  readonly url: string;
-  readonly constructedAt: number;
+  static order = 0;
   closed = false;
+  readonly constructedAt: number;
   closedAt: number | null = null;
   private readonly listeners = new Map<string, ((event: Event) => void)[]>();
-
-  constructor(url: string) {
-    this.url = url;
-    this.constructedAt = FakeEventSource.sequence++;
+  constructor(readonly url: string) {
+    this.constructedAt = FakeEventSource.order++;
     FakeEventSource.instances.push(this);
   }
-
-  addEventListener(name: string, handler: (event: Event) => void) {
-    const existing = this.listeners.get(name) ?? [];
-    existing.push(handler);
-    this.listeners.set(name, existing);
-  }
-
-  // Dispatches one named stream event, so a test can drive the provider the
-  // way the server drives it.
-  emit(name: string, payload: unknown) {
-    for (const handler of this.listeners.get(name) ?? []) {
-      handler(new MessageEvent(name, { data: JSON.stringify(payload) }));
-    }
-  }
-
-  close() {
-    this.closed = true;
-    this.closedAt = FakeEventSource.sequence++;
+  addEventListener(name: string, handler: (event: Event) => void) { this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]); }
+  close() { this.closed = true; this.closedAt = FakeEventSource.order++; }
+  emit(name: string, data: unknown) {
+    for (const handler of this.listeners.get(name) ?? []) handler(new MessageEvent(name, { data: JSON.stringify(data) }));
   }
 }
 
 const originalEventSource = globalThis.EventSource;
+const originalFetch = globalThis.fetch;
+const query = { usb: true, network: true, subnets: [], port: 9100, timeoutMs: 1000 };
 
-// Steps `bun:test`'s fake clock forward and flushes the microtask queue, so
-// a `.then`/`.finally` chain a timer kicked off has settled before the next
-// assertion runs.
-async function advanceTimers(milliseconds: number) {
-  jest.advanceTimersByTime(milliseconds);
-  // The fetch mock's promise chain (fetch -> response.json() -> refreshPrinters's
-  // .then -> .finally) takes several microtask turns to settle; one
-  // `await Promise.resolve()` is not enough to drain it, as the other tests
-  // in this file (see the repeated awaits below) already demonstrate.
-  for (let i = 0; i < 6; i += 1) {
-    await Promise.resolve();
-  }
+function Probe() {
+  const { ensureProfiles, profiles, startScan, scan, markScanResultConfigured } = useAppData();
+  return <>
+    <button type="button" onClick={() => void ensureProfiles()}>Profiles</button>
+    <button type="button" onClick={() => startScan(query)}>Scan</button>
+    <button type="button" onClick={() => markScanResultConfigured("Kitchen", { type: "network", host: "10.0.0.8", port: 9100 })}>Configure network</button>
+    <button type="button" onClick={() => markScanResultConfigured("USB one", { type: "usb", vendor_id: 1046, product_id: 20497, serial_number: null, interface_number: 0, out_endpoint: 1, in_endpoint: null })}>Configure USB</button>
+    <p>{`${profiles.phase}:${profiles.data?.profiles.length ?? "none"}`}</p>
+    <p>{`${scan.phase}:${scan.printers.length}:${scan.failures.map((failure) => failure.product_id).join(",")}`}</p>
+    <p data-testid="configured">{JSON.stringify(scan.printers.map((printer) => printer.configured_names))}</p>
+  </>;
 }
 
-afterEach(() => {
-  cleanup();
-  jest.useRealTimers();
-  globalThis.EventSource = originalEventSource;
-});
+function renderProvider() {
+  FakeEventSource.instances = [];
+  FakeEventSource.order = 0;
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  return render(<AppDataProvider><Probe /></AppDataProvider>);
+}
+
+afterEach(() => { cleanup(); globalThis.EventSource = originalEventSource; globalThis.fetch = originalFetch; });
 
 describe("AppDataProvider", () => {
-  test("polls printer inventory ten seconds after each completed response", async () => {
-    jest.useFakeTimers();
-    let printerRequests = 0;
-    let resolveInitialInventory!: (response: Response) => void;
-    globalThis.fetch = jest.fn((input: RequestInfo | URL) => {
-      printerRequests += 1;
-      if (printerRequests === 1) {
-        return new Promise<Response>((resolve) => {
-          resolveInitialInventory = resolve;
-        });
-      }
-      return Promise.resolve(json(printerInventory));
-    }) as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><Probe /></AppDataProvider>);
-    expect(printerRequests).toBe(1);
-    await act(async () => {
-      resolveInitialInventory(json(printerInventory));
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(screen.getByText("ready")).toBeTruthy();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    await act(async () => { jest.advanceTimersByTime(9_999); });
-    expect(printerRequests).toBe(1);
-    await act(async () => {
-      jest.advanceTimersByTime(1);
-      await Promise.resolve();
-    });
-    expect(printerRequests).toBe(2);
-  });
-
-  test("requests printer inventory without requesting status", async () => {
-    const fetch = jest.fn((_input: RequestInfo | URL) => Promise.resolve(json(printerInventory)));
+  test("loads the profile catalog only when a consumer asks for it", async () => {
+    const fetch = jest.fn((_input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify({ profiles: [] }), { headers: { "content-type": "application/json" } })));
     globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><Probe /></AppDataProvider>);
-    expect(await screen.findByText("ready")).toBeTruthy();
-    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual(["/api/printers/list"]);
-    expect(fetch.mock.calls.map(([input]) => String(input))).not.toContain("/api/status");
+    renderProvider();
+    expect(fetch).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Profiles" }));
+      for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
+    });
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual(["/api/profiles/list"]);
+    expect(screen.getByText("ready:0")).toBeTruthy();
   });
 
-  test("does not request profiles until a Profiles page mounts", async () => {
-    const fetch = jest.fn((_input: RequestInfo | URL) => Promise.resolve(json(printerInventory)));
+  test("closes a discovery source before constructing its replacement and preserves ordered USB failures", () => {
+    const fetch = jest.fn((_input: RequestInfo | URL) => Promise.reject(new Error("unexpected request")));
     globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><Probe /></AppDataProvider>);
-    expect(await screen.findByText("ready")).toBeTruthy();
-    expect(fetch.mock.calls.map(([input]) => String(input))).not.toContain("/api/profiles/list");
-  });
-
-  test("polling stops while the document is hidden and resumes when it is visible", async () => {
-    jest.useFakeTimers();
-    let calls = 0;
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input) === "/api/printers/list") {
-        calls += 1;
-      }
-      return Promise.resolve(json({ printers: [] }));
-    }) as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><FlashProbe /></AppDataProvider>);
-    await act(async () => { await advanceTimers(0); });
-    const initial = calls;
-
-    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
-    document.dispatchEvent(new Event("visibilitychange"));
-    await act(async () => { await advanceTimers(20_000); });
-    expect(calls).toBe(initial);
-
-    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
-    document.dispatchEvent(new Event("visibilitychange"));
-    await act(async () => {});
-    expect(calls).toBe(initial + 1);
-  });
-
-  test("a printer that becomes unavailable is flagged as lost exactly once", async () => {
-    jest.useFakeTimers();
-    const availabilities = ["connected", "unavailable", "unavailable"];
-    let poll = 0;
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input) !== "/api/printers/list") {
-        return Promise.resolve(json({ virtual_printer: null, jobs_processed: 0, config_path: "/tmp/printers.toml" }));
-      }
-      const availability = availabilities[Math.min(poll, availabilities.length - 1)];
-      poll += 1;
-      return Promise.resolve(json({
-        printers: [{
-          name: "kitchen",
-          transport: "network",
-          availability,
-          profile: null,
-          connection: { type: "network", host: "10.42.0.71", port: 9100 },
-        }],
-      }));
-    }) as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><FlashProbe /></AppDataProvider>);
-    await act(async () => { await advanceTimers(0); });
-    expect(screen.getByTestId("flashes").textContent).toBe("{}");
-
-    await act(async () => { await advanceTimers(10_000); });
-    expect(screen.getByTestId("flashes").textContent).toBe("{\"kitchen\":\"lost\"}");
-
-    await act(async () => { await advanceTimers(10_000); });
-    expect(screen.getByTestId("flashes").textContent).toBe("{}");
-  });
-
-  test("startScan closes the previous scan stream before opening the next one", async () => {
-    FakeEventSource.instances = [];
-    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-    globalThis.fetch = (() => Promise.resolve(json(printerInventory))) as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><ScanProbe /></AppDataProvider>);
-    const button = screen.getByRole("button", { name: "Scan" });
-
-    await act(async () => { fireEvent.click(button); });
-    expect(FakeEventSource.instances).toHaveLength(1);
-    expect(FakeEventSource.instances[0]?.closed).toBe(false);
-
-    await act(async () => { fireEvent.click(button); });
+    renderProvider();
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+    const first = FakeEventSource.instances[0]!;
+    act(() => first.emit("usb_failure", { vendor_id: 1046, product_id: 2, stage: "open_device", reason: "denied", permission_denied: true, can_grant_usb_permissions: true }));
+    act(() => first.emit("usb_failure", { vendor_id: 1046, product_id: 3, stage: "open_device", reason: "denied", permission_denied: true, can_grant_usb_permissions: true }));
+    expect(screen.getByText("running:0:2,3")).toBeTruthy();
+    expect(fetch.mock.calls.map(([input]) => String(input))).not.toContain("/api/printers/list");
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+    expect(first.closed).toBe(true);
     expect(FakeEventSource.instances).toHaveLength(2);
-
-    const [first, second] = FakeEventSource.instances;
-    expect(first?.closed).toBe(true);
-    // The property that matters is ordering, not just eventual closure: the
-    // first stream must be closed before the second is even constructed, or
-    // the previous scan keeps running to completion on the server (closing
-    // the EventSource is the only cancellation mechanism it has).
-    expect(first?.closedAt).not.toBeNull();
-    expect(first?.closedAt as number).toBeLessThan(second?.constructedAt as number);
+    expect(first.closedAt).not.toBeNull();
+    expect(first.closedAt as number).toBeLessThan(FakeEventSource.instances[1]!.constructedAt);
   });
 
-  // A USB failure is tolerated rather than fatal, so a scan can report
-  // several — one per device it could not open. They have to accumulate, and
-  // in arrival order: the panel lists them positionally, because
-  // `UsbEnumerationFailure` carries no bus or address and two of the same
-  // model refused at two addresses are otherwise indistinguishable.
-  test("usb_failure events accumulate in arrival order", async () => {
-    FakeEventSource.instances = [];
-    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-    globalThis.fetch = (() => Promise.resolve(json(printerInventory))) as unknown as typeof globalThis.fetch;
-
-    render(<AppDataProvider><ScanProbe /><ScanFailureProbe /></AppDataProvider>);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
+  test("marks only matching network and one ambiguous USB discovery result configured", () => {
+    renderProvider();
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Scan" })); });
     const source = FakeEventSource.instances[0]!;
-
-    const failure = (productId: number) => ({
-      vendor_id: 0x0416,
-      product_id: productId,
-      stage: "open_device",
-      reason: "permission denied (errno 13)",
-      permission_denied: true,
-      can_grant_usb_permissions: true,
+    const usb = (host: string) => ({
+      transport: "usb", configured_names: [], configured_profile: null,
+      connection: { type: "usb", vendor_id: 1046, product_id: 20497, bus: "003", address: 7, manufacturer: null, product: host, serial_number: null, interface_number: 0, out_endpoints: [1], in_endpoints: [] },
     });
-
-    await act(async () => { source.emit("usb_failure", failure(2)); });
-    expect(screen.getByTestId("failures").textContent).toBe("2");
-
-    await act(async () => { source.emit("usb_failure", failure(3)); });
-    expect(screen.getByTestId("failures").textContent).toBe("2,3");
+    act(() => source.emit("printer", { transport: "network", configured_names: [], configured_profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } }));
+    act(() => source.emit("printer", { transport: "network", configured_names: [], configured_profile: null, connection: { type: "network", host: "10.0.0.9", port: 9100 } }));
+    act(() => source.emit("printer", usb("first")));
+    act(() => source.emit("printer", usb("second")));
+    fireEvent.click(screen.getByRole("button", { name: "Configure network" }));
+    fireEvent.click(screen.getByRole("button", { name: "Configure USB" }));
+    expect(screen.getByTestId("configured").textContent).toBe("[[\"Kitchen\"],[],[\"USB one\"],[]]");
   });
 });

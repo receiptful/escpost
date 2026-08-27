@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import logoDark from "../../assets/logo_dark.png";
 import logoLight from "../../assets/logo_light.png";
-import { useAppData } from "../../app/data";
+import { usePrinterInventory } from "../../app/printer-inventory-data";
 import { useServerStatus } from "../../app/server-status-data";
 
 function SummaryCard({ children, label }: { children: ComponentChildren; label: string }) {
@@ -14,10 +14,10 @@ function SummaryCard({ children, label }: { children: ComponentChildren; label: 
 }
 
 export function OverviewPage() {
-  const { printers } = useAppData();
+  const inventoryResource = usePrinterInventory();
   const status = useServerStatus();
   const snapshot = status.snapshot;
-  const inventory = printers.data?.printers;
+  const inventory = inventoryResource.snapshot?.printers;
   const connected = inventory?.filter((printer) => printer.availability === "connected").length;
   const unavailable = inventory?.filter((printer) => printer.availability === "unavailable").length;
   const virtual = snapshot?.virtual_printer;
@@ -47,9 +47,10 @@ export function OverviewPage() {
                 )}
               </>
             ) : (
-              <p class="mt-2 text-lg font-semibold">{printers.phase === "loading" ? "Printer inventory loading…" : printers.error?.message ?? "Printer inventory is unavailable."}</p>
+              <p class="mt-2 text-lg font-semibold">{inventoryResource.phase === "checking" ? "Connecting to printer monitor…" : "Unable to connect; retrying automatically."}</p>
             )}
-            {inventory && printers.error && <p role="alert" class="mt-4 text-warning">Showing cached printer data. {printers.error.message}</p>}
+            {inventory && inventoryResource.phase === "disconnected" && <p role="alert" class="mt-4 text-warning">Showing stale printer data; reconnecting automatically.</p>}
+            {inventoryResource.snapshot?.warning && <p role="alert" class="mt-4 text-warning">{inventoryResource.snapshot.warning}</p>}
           </SummaryCard>
           <SummaryCard label="Virtual printer">
             <p class="mt-2 text-2xl font-bold">{virtualState}</p>

@@ -6,6 +6,7 @@ pub(crate) mod discover;
 pub(crate) mod http;
 mod inventory;
 pub(crate) mod list;
+pub(crate) mod monitor;
 #[cfg(test)]
 mod test_support;
 

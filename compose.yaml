@@ -84,7 +84,6 @@ services:
         cargo build --quiet --locked --package escpost
         exec "$${CARGO_TARGET_DIR}/debug/escpost" serve \
           --listen 0.0.0.0:9100 \
-          --web-listen 127.0.0.1:9000 \
           --non-interactive \
           --no-open
 

@@ -15,6 +15,7 @@ use super::inventory::{MergedUsbIdentities, NusbInventory, UsbInventory, merge_u
 use super::{Availability, Transport};
 
 pub(crate) mod cli;
+pub(crate) mod monitor_cli;
 
 const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 /// How long to wait before confirming a failed probe. RAW TCP is frequently

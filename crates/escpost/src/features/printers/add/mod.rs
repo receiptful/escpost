@@ -4,12 +4,29 @@ pub(crate) mod cli;
 pub(crate) mod http;
 mod operation;
 
+use crate::application;
+
 pub(crate) use operation::{
     AMBIGUOUS_USB_WARNING, Connection, DEFAULT_RAW_PORT, Request, Response, execute,
 };
 
+fn execute_with_refresh(request: Request, refresh: impl FnOnce()) -> application::Result<Response> {
+    let response = execute(request)?;
+    refresh();
+    Ok(response)
+}
+
+pub(crate) fn execute_monitored(
+    request: Request,
+    monitor: &super::monitor::PrinterMonitor,
+) -> application::Result<Response> {
+    execute_with_refresh(request, || monitor.request_refresh())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::application::ApplicationError;
     use crate::features::printers::test_support::temporary_configuration;
@@ -204,6 +221,50 @@ mod tests {
                 in_endpoint: Some(0x83),
             } if serial_number == "B120300001"
         ));
+    }
+
+    #[test]
+    fn successful_registration_requests_a_monitor_refresh() {
+        let configuration = temporary_configuration("typed-add-refresh", "");
+        let refreshes = AtomicUsize::new(0);
+
+        execute_with_refresh(valid_request(configuration.path()), || {
+            refreshes.fetch_add(1, Ordering::Relaxed);
+        })
+        .expect("a valid registration should be saved");
+
+        assert_eq!(refreshes.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn failed_registration_does_not_request_a_monitor_refresh() {
+        let configuration = temporary_configuration("typed-add-refresh-error", "");
+        let refreshes = AtomicUsize::new(0);
+
+        execute_with_refresh(valid_request(configuration.path()), || {
+            refreshes.fetch_add(1, Ordering::Relaxed);
+        })
+        .expect("the first registration should be saved");
+        let error = execute_with_refresh(valid_request(configuration.path()), || {
+            refreshes.fetch_add(1, Ordering::Relaxed);
+        })
+        .expect_err("a colliding registration must fail");
+
+        assert!(matches!(
+            error,
+            ApplicationError::PrinterAlreadyConfigured(_)
+        ));
+        assert_eq!(refreshes.load(Ordering::Relaxed), 1);
+    }
+
+    fn valid_request(configuration_path: &std::path::Path) -> Request {
+        Request::new(
+            Some(configuration_path.to_owned()),
+            "kitchen".to_owned(),
+            Some("REFERENCE".to_owned()),
+            network_connection(),
+        )
+        .expect("valid registration facts should form an add request")
     }
 
     fn network_connection() -> Connection {

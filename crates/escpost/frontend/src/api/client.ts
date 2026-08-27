@@ -4,7 +4,6 @@ import type {
   ApiErrorEnvelope,
   CurrentJobResponse,
   DiscoveryNetworksResponse,
-  PrintersResponse,
   ProfilesResponse,
 } from "./types";
 
@@ -102,11 +101,6 @@ function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise
     body: JSON.stringify(body),
     signal,
   });
-}
-
-export function getPrinters(transport?: "usb" | "network", signal?: AbortSignal) {
-  const query = transport ? `?transport=${encodeURIComponent(transport)}` : "";
-  return requestJson<PrintersResponse>(`/api/printers/list${query}`, signal);
 }
 
 export function getProfiles(signal?: AbortSignal) {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { addPrinter } from "../../api/client";
 import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
 import { useAppData } from "../../app/data";
+import { usePrinterInventory } from "../../app/printer-inventory-data";
 import { useServerStatus } from "../../app/server-status-data";
 import { endpointHex, usbHex } from "./usb";
 
@@ -106,7 +107,8 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
   onClose: () => void;
   onAdded: (name: string, connection: AddPrinterBody["connection"]) => void;
 }) {
-  const { printers, profiles, ensureProfiles } = useAppData();
+  const { profiles, ensureProfiles } = useAppData();
+  const inventory = usePrinterInventory();
   const status = useServerStatus();
   const connection = printer?.connection ?? null;
   const usb = connection?.type === "usb" ? connection : null;
@@ -189,7 +191,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
   // inline refusal and the server's read the same. (Its `{0:?}` is Rust's
   // debug quoting, which escapes a quote or backslash inside the name; for
   // such a name the server's message is the exact one.)
-  const collision = (printers.data?.printers ?? []).some((entry) => entry.name === name);
+  const collision = (inventory.snapshot?.printers ?? []).some((entry) => entry.name === name);
   const portValid = /^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65_535;
   // A device with no bulk OUT endpoint has no route to print over, so the
   // terminal's menu never offers one either; `usb_printer_interface` drops

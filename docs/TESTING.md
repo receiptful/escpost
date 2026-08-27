@@ -132,11 +132,35 @@ docker compose run --rm --no-deps frontend bun test src/features/profiles/page.t
 docker compose run --rm --no-deps frontend bun test src/features/printers/page.test.tsx
 ```
 
+Frontend printer-inventory tests use a fake `EventSource` to cover the initial
+checking state, complete unnamed inventory messages, invalid payload handling,
+automatic-reconnect stale rows, warning visibility, provider lifetime across
+navigation, and registration waiting for the next authoritative snapshot
+without a list GET. The manual browser check complements those tests: confirm
+that `/api/printers/list/events` supplies the initial rows, a reconnect keeps
+rows and warnings visible, a registration appears in a later SSE snapshot,
+navigation retains one inventory stream, and the final closed connection stops
+backend probing before a resumed connection receives retained then fresh data.
+
+The terminal check runs `escpost printers list --monitor` in a real TTY. Check
+the initial checking copy, compact redraws, connected and unavailable changes,
+`--transport` presentation filtering, configuration edits, and terminal
+restoration after Ctrl+C. Also confirm that `escpost --non-interactive printers
+list --monitor`, and redirected monitor stdout, fail with the interactive
+terminal error.
+
 Rust HTTP integration tests exercise the embedded production bundle, including
 direct navigation to every workbench route, navigation
 labels in the production bundle, asset MIME and cache headers, missing assets,
 and traversal rejection. They also cover the read-only `/api/status`,
-`/api/printers/list`, `/api/profiles/list`, and current-job resource contracts,
+`/api/printers/list`, `/api/printers/list/events`, `/api/profiles/list`, and
+current-job resource contracts. Printer-monitor tests use deterministic
+collectors and clocks to cover first and last subscriber lifecycle, retained
+snapshot then forced-fresh resumption, five-second collection, idle shutdown,
+and registration-triggered refresh. The printer SSE contract tests verify that
+the stream sends complete inventory snapshots as unnamed default `message`
+events, matching the one-shot resource shape rather than introducing an
+SSE-only envelope,
 while confirming that unknown API routes stay JSON rather than falling back to
 HTML. They also cover the discovery routes: `/api/printers/discover/networks`
 lists detected and skipped adapters, and `/api/printers/discover` streams

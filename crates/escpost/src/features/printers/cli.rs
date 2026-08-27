@@ -2,7 +2,7 @@
 //! to its submodule and exposes the two entry points the rest of the crate
 //! calls (`run` from `lib.rs`, `add_interactively` from `print.rs`).
 
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -36,6 +36,7 @@ pub(super) fn scan_announcement(targets: &[crate::discovery::ScanTarget], port: 
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "Live monitoring:\n  escpost printers list --monitor")]
 pub(crate) struct PrintersArgs {
     /// Read printer configuration from this exact file.
     #[arg(long, global = true, value_name = "FILE")]
@@ -47,7 +48,7 @@ pub(crate) struct PrintersArgs {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum PrintersCommand {
-    /// List currently usable printers.
+    /// List configured printers once, or monitor their availability live.
     List(ListPrintersArgs),
     /// Register a printer in the local configuration.
     Add(AddPrinterArgs),
@@ -67,6 +68,9 @@ pub(crate) struct ListPrintersArgs {
     /// Show only one connection transport.
     #[arg(long, value_enum)]
     pub(crate) transport: Option<InventoryTransport>,
+    /// Continuously redraw printer availability in an interactive terminal.
+    #[arg(long)]
+    pub(crate) monitor: bool,
 }
 
 #[derive(Debug, Args)]
@@ -150,6 +154,14 @@ pub(crate) enum PrinterTransport {
 pub(crate) async fn run(arguments: PrintersArgs, non_interactive: bool) -> Result<(), CliError> {
     match arguments.command {
         PrintersCommand::List(list) => {
+            if list.monitor {
+                ensure_monitor_terminal(non_interactive, io::stdout().is_terminal())?;
+                return list::monitor_cli::run(
+                    arguments.config,
+                    list.transport.map(transport_filter),
+                )
+                .await;
+            }
             let response = list::execute_with_observer(
                 list::Request {
                     config: arguments.config,
@@ -186,6 +198,30 @@ fn transport_filter(transport: InventoryTransport) -> Transport {
         InventoryTransport::Network => Transport::Network,
     }
 }
+
+fn ensure_monitor_terminal(
+    non_interactive: bool,
+    stdout_is_terminal: bool,
+) -> Result<(), CliError> {
+    if non_interactive || !stdout_is_terminal {
+        return Err(CliError::PrinterMonitorRequiresInteractive);
+    }
+    Ok(())
+}
+
 pub(crate) fn add_interactively(config_path: Option<&std::path::Path>) -> Result<String, CliError> {
     super::add::cli::add_interactively(config_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_interactive_monitoring_is_rejected_even_with_a_terminal_stdout() {
+        let error = ensure_monitor_terminal(true, true)
+            .expect_err("non-interactive monitor mode must be rejected");
+
+        assert!(matches!(error, CliError::PrinterMonitorRequiresInteractive));
+    }
 }

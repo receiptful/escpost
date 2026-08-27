@@ -30,9 +30,50 @@ fn printers_list_is_a_rust_cli_command() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "command failed:\n{stdout}");
-    assert!(stdout.contains("List currently usable printers"));
+    assert!(stdout.contains("List configured printers once, or monitor their availability live"));
     assert!(stdout.contains("Usage: escpost printers list"));
     assert!(stdout.contains("--transport <TRANSPORT>"));
+}
+
+#[test]
+fn printers_parent_help_promotes_live_monitoring() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["printers", "--help"])
+        .output()
+        .expect("the escpost command should finish");
+    let help = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "command failed:\n{help}");
+    assert!(help.contains("List configured printers once, or monitor their availability live"));
+    assert!(help.contains("escpost printers list --monitor"));
+}
+
+#[test]
+fn printers_monitor_requires_an_interactive_terminal() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["printers", "list", "--monitor"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("printer monitoring requires an interactive terminal"),
+    );
+}
+
+#[test]
+fn printers_monitor_rejects_non_interactive_mode() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["--non-interactive", "printers", "list", "--monitor"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("printer monitoring requires an interactive terminal"),
+    );
 }
 
 #[test]

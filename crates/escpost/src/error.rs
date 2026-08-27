@@ -93,6 +93,12 @@ pub(crate) enum CliError {
     #[error("could not write command output: {0}")]
     WriteHumanOutput(#[source] std::io::Error),
 
+    #[error("printer monitoring requires an interactive terminal; omit --non-interactive")]
+    PrinterMonitorRequiresInteractive,
+
+    #[error("could not wait for Ctrl+C while monitoring printers: {0}")]
+    PrinterMonitorSignal(#[source] std::io::Error),
+
     #[error("could not serialize JSON command output: {0}")]
     SerializeJsonOutput(#[source] serde_json::Error),
 

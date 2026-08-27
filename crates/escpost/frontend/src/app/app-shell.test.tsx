@@ -6,6 +6,7 @@ import { App } from "../app";
 import type { DiscoveryQuery } from "../api/discovery-stream";
 import type { VirtualPrinterStatus } from "../api/types";
 import { AppDataProvider, useAppData } from "./data";
+import { PrinterInventoryProvider } from "./printer-inventory-data";
 import { ServerStatusProvider } from "./server-status-data";
 import { AppShell } from "./shell";
 
@@ -59,6 +60,9 @@ function renderAt(path: string) {
     jobs_processed: 0,
     config_path: "/tmp/printers.toml",
   }));
+  act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", {
+    updated_at: "2026-08-27T10:00:00Z", warning: null, printers: [],
+  }));
   return view;
 }
 
@@ -110,17 +114,22 @@ async function renderShell(path: string) {
   locationStub(path);
   const view = render(
     <ServerStatusProvider>
-      <AppDataProvider>
+      <PrinterInventoryProvider>
+        <AppDataProvider>
         <LocationProvider>
           <AppShell><ScanProbe /></AppShell>
         </LocationProvider>
-      </AppDataProvider>
+        </AppDataProvider>
+      </PrinterInventoryProvider>
     </ServerStatusProvider>,
   );
   act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", {
     virtual_printer: virtualPrinter,
     jobs_processed: 0,
     config_path: "/tmp/printers.toml",
+  }));
+  act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", {
+    updated_at: "2026-08-27T10:00:00Z", warning: null, printers: [],
   }));
   await act(async () => { await flush(); });
   return view;
@@ -408,52 +417,6 @@ describe("App", () => {
       // and the indeterminate bar already say.
       expect(region.textContent).toBe("Incoming print jobView");
     }
-  });
-
-  test("refreshes printer inventory once when server status reconnects", async () => {
-    FakeEventSource.instances = [];
-    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-    let printerRequests = 0;
-    let resolveInitialInventory!: (response: Response) => void;
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input) === "/api/printers/list") {
-        printerRequests += 1;
-        if (printerRequests === 1) {
-          return new Promise<Response>((resolve) => {
-            resolveInitialInventory = resolve;
-          });
-        }
-      }
-      return Promise.resolve(new Response(JSON.stringify({ printers: [] }), {
-        headers: { "content-type": "application/json" },
-      }));
-    }) as unknown as typeof globalThis.fetch;
-
-    renderAt("/profiles");
-    expect(printerRequests).toBe(1);
-    const statusStream = FakeEventSource.forUrl("/api/status/events");
-
-    act(() => statusStream?.emit("error", null));
-    act(() => statusStream?.emit("message", {
-      virtual_printer: ready,
-      jobs_processed: 0,
-      config_path: "/tmp/printers.toml",
-    }));
-    expect(printerRequests).toBe(1);
-
-    resolveInitialInventory(new Response(JSON.stringify({ printers: [] }), {
-      headers: { "content-type": "application/json" },
-    }));
-    await act(async () => { await flush(); });
-    expect(printerRequests).toBe(2);
-
-    act(() => statusStream?.emit("message", {
-      virtual_printer: ready,
-      jobs_processed: 1,
-      config_path: "/tmp/printers.toml",
-    }));
-    await act(async () => { await flush(); });
-    expect(printerRequests).toBe(2);
   });
 
   test("shows no job block while the virtual printer is idle or absent", async () => {
