@@ -84,6 +84,8 @@ describe("PrintersPage", () => {
     fireEvent.input(screen.getByLabelText("Host"), { target: { value: "10.0.0.8" } });
     fireEvent.click(screen.getByRole("button", { name: "Add printer" }));
     await waitFor(() => expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain("/api/printers/add"));
+    await act(async () => { for (let turn = 0; turn < 12; turn += 1) await Promise.resolve(); });
+    expect(screen.queryByRole("button", { name: "Add printer" })).toBeNull();
     expect(screen.queryByText("Kitchen")).toBeNull();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain("/api/printers/list");
     const source = FakeEventSource.forUrl("/api/printers/list/events");
@@ -113,6 +115,23 @@ describe("PrintersPage", () => {
     expect(screen.getByText("10.0.0.44:9100")).toBeTruthy();
   });
 
+  test("assembles discovery controls in one lifecycle bar", async () => {
+    renderPage();
+    expect(screen.getByRole("heading", { name: "Printer Discovery" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Configured Printers" })).toBeTruthy();
+    const options = screen.getByRole("button", { name: "Scan options" });
+    const add = screen.getByRole("button", { name: "Add IP printer manually" });
+    const scan = await screen.findByRole("button", { name: "Scan" });
+    expect(options.getAttribute("aria-expanded")).toBe("false");
+    expect(add.closest("footer")).toBe(scan.closest("footer"));
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    await waitFor(() => expect(scan.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(scan);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    act(() => FakeEventSource.forUrlPrefix("/api/printers/discover")?.emit("completed", {}));
+    expect(screen.getByRole("button", { name: "Rescan" })).toBeTruthy();
+  });
+
   test("keeps a running discovery result when the printers page remounts", async () => {
     renderToggleablePage();
     const scan = await screen.findByRole("button", { name: "Scan" });
@@ -126,5 +145,26 @@ describe("PrintersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Leave printers" }));
     fireEvent.click(screen.getByRole("button", { name: "Leave printers" }));
     expect(screen.getByText("10.0.0.45:9100")).toBeTruthy();
+  });
+
+  test("keeps the chosen scan scope when the printers page remounts", async () => {
+    renderToggleablePage();
+    fireEvent.click(screen.getByRole("button", { name: "Scan options" }));
+    const port = await screen.findByLabelText("RAW TCP port");
+    fireEvent.input(port, { target: { value: "9101" } });
+    const scan = screen.getByRole("button", { name: "Scan" });
+    await waitFor(() => expect(scan.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(scan);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Leave printers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Leave printers" }));
+    const rescan = screen.getByRole("button", { name: "Rescan" });
+    await waitFor(() => expect(rescan.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(rescan);
+    const streams = FakeEventSource.instances.filter((source) => source.url.startsWith("/api/printers/discover"));
+    expect(streams.map((source) => source.url)).toEqual([
+      "/api/printers/discover?port=9101&timeout=1000",
+      "/api/printers/discover?port=9101&timeout=1000",
+    ]);
   });
 });

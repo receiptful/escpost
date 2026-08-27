@@ -8,12 +8,12 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
-function isNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+function isUnsignedInteger(value: unknown, maximum: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 }
 
 function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every(isNumber);
+  return Array.isArray(value) && value.every((entry) => isUnsignedInteger(entry, 0xff));
 }
 
 function isRfc3339(value: unknown): value is string {
@@ -26,20 +26,20 @@ function isNetworkConnection(value: unknown): boolean {
   return isObject(value)
     && value.type === "network"
     && typeof value.host === "string"
-    && isNumber(value.port);
+    && isUnsignedInteger(value.port, 0xffff);
 }
 
 function isUsbConnection(value: unknown): boolean {
   return isObject(value)
     && value.type === "usb"
-    && isNumber(value.vendor_id)
-    && isNumber(value.product_id)
+    && isUnsignedInteger(value.vendor_id, 0xffff)
+    && isUnsignedInteger(value.product_id, 0xffff)
     && isNullableString(value.bus)
-    && (value.address === null || isNumber(value.address))
+    && (value.address === null || isUnsignedInteger(value.address, 0xff))
     && isNullableString(value.manufacturer)
     && isNullableString(value.product)
     && isNullableString(value.serial_number)
-    && isNumber(value.interface_number)
+    && isUnsignedInteger(value.interface_number, 0xff)
     && isNumberArray(value.out_endpoints)
     && isNumberArray(value.in_endpoints);
 }

@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/preact";
 import { AppDataProvider } from "../../app/data";
 import { PrinterInventoryProvider } from "../../app/printer-inventory-data";
 import { ServerStatusProvider } from "../../app/server-status-data";
+import type { ServerStatusSnapshot } from "../../api/types";
 import { OverviewPage } from "./page";
 
 class FakeEventSource {
@@ -17,17 +18,37 @@ class FakeEventSource {
 const originalEventSource = globalThis.EventSource;
 afterEach(() => { cleanup(); globalThis.EventSource = originalEventSource; });
 
-function renderOverview(printers: unknown[] = [], warning: string | null = null, emitInventory = true) {
+function renderOverview(
+  printers: unknown[] = [],
+  warning: string | null = null,
+  emitInventory = true,
+  status: ServerStatusSnapshot = { virtual_printer: { state: "receiving", address: "127.0.0.1:9100" }, jobs_processed: 7, config_path: "" },
+) {
   FakeEventSource.instances = [];
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   render(<ServerStatusProvider><PrinterInventoryProvider><AppDataProvider><OverviewPage /></AppDataProvider></PrinterInventoryProvider></ServerStatusProvider>);
-  act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", { virtual_printer: { state: "receiving", address: "127.0.0.1:9100" }, jobs_processed: 7, config_path: "" }));
+  act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", status));
   const source = FakeEventSource.forUrl("/api/printers/list/events")!;
   if (emitInventory) act(() => source.emit("message", { updated_at: "2026-08-26T14:32:10Z", warning, printers }));
   return source;
 }
 
 describe("OverviewPage", () => {
+  test("keeps the theme-aware branding and dashboard layout contracts", () => {
+    renderOverview();
+    const page = screen.getByRole("heading", { name: "Overview" }).closest("section")!;
+    expect(page.getAttribute("class")).toContain("mx-auto");
+    expect(page.getAttribute("class")).toContain("pt-6");
+    expect(page.getAttribute("class")).not.toContain("my-auto");
+    const logo = screen.getByRole("img", { name: "ESCPost" });
+    expect(logo.getAttribute("src")).toContain("logo_light");
+    expect(logo.parentElement?.querySelector("source")?.getAttribute("srcset")).toContain("logo_dark");
+    for (const label of ["Jobs processed", "Printers", "Virtual printer"]) {
+      const card = screen.getByRole("region", { name: label });
+      expect(card.getAttribute("class")).toContain("text-center");
+      expect(card.querySelector("h2")?.getAttribute("class")).toContain("text-left");
+    }
+  });
   test("derives printer counts from the inventory snapshot", () => {
     renderOverview([
       { name: "Kitchen", transport: "network", availability: "connected", profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } },
@@ -60,5 +81,21 @@ describe("OverviewPage", () => {
     act(() => source.emit("error", {}));
     expect(screen.getByText("1 configured")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("Showing stale printer data; reconnecting automatically.");
+  });
+
+  test("renders the virtual-printer absence, zero counts, and configuration path", () => {
+    renderOverview([], null, true, {
+      virtual_printer: null,
+      jobs_processed: 0,
+      config_path: "/home/dev/.config/escpost/printers.toml",
+    });
+    const printers = screen.getByRole("region", { name: "Printers" });
+    expect(within(printers).getByText("0 configured")).toBeTruthy();
+    expect(within(printers).queryByText("0 connected")).toBeNull();
+    expect(within(printers).queryByText("0 unavailable")).toBeNull();
+    expect(screen.getByText("Not running")).toBeTruthy();
+    const path = screen.getByText("/home/dev/.config/escpost/printers.toml");
+    expect(path.getAttribute("class")).toContain("font-mono");
+    expect(path.parentElement?.textContent).toBe("Configuration /home/dev/.config/escpost/printers.toml");
   });
 });

@@ -92,10 +92,26 @@ describe("openPrinterInventoryStream", () => {
       { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, vendor_id: "1046" } }] },
       { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, out_endpoints: ["1"] } }] },
       { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, connection: { type: "serial" } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, connection: { ...networkPrinter.connection, port: -1 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, connection: { ...networkPrinter.connection, port: 1.5 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...networkPrinter, connection: { ...networkPrinter.connection, port: 65_536 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, vendor_id: -1 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, product_id: 65_536 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, product_id: -1 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, product_id: 1.5 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, vendor_id: 1.5 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, address: 256 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, address: -1 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, address: 1.5 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, interface_number: -1 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, interface_number: 256 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, interface_number: 1.5 } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, out_endpoints: [1.5] } }] },
+      { updated_at: "2026-08-26T14:32:10Z", warning: null, printers: [{ ...usbPrinter, connection: { ...usbPrinter.connection, in_endpoints: [256] } }] },
     ]) source.emit("message", invalid);
 
     expect(onSnapshot).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledTimes(14);
+    expect(onError).toHaveBeenCalledTimes(30);
     source.emit("message", valid);
     expect(onSnapshot).toHaveBeenCalledWith(valid);
   });
