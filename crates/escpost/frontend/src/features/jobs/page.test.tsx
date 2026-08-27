@@ -57,7 +57,7 @@ describe("JobsPage", () => {
     expect(await screen.findByRole("button", { name: "Text 1..2: Hi" })).toBeTruthy();
     expect(screen.getByText("idle-timeout")).toBeTruthy();
     expect(screen.getByText("Unknown command was ignored.")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Download raw input" }).getAttribute("href")).toBe("/api/jobs/7/input");
+    expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe("/api/jobs/7/input");
     expect(screen.getByAltText("Rendered receipt sheet 1 of 1").getAttribute("src")).toBe("/api/jobs/7/sheets/1");
 
     const textButton = screen.getByRole("button", { name: "Text 1..2: Hi" });
@@ -115,7 +115,7 @@ describe("JobsPage", () => {
     const toggle = screen.getByRole("checkbox", { name: "Paper margin" });
     const status = screen.getByRole("group", { name: "Current job status" });
     expect(within(status).getByRole("checkbox", { name: "Paper margin" })).toBe(toggle);
-    expect(within(status).getByRole("link", { name: "Download raw input" })).toBeTruthy();
+    expect(within(status).queryByRole("link", { name: /Download/ })).toBeNull();
     expect((toggle as HTMLInputElement).checked).toBe(true);
     fireEvent.click(toggle);
     expect(localStorage.getItem("escpost.paper_margin")).toBe("false");
@@ -274,7 +274,8 @@ describe("command panel header", () => {
     const panel = await screen.findByRole("complementary", {
       name: "ESC/POS bytes in the current print job",
     });
-    const header = within(panel).getByRole("heading", { name: /3011 bytes/ }).parentElement;
+    const header = within(panel).getByRole("heading", { name: /3011 bytes/ })
+      .closest("[data-sticky-header]");
     if (!header) throw new Error("expected a header");
     const rows = within(panel).getAllByRole("listitem");
 
@@ -415,5 +416,40 @@ describe("what the panel holds", () => {
       .toContain("ESC/POS");
     expect(within(panel).getByText("Command")).toBeTruthy();
     expect(within(panel).getByText("Index")).toBeTruthy();
+  });
+});
+
+describe("where the job furniture sits", () => {
+  test("keeps the download beside the bytes it downloads", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const panel = await screen.findByRole("complementary", {
+      name: "ESC/POS bytes in the current print job",
+    });
+    const download = within(panel).getByRole("link", { name: "Download" });
+
+    expect(download.getAttribute("href")).toBe("/api/jobs/7/input");
+    expect(download.getAttribute("download")).not.toBeNull();
+  });
+
+  test("keeps the job status over the sheets, not over the bytes", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    // The status also stands alone while a job is awaited, thus the sheets are
+    // what says the job arrived.
+    const sheets = await screen.findByRole("region", { name: "Rendered receipt sheets" });
+    const status = screen.getByRole("group", { name: "Current job status" });
+    const panel = screen.getByRole("complementary", {
+      name: "ESC/POS bytes in the current print job",
+    });
+
+    // The status and the sheets share a column, thus the bytes start at the
+    // top of the page beside them.
+    const column = status.closest("[data-sheet-column]");
+    expect(column).not.toBeNull();
+    expect(column?.contains(sheets)).toBe(true);
+    expect(column?.contains(panel)).toBe(false);
   });
 });

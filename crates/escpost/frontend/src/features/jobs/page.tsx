@@ -20,6 +20,7 @@ export function JobsPage() {
   const resource = useCurrentJob();
   const job = resource.data?.job ?? null;
   const grouped = useMemo(() => job ? groupJobCommands(job) : null, [job]);
+  const data = resource.data;
   const [previewedGroupId, setPreviewedGroupId] = useState<string | null>(null);
   const [pinnedGroupId, setPinnedGroupId] = useState<string | null>(null);
   // The character of the previewed group the pointer rests on, by its place in
@@ -102,14 +103,24 @@ export function JobsPage() {
     <section aria-labelledby="jobs-heading" class="space-y-5">
       <h1 id="jobs-heading" class="sr-only">Print jobs</h1>
 
-      <JobStatus
-        resource={resource}
-        paperMargin={paperMargin}
-        onPaperMarginChange={changePaperMargin}
-      />
+      {!(job && grouped) && (
+        <JobStatus
+          resource={resource}
+          paperMargin={paperMargin}
+          onPaperMarginChange={changePaperMargin}
+        />
+      )}
 
       {job && grouped && (
         <div class="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
+          {/* The status covers the sheets alone, thus the bytes beside them
+              start at the top of the page. */}
+          <div data-sheet-column class="flex min-w-0 flex-col gap-5">
+          <JobStatus
+            resource={resource}
+            paperMargin={paperMargin}
+            onPaperMarginChange={changePaperMargin}
+          />
           <div
             ref={(element) => { sheetWorkspace.current = element; }}
             role="region"
@@ -142,10 +153,12 @@ export function JobsPage() {
               )}
             </div>
           </div>
+          </div>
           {grouped.groups.length > 0 && (
             <CommandPanel
               groups={grouped.groups}
               byteCount={grouped.byteCount}
+              inputUrl={data?.receiving ? undefined : job.input_url}
               styleDefaults={job.style_defaults}
               previewedGroupId={previewedGroupId}
               pinnedGroupId={pinnedGroupId}
@@ -194,9 +207,6 @@ function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
             onChange={(event) => onPaperMarginChange(event.currentTarget.checked)}
           />
         </label>
-        {job?.input_url && !data?.receiving && (
-          <a class="btn btn-ghost btn-sm" href={job.input_url} download>Download raw input</a>
-        )}
       </div>
       {resource.loading && !data && <div class="skeleton h-20 w-full" aria-label="Loading current job" />}
       {resource.error && (

@@ -10,6 +10,8 @@ type Props = {
   byteCount: number;
   /** The style the printer profile starts the job with. */
   styleDefaults: StyleDefaults;
+  /** Where the bytes of the job can be had, while the job is whole. */
+  inputUrl?: string;
   previewedGroupId: string | null;
   pinnedGroupId: string | null;
   previewedCharacter: number | null;
@@ -212,10 +214,17 @@ export function CommandPanel(props: Props) {
         {...{ [STICKY_HEADER]: "" }}
         class="sticky top-0 z-10 border-b border-base-content/10 bg-base-300 p-4 shadow-sm"
       >
-        <h2 class="flex items-center gap-2 text-lg font-bold">
-          {props.byteCount} bytes
-          <span class="badge badge-outline badge-sm font-normal">ESC/POS</span>
-        </h2>
+        <div class="flex items-center gap-2">
+          <h2 class="flex items-center gap-2 text-lg font-bold">
+            {props.byteCount} bytes
+            <span class="badge badge-outline badge-sm font-normal">ESC/POS</span>
+          </h2>
+          {/* The bytes of the job are had where the job names them, thus the
+              heading needs no more than "Download" to say what it downloads. */}
+          {props.inputUrl && (
+            <a class="btn btn-ghost btn-xs ml-auto" href={props.inputUrl} download>Download</a>
+          )}
+        </div>
         {/* The rows below carry the same two columns. A reader of a row hears
             its own label, thus these headings serve the eye alone. */}
         <div
