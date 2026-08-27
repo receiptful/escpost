@@ -1,11 +1,8 @@
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Path, State};
-use axum::http::{StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::Router;
 use axum::routing::{any, get};
-use axum::{Json, Router};
 use escpost_render::{
     CommandCode, CommandTrace, DecodedCommand, Effect, Justification, PaintLifecycle, StateChange,
 };
@@ -21,7 +18,6 @@ mod status;
 pub(crate) use job_store::JobStore;
 use job_store::{JobRuntimeStatus, RenderedJob};
 
-const INDEX_HTML: &str = include_str!("../assets/index.html");
 const FIRST_AUTOMATIC_PORT: u16 = 9000;
 const LAST_AUTOMATIC_PORT: u16 = 9099;
 
@@ -38,45 +34,6 @@ fn epoch_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
-}
-
-#[derive(Serialize)]
-struct RenderResponse {
-    profile: String,
-    generation: u64,
-    error: Option<String>,
-    /// Guidance shown while no job has been captured yet, e.g. by `serve`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<String>,
-    /// How a captured job ended: "closed" or "timeout". Absent for renders.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    completion: Option<&'static str>,
-    /// True while a connection is still sending a job that has not completed.
-    receiving: bool,
-    /// When the current job completed, in Unix epoch milliseconds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    completed_at: Option<u64>,
-    /// True when the current job's raw bytes can be downloaded from /job.
-    input_available: bool,
-    /// True when renders are anti-aliased grayscale, so the viewer smooths them.
-    antialias: bool,
-    /// Non-fatal render diagnostics for the current job, ready to display.
-    warnings: Vec<String>,
-    sheets: Vec<SheetResponse>,
-}
-
-#[derive(Serialize)]
-struct SheetResponse {
-    name: String,
-    order: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    width_dots: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    height_dots: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
-    /// Experimental subset of decoded commands associated with this sheet.
-    commands: Vec<CommandResponse>,
 }
 
 #[derive(Clone, Serialize)]
@@ -267,85 +224,37 @@ pub(crate) async fn serve(
     listener: TcpListener,
     jobs: JobStore,
     virtual_printer_address: Option<SocketAddr>,
+    web_app: bool,
 ) -> std::io::Result<()> {
     let status_metadata = status::ServerStatusMetadata::resolve(virtual_printer_address);
-    let router = Router::new()
+    let mut router = Router::new()
         .merge(crate::features::printers::http::router())
         .merge(crate::features::profiles::http::router())
         .merge(status::route())
         .merge(jobs::router())
-        .route("/", get(index))
-        .route("/app", get(frontend::redirect))
-        .route("/app/", get(frontend::index))
-        .route("/app/assets/{*path}", get(frontend::asset))
-        .route("/app/{*path}", get(frontend::index))
         .route("/health", get(health))
-        .route("/api/render", get(current_render))
         .route("/api", any(error::not_found))
-        .route("/api/{*path}", any(error::not_found))
-        .route("/sheets/{file}", get(sheet_png))
-        .route("/job", get(download_job))
-        .with_state(WebState {
-            jobs,
-            status_metadata,
-            printer_monitor: crate::features::printers::monitor::PrinterMonitor::new(None),
-        });
+        .route("/api/{*path}", any(error::not_found));
+    if web_app {
+        router = router
+            .route("/", get(frontend::index))
+            .route("/assets/{*path}", get(frontend::asset))
+            .route("/{*path}", get(frontend::index));
+    }
+    let router = router.with_state(WebState {
+        jobs,
+        status_metadata,
+        printer_monitor: crate::features::printers::monitor::PrinterMonitor::new(None),
+    });
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await
-}
-
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
 }
 
 /// Liveness check for containers and automated tests. Returns 200 while the
 /// server is accepting requests, independent of whether any job was captured.
 async fn health() -> &'static str {
     "ok"
-}
-
-async fn current_render(State(state): State<WebState>) -> Json<RenderResponse> {
-    Json(state.jobs.render_response().await)
-}
-
-async fn download_job(State(state): State<WebState>) -> Response {
-    let Some((bytes, completed_at)) = state.jobs.raw_input_download().await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    // Name the file by completion time so several captures do not collide.
-    let disposition = format!("attachment; filename=\"escpost-job-{completed_at}.bin\"");
-    (
-        [
-            (
-                header::CONTENT_TYPE,
-                String::from("application/octet-stream"),
-            ),
-            (header::CONTENT_DISPOSITION, disposition),
-        ],
-        bytes,
-    )
-        .into_response()
-}
-
-async fn sheet_png(Path(file): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(number) = file
-        .strip_suffix(".png")
-        .and_then(|number| number.parse::<usize>().ok())
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some((job, _, _)) = state.jobs.snapshot().await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(sheet) = number
-        .checked_sub(1)
-        .and_then(|index| job.sheets.get(index))
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-
-    ([(header::CONTENT_TYPE, "image/png")], sheet.png.clone()).into_response()
 }
 
 async fn shutdown_signal() {

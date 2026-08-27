@@ -11,56 +11,14 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
-fn web_mode_serves_the_embedded_workbench() {
+fn web_mode_serves_the_spa_at_the_root() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
 
     wait_until_listening(&mut child, port);
-    let response = http_get(port, "/");
+    let app = http_get_bytes(port, "/");
     stop(&mut child);
 
-    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
-    assert!(response.contains("<title>ESCPost render</title>"));
-    assert!(response.contains("<div id=\"sheets\""));
-    // Anti-aliased renders are smoothed; the faithful dot grid stays pixelated.
-    assert!(response.contains("#sheets.antialiased"));
-    assert!(response.contains("id=\"margin\""));
-    assert!(response.contains("Paper margin"));
-    assert!(response.contains("id=\"connection\""));
-    assert!(response.contains("id=\"completion\""));
-    assert!(response.contains("id=\"jobStatus\""));
-    assert!(response.contains("id=\"receiving\""));
-    assert!(response.contains("id=\"download\""));
-    assert!(response.contains("id=\"warnings\""));
-    assert!(response.contains("id=\"magnifyHint\""));
-    assert!(response.contains("id=\"footerPanel\""));
-    assert!(response.contains("id=\"footerMessages\""));
-    assert!(response.contains("id=\"previewPanel\""));
-    assert!(response.contains("id=\"traceWorkspace\""));
-    assert!(response.contains("id=\"commandPanel\""));
-    assert!(response.contains("id=\"commandList\""));
-}
-
-#[test]
-fn web_mode_serves_the_new_spa_beside_the_existing_viewer() {
-    let port = unused_loopback_port();
-    let mut child = start_case_web("single-sheet", port);
-
-    wait_until_listening(&mut child, port);
-    let legacy = http_get_bytes(port, "/");
-    let redirect = http_get_bytes(port, "/app");
-    let app = http_get_bytes(port, "/app/");
-    stop(&mut child);
-
-    assert_eq!(response_status(&legacy), "HTTP/1.1 200 OK");
-    assert!(
-        String::from_utf8_lossy(response_body(&legacy)).contains("<title>ESCPost render</title>")
-    );
-    assert_eq!(
-        response_status(&redirect),
-        "HTTP/1.1 308 Permanent Redirect"
-    );
-    assert_eq!(response_header(&redirect, "location"), Some("/app/"));
     assert_eq!(response_status(&app), "HTTP/1.1 200 OK");
     assert_eq!(response_header(&app, "cache-control"), Some("no-cache"));
     assert!(
@@ -74,7 +32,7 @@ fn web_mode_serves_hashed_spa_assets_with_immutable_caching() {
     let mut child = start_case_web("single-sheet", port);
 
     wait_until_listening(&mut child, port);
-    let app = http_get_bytes(port, "/app/");
+    let app = http_get_bytes(port, "/");
     let html = String::from_utf8_lossy(response_body(&app));
     let javascript_path = referenced_asset(&html, ".js");
     let css_path = referenced_asset(&html, ".css");
@@ -118,8 +76,8 @@ fn web_mode_rejects_missing_spa_assets_and_asset_traversal() {
     let mut child = start_case_web("single-sheet", port);
 
     wait_until_listening(&mut child, port);
-    let missing = http_get_bytes(port, "/app/assets/missing.js");
-    let traversal = http_get_bytes(port, "/app/assets/../../Cargo.toml");
+    let missing = http_get_bytes(port, "/assets/missing.js");
+    let traversal = http_get_bytes(port, "/assets/../../Cargo.toml");
     stop(&mut child);
 
     for response in [&missing, &traversal] {
@@ -622,14 +580,20 @@ fn direct_spa_navigation_uses_index_without_catching_unknown_api_routes() {
     let mut child = start_case_web("single-sheet", port);
 
     wait_until_listening(&mut child, port);
-    let index = http_get_bytes(port, "/app/");
-    let jobs = http_get_bytes(port, "/app/jobs");
-    let printers = http_get_bytes(port, "/app/printers");
-    let profiles = http_get_bytes(port, "/app/profiles");
-    let calibration = http_get_bytes(port, "/app/calibration");
-    let unknown = http_get_bytes(port, "/app/unknown");
+    let index = http_get_bytes(port, "/");
+    let jobs = http_get_bytes(port, "/jobs");
+    let printers = http_get_bytes(port, "/printers");
+    let profiles = http_get_bytes(port, "/profiles");
+    let calibration = http_get_bytes(port, "/calibration");
+    let unknown = http_get_bytes(port, "/unknown");
     let unknown_api = http_get_bytes(port, "/api/unknown");
+    let health = http_get_bytes(port, "/health");
     stop(&mut child);
+
+    // The SPA answers each unknown path at the root. The routes of the server
+    // must stay reachable.
+    assert_eq!(response_status(&health), "HTTP/1.1 200 OK");
+    assert_eq!(response_body(&health), b"ok");
 
     for response in [&index, &jobs, &printers, &profiles, &calibration, &unknown] {
         assert_eq!(response_status(response), "HTTP/1.1 200 OK");
@@ -786,10 +750,8 @@ fn web_mode_exposes_ordered_sheet_metadata_and_png_bytes() {
     let mut child = start_case_web(case, port);
 
     wait_until_listening(&mut child, port);
-    let metadata_response = http_get_bytes(port, "/api/render");
-    let metadata: serde_json::Value = serde_json::from_slice(response_body(&metadata_response))
-        .expect("the metadata response should be JSON");
-    let sheet_names: Vec<&str> = metadata["sheets"]
+    let metadata = current_job(port);
+    let sheet_names: Vec<&str> = metadata["job"]["sheets"]
         .as_array()
         .expect("sheets should be an array")
         .iter()
@@ -801,9 +763,9 @@ fn web_mode_exposes_ordered_sheet_metadata_and_png_bytes() {
     );
     assert_eq!(metadata["profile"], "REFERENCE");
 
-    let png_response = http_get_bytes(port, "/sheets/2.png");
+    let png = sheet_png(port, 2);
     stop(&mut child);
-    assert_eq!(&response_body(&png_response)[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 }
 
 #[test]
@@ -829,13 +791,11 @@ fn web_mode_exposes_experimental_command_traces() {
     let mut child = start_file_web(&input_path, port, false);
 
     wait_until_listening(&mut child, port);
-    let response = http_get_bytes(port, "/api/render");
-    let metadata: serde_json::Value = serde_json::from_slice(response_body(&response))
-        .expect("the render response should be JSON");
+    let metadata = current_job(port);
     stop(&mut child);
 
     assert!(metadata.get("commands").is_none());
-    let commands = metadata["sheets"][0]["commands"]
+    let commands = metadata["job"]["sheets"][0]["commands"]
         .as_array()
         .expect("commands should be an array");
     assert_eq!(commands.len(), 5);
@@ -926,16 +886,14 @@ fn web_mode_lists_buffered_text_without_fabricating_a_sheet_image() {
     let mut child = start_file_web(&input_path, port, false);
 
     wait_until_listening(&mut child, port);
-    let response = http_get_bytes(port, "/api/render");
-    let metadata: serde_json::Value = serde_json::from_slice(response_body(&response))
-        .expect("the render response should be JSON");
+    let metadata = current_job(port);
     stop(&mut child);
 
-    let sheets = metadata["sheets"]
+    let sheets = metadata["job"]["sheets"]
         .as_array()
         .expect("conceptual sheets should be an array");
     assert_eq!(sheets.len(), 1);
-    assert!(sheets[0].get("url").is_none());
+    assert!(sheets[0].get("image_url").is_none());
     assert!(sheets[0].get("width_dots").is_none());
     assert!(sheets[0].get("height_dots").is_none());
     let commands = sheets[0]["commands"]
@@ -958,14 +916,12 @@ fn empty_job_web_mode_exposes_an_ordered_empty_sheet_list() {
     let mut child = start_file_web(&input_path, port, false);
 
     wait_until_listening(&mut child, port);
-    let metadata_response = http_get_bytes(port, "/api/render");
-    let metadata: serde_json::Value = serde_json::from_slice(response_body(&metadata_response))
-        .expect("the metadata response should be JSON");
+    let metadata = current_job(port);
     stop(&mut child);
 
     assert_eq!(metadata["profile"], "REFERENCE");
     assert_eq!(
-        metadata["sheets"]
+        metadata["job"]["sheets"]
             .as_array()
             .expect("sheets should be an array")
             .len(),
@@ -1001,7 +957,7 @@ fn web_mode_can_publish_the_same_complete_render_to_a_file() {
         .expect("the escpost command should start");
 
     wait_until_listening(&mut child, port);
-    let served_png = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
+    let served_png = sheet_png(port, 1);
     stop(&mut child);
 
     assert_eq!(
@@ -1053,17 +1009,17 @@ fn explicit_port_zero_reports_the_operating_system_selected_port() {
         stderr
             .read_line(&mut line)
             .expect("web status should be readable");
-        assert!(!line.is_empty(), "web viewer URL should be reported");
-        if line.starts_with("Web viewer: ") {
+        assert!(!line.is_empty(), "web app URL should be reported");
+        if line.starts_with("Web app: ") {
             break line;
         }
     };
     let port = viewer_line
         .trim()
-        .strip_prefix("Web viewer: http://127.0.0.1:")
+        .strip_prefix("Web app: http://127.0.0.1:")
         .and_then(|value| value.strip_suffix('/'))
         .and_then(|value| value.parse::<u16>().ok())
-        .expect("the web viewer status should contain the selected port");
+        .expect("the web app status should contain the selected port");
 
     let response = http_get(port, "/");
     stop(&mut child);
@@ -1106,11 +1062,11 @@ fn watch_mode_replaces_the_render_after_the_source_changes() {
         .as_str()
         .expect("the current job should have an image URL")
         .to_owned();
-    let before = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
+    let before = sheet_png(port, 1);
     fs::write(&input_path, b"After\n").expect("the changed input should be writable");
     let deadline = Instant::now() + Duration::from_secs(5);
     let (after, current_after) = loop {
-        let candidate = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
+        let candidate = sheet_png(port, 1);
         let current_response = http_get_bytes(port, "/api/jobs/current");
         let current: serde_json::Value = serde_json::from_slice(response_body(&current_response))
             .expect("the current job should remain JSON");
@@ -1153,13 +1109,11 @@ fn watch_error_keeps_the_last_complete_render_available() {
     let mut child = start_file_web(&input_path, port, true);
 
     wait_until_listening(&mut child, port);
-    let previous_png = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
+    let previous_png = sheet_png(port, 1);
     fs::write(&input_path, b"\x1b").expect("the invalid input should be writable");
     let deadline = Instant::now() + Duration::from_secs(5);
     let error = loop {
-        let response = http_get_bytes(port, "/api/render");
-        let metadata: serde_json::Value = serde_json::from_slice(response_body(&response))
-            .expect("the metadata should remain JSON");
+        let metadata = current_job(port);
         if let Some(error) = metadata["error"].as_str() {
             break error.to_owned();
         }
@@ -1169,7 +1123,7 @@ fn watch_error_keeps_the_last_complete_render_available() {
         );
         thread::sleep(Duration::from_millis(50));
     };
-    let still_available = response_body(&http_get_bytes(port, "/sheets/1.png")).to_vec();
+    let still_available = sheet_png(port, 1);
     stop(&mut child);
 
     assert!(error.contains("truncated ESC command"));
@@ -1201,21 +1155,6 @@ fn watch_mode_rejects_stdin_as_a_mutable_source() {
 }
 
 #[test]
-fn web_mode_does_not_serve_missing_sheets_or_filesystem_paths() {
-    let port = unused_loopback_port();
-    let mut child = start_case_web("single-sheet", port);
-
-    wait_until_listening(&mut child, port);
-    let missing = http_get(port, "/sheets/999.png");
-    let traversal = http_get(port, "/sheets/../../Cargo.toml");
-    stop(&mut child);
-
-    assert!(missing.starts_with("HTTP/1.1 404 Not Found\r\n"));
-    assert!(traversal.starts_with("HTTP/1.1 404 Not Found\r\n"));
-    assert!(!traversal.contains("[workspace]"));
-}
-
-#[test]
 fn browser_mode_starts_the_same_web_viewer() {
     let port = unused_loopback_port();
     let case_directory =
@@ -1243,7 +1182,7 @@ fn browser_mode_starts_the_same_web_viewer() {
     let response = http_get(port, "/");
     stop(&mut child);
 
-    assert!(response.contains("<title>ESCPost render</title>"));
+    assert!(response.contains("<title>ESCPost workbench</title>"));
 }
 
 #[test]
@@ -1813,7 +1752,7 @@ fn response_head(response: &[u8]) -> &str {
 
 fn referenced_asset(html: &str, extension: &str) -> String {
     html.split('"')
-        .find(|part| part.starts_with("/app/assets/") && part.ends_with(extension))
+        .find(|part| part.starts_with("/assets/") && part.ends_with(extension))
         .unwrap_or_else(|| panic!("SPA document should reference a {extension} asset"))
         .to_owned()
 }
@@ -1834,4 +1773,21 @@ fn temporary_directory(case: &str) -> PathBuf {
     ));
     fs::create_dir(&path).expect("the test directory should be creatable");
     path
+}
+
+/// The current job, through the jobs API.
+fn current_job(port: u16) -> serde_json::Value {
+    let response = http_get_bytes(port, "/api/jobs/current");
+    serde_json::from_slice(response_body(&response))
+        .expect("the current job response should be JSON")
+}
+
+/// The PNG bytes of sheet `number` of the current job, through the jobs API.
+fn sheet_png(port: u16, number: usize) -> Vec<u8> {
+    let current = current_job(port);
+    let url = current["job"]["sheets"][number - 1]["image_url"]
+        .as_str()
+        .expect("a rendered sheet should have an image URL")
+        .to_owned();
+    response_body(&http_get_bytes(port, &url)).to_vec()
 }

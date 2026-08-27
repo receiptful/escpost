@@ -30,24 +30,31 @@ docker-web-dev:
 
 # --- Native (host Rust toolchain) ---
 
+# Install the frontend dependencies. The Vite server needs them.
+frontend-install:
+    cd crates/escpost/frontend && bun install --frozen-lockfile
+
+# Build the web app bundle into crates/escpost/frontend/dist.
+frontend-build:
+    cd crates/escpost/frontend && bun install --frozen-lockfile && bun run build
+
 # Build target/release/escpost.
-native-build:
-    scripts/frontend-build
+native-build: frontend-build
     cargo build --release -p escpost
 
 # Run the test suite on the host.
-native-test:
-    scripts/frontend-build
+native-test: frontend-build
     cargo test --workspace --exclude escpost-python
     scripts/test-development-wrapper
 
-# Run the CLI on the host, e.g. `just native-run serve`.
+# A debug build reads the web app from disk at run time. Use `frontend-build`
+# first if the CLI must serve it.
+[doc("Run the CLI on the host, e.g. `just native-run serve`.")]
 native-run *args:
-    scripts/frontend-build
     cargo run -q -p escpost -- {{args}}
 
 # Run the backend and Vite development server with host toolchains.
-native-web-dev:
+native-web-dev: frontend-install
     scripts/native-web-dev
 
 # --- Utilities ---
@@ -59,3 +66,9 @@ pack:
 # Build and test the Python render binding.
 python-test:
     scripts/python-binding-test
+
+# Publish escpost-render and escpost-profiles first, because escpost needs
+# them at the versions in this workspace.
+[doc("Publish the CLI to crates.io with the web app built in.")]
+publish: frontend-build
+    cargo publish -p escpost

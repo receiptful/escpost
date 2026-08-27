@@ -1,4 +1,4 @@
-//! Terminal adapter for RAW job capture and the embedded web viewer.
+//! Terminal adapter for RAW job capture and the embedded web app.
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
@@ -29,15 +29,15 @@ pub(crate) struct ServeArgs {
     #[arg(long, default_value = "REFERENCE")]
     pub(crate) profile: String,
 
-    /// Address for the RAW TCP printer. When omitted, the first free loopback
+    /// Start the virtual IP printer. Without an address, the first free loopback
     /// port from 9100 through 9109 is used.
-    #[arg(long)]
-    pub(crate) listen: Option<SocketAddr>,
+    #[arg(long, value_name = "ADDRESS", num_args = 0..=1)]
+    pub(crate) listen: Option<Option<SocketAddr>>,
 
-    /// Address for the web viewer. When omitted, the first free loopback port
+    /// Start the web and API server. Without an address, the first free loopback port
     /// from 9000 through 9099 is used.
-    #[arg(long)]
-    pub(crate) web_listen: Option<SocketAddr>,
+    #[arg(long, value_name = "ADDRESS", num_args = 0..=1)]
+    pub(crate) web_listen: Option<Option<SocketAddr>>,
 
     /// Complete a held-open connection's job after this many seconds of silence.
     /// Use 0 to disable and end a job only when the connection closes.
@@ -53,14 +53,20 @@ pub(crate) struct ServeArgs {
     #[arg(long, num_args = 0..=1, default_value_t = true, default_missing_value = "true")]
     pub(crate) antialias: bool,
 
-    /// Do not open the web viewer in the default browser on startup. Auto-open
+    /// Do not open the web app in the default browser on startup. Auto-open
     /// is also skipped with --non-interactive, without a terminal, or when the
     /// BROWSER=none or CI environment variables are set.
     #[arg(long, alias = "no-browser")]
     pub(crate) no_open: bool,
+
+    /// Serve the API but not the web application. Needs --web-listen. Use it
+    /// when no web application is necessary, or when a Vite development server
+    /// serves the web application and sends each /api request to this server.
+    #[arg(long)]
+    pub(crate) no_web_app: bool,
 }
 
-/// Decide whether to auto-open the web viewer in a browser. Open by default,
+/// Decide whether to auto-open the web app in a browser. Open by default,
 /// but stay out of the way when the user opted out (`--no-open`), when there is
 /// no interactive terminal, or in automation (`--non-interactive`, `CI`, or
 /// `BROWSER=none`).
@@ -76,6 +82,12 @@ fn should_open_browser(
 
 pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(), CliError> {
     let scale = RenderScale::new(arguments.scale).map_err(ApplicationError::from)?;
+    if arguments.listen.is_none() && arguments.web_listen.is_none() {
+        return Err(CliError::NoListener);
+    }
+    if arguments.no_web_app && arguments.web_listen.is_none() {
+        return Err(CliError::NoWebAppWithoutWebListener);
+    }
     // Validate the configured profile before opening either listener. Captured
     // jobs pass that same validated profile to the synchronous rendering operation.
     let profile = profiles::load(&arguments.profile)?;
@@ -90,52 +102,86 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         return Err(CliError::InvalidIdleTimeout);
     };
 
-    let raw = net::bind_loopback(arguments.listen, FIRST_RAW_PORT..=LAST_RAW_PORT)
-        .await
-        .map_err(|failure| match failure {
-            net::BindFailure::Address { address, source } => {
-                CliError::BindRawPrinter { address, source }
+    let raw = match arguments.listen {
+        Some(requested) => {
+            let listener = net::bind_loopback(requested, FIRST_RAW_PORT..=LAST_RAW_PORT)
+                .await
+                .map_err(|failure| match failure {
+                    net::BindFailure::Address { address, source } => {
+                        CliError::BindRawPrinter { address, source }
+                    }
+                    net::BindFailure::RangeExhausted => CliError::NoAutomaticRawPort,
+                })?;
+            let address = listener.local_addr().map_err(CliError::ServeRawPrinter)?;
+            if !address.ip().is_loopback() {
+                eprintln!(
+                    "warning: the virtual IP printer accepts receipt data beyond loopback on {address}"
+                );
             }
-            net::BindFailure::RangeExhausted => CliError::NoAutomaticRawPort,
-        })?;
-    let raw_address = raw.local_addr().map_err(CliError::ServeRawPrinter)?;
-    if !raw_address.ip().is_loopback() {
-        eprintln!("warning: the RAW printer accepts receipt data beyond loopback on {raw_address}");
-    }
-    eprintln!("RAW printer: {raw_address}");
-    match idle_timeout {
-        Some(timeout) => eprintln!("Idle timeout: {timeout:?}"),
-        None => eprintln!("Idle timeout: disabled (jobs end when the connection closes)"),
-    }
+            eprintln!("Virtual IP printer: {address}");
+            match idle_timeout {
+                Some(timeout) => eprintln!("Idle timeout: {timeout:?}"),
+                None => eprintln!("Idle timeout: disabled (jobs end when the connection closes)"),
+            }
+            Some((listener, address))
+        }
+        None => None,
+    };
 
-    let web_listener = cli_web::bind(arguments.web_listen).await?;
-    let jobs = web::JobStore::awaiting_jobs(
-        arguments.profile.clone(),
-        format!(
-            "Waiting for the first job. Configure a local ERP or POS application to send its RAW ESC/POS print jobs to {raw_address}."
+    let waiting_hint = match raw {
+        Some((_, address)) => format!(
+            "Waiting for the first job. Configure a local ERP or POS application to send its RAW ESC/POS print jobs to {address}."
         ),
-        arguments.antialias,
-    );
+        None => "Waiting for the first job. Start the server with --listen to accept RAW ESC/POS print jobs.".to_owned(),
+    };
+    let jobs =
+        web::JobStore::awaiting_jobs(arguments.profile.clone(), waiting_hint, arguments.antialias);
 
-    // Accept jobs while the web viewer runs. The viewer owns the foreground and
+    let raw_address = raw.as_ref().map(|(_, address)| *address);
+    // Accept jobs while the web server runs. The server owns the foreground and
     // returns on Ctrl+C; stop accepting once it does.
-    let acceptor = tokio::spawn(accept_jobs(
-        raw,
-        jobs.clone(),
-        profile,
-        idle_timeout,
-        scale,
-        arguments.antialias,
-    ));
-    let open_browser = should_open_browser(
-        arguments.no_open,
-        non_interactive,
-        std::io::stderr().is_terminal(),
-        std::env::var("BROWSER").ok().as_deref(),
-        std::env::var_os("CI").is_some(),
-    );
-    let result = cli_web::serve(web_listener, jobs, Some(raw_address), open_browser).await;
-    acceptor.abort();
+    let acceptor = raw.map(|(listener, _)| {
+        tokio::spawn(accept_jobs(
+            listener,
+            jobs.clone(),
+            profile,
+            idle_timeout,
+            scale,
+            arguments.antialias,
+        ))
+    });
+
+    let result = match arguments.web_listen {
+        Some(requested) => {
+            let listener = cli_web::bind(requested).await?;
+            // Nothing to open when this server has no web application.
+            let open_browser = !arguments.no_web_app
+                && should_open_browser(
+                    arguments.no_open,
+                    non_interactive,
+                    std::io::stderr().is_terminal(),
+                    std::env::var("BROWSER").ok().as_deref(),
+                    std::env::var_os("CI").is_some(),
+                );
+            cli_web::serve(
+                listener,
+                jobs,
+                raw_address,
+                open_browser,
+                !arguments.no_web_app,
+            )
+            .await
+        }
+        // Without a web server the virtual IP printer owns the foreground.
+        None => {
+            eprintln!("Press Ctrl+C to stop.");
+            let _ = tokio::signal::ctrl_c().await;
+            Ok(())
+        }
+    };
+    if let Some(acceptor) = acceptor {
+        acceptor.abort();
+    }
     result
 }
 
@@ -238,7 +284,7 @@ async fn finalize(
     antialias: bool,
 ) {
     // Rendering is synchronous and CPU-bound; run it off the async workers so a
-    // job in flight cannot stall the web viewer's responses.
+    // job in flight cannot stall the web app's responses.
     match tokio::task::spawn_blocking(move || {
         render_job(RenderRequest {
             bytes,

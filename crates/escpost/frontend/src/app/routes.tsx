@@ -17,11 +17,11 @@ function NotFoundPage() {
 export function AppRoutes() {
   return (
     <Router>
-      <Route path="/app/" component={OverviewPage} />
-      <Route path="/app/jobs" component={JobsPage} />
-      <Route path="/app/printers" component={PrintersPage} />
-      <Route path="/app/profiles" component={ProfilesPage} />
-      <Route path="/app/calibration" component={CalibrationPage} />
+      <Route path="/" component={OverviewPage} />
+      <Route path="/jobs" component={JobsPage} />
+      <Route path="/printers" component={PrintersPage} />
+      <Route path="/profiles" component={ProfilesPage} />
+      <Route path="/calibration" component={CalibrationPage} />
       <Route default component={NotFoundPage} />
     </Router>
   );

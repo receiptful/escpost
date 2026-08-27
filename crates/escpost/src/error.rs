@@ -33,10 +33,10 @@ pub(crate) enum CliError {
     #[error("refusing to write binary PNG data to an interactive terminal")]
     BinaryOutputToTerminal,
 
-    #[error("PNG stdout cannot be combined with a long-running web viewer")]
+    #[error("PNG stdout cannot be combined with a long-running web app")]
     StdoutWithWeb,
 
-    #[error("could not bind web viewer to {address}: {source}")]
+    #[error("could not bind web app to {address}: {source}")]
     BindWeb {
         address: std::net::SocketAddr,
         source: std::io::Error,
@@ -45,23 +45,29 @@ pub(crate) enum CliError {
     #[error("no loopback web port from 9000 through 9099 is available")]
     NoAutomaticWebPort,
 
-    #[error("web viewer failed: {0}")]
+    #[error("web app failed: {0}")]
     ServeWeb(#[source] std::io::Error),
 
-    #[error("could not bind RAW printer to {address}: {source}")]
+    #[error("could not bind virtual IP printer to {address}: {source}")]
     BindRawPrinter {
         address: std::net::SocketAddr,
         source: std::io::Error,
     },
 
-    #[error("no loopback RAW printer port from 9100 through 9109 is available")]
+    #[error("no loopback virtual IP printer port from 9100 through 9109 is available")]
     NoAutomaticRawPort,
 
-    #[error("RAW printer failed: {0}")]
+    #[error("virtual IP printer failed: {0}")]
     ServeRawPrinter(#[source] std::io::Error),
 
     #[error("idle timeout must be a positive number of seconds")]
     InvalidIdleTimeout,
+
+    #[error("serve needs --listen, --web-listen, or both")]
+    NoListener,
+
+    #[error("--no-web-app needs --web-listen")]
+    NoWebAppWithoutWebListener,
 
     #[error("watch mode requires a filesystem source, not stdin")]
     WatchStdin,

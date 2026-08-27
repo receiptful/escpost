@@ -29,9 +29,9 @@ Options:
   -o, --output <OUTPUT>          Write one PNG to this path, or use - for stdout
       --output-dir <OUTPUT_DIR>  Write every rendered sheet and a manifest to this directory
       --sheet <SHEET>            Select one one-based sheet for single-PNG output
-      --web                      Start the local web viewer and keep running
-      --browser                  Start the web viewer and open it in the default browser
-      --web-listen <WEB_LISTEN>  Exact address for the web viewer
+      --web                      Start the local web app and keep running
+      --browser                  Start the web app and open it in the default browser
+      --web-listen <WEB_LISTEN>  Exact address for the web app
       --watch                    Rerender a filesystem source whenever it changes
       --scale <N>                Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
       --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
@@ -431,7 +431,7 @@ fn stdout_png_cannot_be_combined_with_web_mode() {
     assert!(output.stdout.is_empty());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("PNG stdout cannot be combined with a long-running web viewer")
+            .contains("PNG stdout cannot be combined with a long-running web app")
     );
 }
 

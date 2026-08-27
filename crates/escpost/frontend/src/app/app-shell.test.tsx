@@ -114,11 +114,13 @@ async function renderShell(path: string) {
   locationStub(path);
   const view = render(
     <ServerStatusProvider>
-      <PrinterInventoryProvider><AppDataProvider>
-        <LocationProvider scope="/app">
+      <PrinterInventoryProvider>
+        <AppDataProvider>
+        <LocationProvider>
           <AppShell><ScanProbe /></AppShell>
         </LocationProvider>
-      </AppDataProvider></PrinterInventoryProvider>
+        </AppDataProvider>
+      </PrinterInventoryProvider>
     </ServerStatusProvider>,
   );
   act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", {
@@ -171,7 +173,7 @@ function announcers(container: Element) {
 
 describe("App", () => {
   test("shows the current job workbench from the Print jobs route", async () => {
-    renderAt("/app/jobs");
+    renderAt("/jobs");
 
     expect(screen.getByRole("heading", { name: "Print jobs" }).getAttribute("class")).toContain("sr-only");
     expect(await screen.findByText("Waiting for first job")).toBeTruthy();
@@ -184,20 +186,20 @@ describe("App", () => {
   });
 
   test("keeps calibration honest while it is unavailable", () => {
-    renderAt("/app/calibration");
+    renderAt("/calibration");
 
     expect(screen.getByRole("heading", { name: "Calibration" })).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
   });
 
   test("shows a not found page for an unknown workbench route", () => {
-    renderAt("/app/unknown");
+    renderAt("/unknown");
 
     expect(screen.getByRole("heading", { name: "Not found" })).toBeTruthy();
   });
 
   test("exposes five destinations in each responsive navigation landmark", () => {
-    renderAt("/app/jobs");
+    renderAt("/jobs");
 
     expect(
       within(screen.getByRole("navigation", { name: "Workbench navigation" })).getAllByRole(
@@ -212,7 +214,7 @@ describe("App", () => {
   });
 
   test("exposes polite live server status semantics for both responsive variants", async () => {
-    renderAt("/app/jobs");
+    renderAt("/jobs");
 
     await screen.findAllByText("Ready");
     const statuses = screen.getAllByRole("status", { name: "Server status" });
@@ -228,7 +230,7 @@ describe("App", () => {
   });
 
   test("keeps the mobile server status in normal flow above content while only navigation is fixed", () => {
-    const view = renderAt("/app/printers");
+    const view = renderAt("/printers");
 
     const statuses = screen.getAllByRole("status", { name: "Server status" });
     const mobileStatus = statuses.find((status) => status.closest("header"));
@@ -242,7 +244,7 @@ describe("App", () => {
   });
 
   test("selects Overview at the normalized workbench root path", () => {
-    renderAt("/app/");
+    renderAt("/");
 
     expect(
       within(screen.getByRole("navigation", { name: "Workbench navigation" }))
@@ -252,7 +254,7 @@ describe("App", () => {
   });
 
   test("visually marks the current destination in desktop and mobile navigation", () => {
-    renderAt("/app/jobs");
+    renderAt("/jobs");
 
     const desktop = within(screen.getByRole("navigation", { name: "Workbench navigation" }))
       .getByRole("link", { name: "Print jobs" });
@@ -263,7 +265,7 @@ describe("App", () => {
   });
 
   test("lets pages own their width instead of centering the entire application", () => {
-    const view = renderAt("/app/jobs");
+    const view = renderAt("/jobs");
     const pageContainer = view.container.querySelector("main > div");
 
     expect(pageContainer?.getAttribute("class")).toBe("flex w-full flex-col");
@@ -271,11 +273,11 @@ describe("App", () => {
 
   test("keeps semantic page headings while hiding every repeated visual title", () => {
     const pages = [
-      ["/app/", "Overview"],
-      ["/app/jobs", "Print jobs"],
-      ["/app/printers", "Printers"],
-      ["/app/profiles", "Profiles"],
-      ["/app/calibration", "Calibration"],
+      ["/", "Overview"],
+      ["/jobs", "Print jobs"],
+      ["/printers", "Printers"],
+      ["/profiles", "Profiles"],
+      ["/calibration", "Calibration"],
     ];
 
     for (const [path, name] of pages) {
@@ -286,7 +288,7 @@ describe("App", () => {
   });
 
   test("replaces the old construction screen", () => {
-    renderAt("/app/");
+    renderAt("/");
 
     expect(
       screen.queryByText("The new web workbench is under construction."),
@@ -294,19 +296,19 @@ describe("App", () => {
   });
 
   test("a running scan shows progress in both responsive status variants on any page", async () => {
-    const { stream } = await startScanInShell("/app/profiles");
+    const { stream } = await startScanInShell("/profiles");
     act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
 
     for (const region of discoveryRegions()) {
       expect(within(region).getByText("Scanning printers")).toBeTruthy();
       expect(within(region).getByText("312 / 508")).toBeTruthy();
-      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/app/printers");
+      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/printers");
       expect(region.querySelector("progress")?.getAttribute("value")).toBe("312");
     }
   });
 
   test("renders the sidebar variant as a card and the compact variant as an inline pill", async () => {
-    const { stream } = await startScanInShell("/app/profiles");
+    const { stream } = await startScanInShell("/profiles");
     act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
 
     const [sidebar, compact] = discoveryRegions();
@@ -318,7 +320,7 @@ describe("App", () => {
   });
 
   test("scan progress stays indeterminate until the probe total is known", async () => {
-    await startScanInShell("/app/printers");
+    await startScanInShell("/printers");
 
     for (const region of discoveryRegions()) {
       expect(region.querySelector("progress")?.hasAttribute("value")).toBe(false);
@@ -331,7 +333,7 @@ describe("App", () => {
   // `prepared` with a zero probe total and never sends a `progress` event.
   // The readout has to stay honest for the whole life of that scan.
   test("a USB-only scan never claims to be preparing or to have zero of zero probes", async () => {
-    const { stream } = await startScanInShell("/app/printers");
+    const { stream } = await startScanInShell("/printers");
     act(() => { stream.emit("prepared", { targets: [], skipped: [], total_probes: 0 }); });
 
     for (const region of discoveryRegions()) {
@@ -345,7 +347,7 @@ describe("App", () => {
   // zero without unmounting the bar, which is the only way the determinate
   // to indeterminate direction is ever exercised.
   test("a rescan drops the probe total back to an indeterminate bar", async () => {
-    const { stream } = await startScanInShell("/app/printers");
+    const { stream } = await startScanInShell("/printers");
     act(() => { stream.emit("progress", { completed: 312, total: 508 }); });
     for (const region of discoveryRegions()) {
       expect(region.querySelector("progress")?.getAttribute("value")).toBe("312");
@@ -359,7 +361,7 @@ describe("App", () => {
   });
 
   test("announces a scan starting and ending without announcing every probe", async () => {
-    const { view, stream } = await startScanInShell("/app/printers");
+    const { view, stream } = await startScanInShell("/printers");
     const announcers = [...view.container.querySelectorAll('[aria-live="polite"].sr-only')];
     expect(announcers).toHaveLength(2);
     for (const announcer of announcers) {
@@ -384,7 +386,7 @@ describe("App", () => {
   });
 
   test("keeps the sidebar status pair anchored to the bottom while a scan runs", async () => {
-    const { stream } = await startScanInShell("/app/jobs");
+    const { stream } = await startScanInShell("/jobs");
     act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
 
     const status = screen.getAllByRole("status", { name: "Server status" }).find((section) => section.closest("aside"));
@@ -398,7 +400,7 @@ describe("App", () => {
   test("an arriving print job shows in both responsive status variants on any page", async () => {
     FakeEventSource.instances = [];
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-    renderAt("/app/profiles");
+    renderAt("/profiles");
     const statusStream = FakeEventSource.forUrl("/api/status/events");
 
     act(() => statusStream?.emit("message", {
@@ -409,7 +411,7 @@ describe("App", () => {
 
     for (const region of jobRegions()) {
       expect(within(region).getByText("Incoming print job")).toBeTruthy();
-      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/app/jobs");
+      expect(within(region).getByRole("link", { name: "View" }).getAttribute("href")).toBe("/jobs");
       // No readout beside the bar: nothing measures a job's size, so the only
       // thing it could say is that the job is in progress, which the label
       // and the indeterminate bar already say.
@@ -419,12 +421,12 @@ describe("App", () => {
 
   test("shows no job block while the virtual printer is idle or absent", async () => {
     virtualPrinter = ready;
-    await renderShell("/app/jobs");
+    await renderShell("/jobs");
     expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
 
     cleanup();
     virtualPrinter = null;
-    await renderShell("/app/jobs");
+    await renderShell("/jobs");
     expect(screen.queryAllByRole("region", { name: "Print job" })).toHaveLength(0);
   });
 
@@ -433,7 +435,7 @@ describe("App", () => {
   // never invent one.
   test("an incoming job's bar stays indeterminate, with no invented total", async () => {
     virtualPrinter = receiving;
-    await renderShell("/app/jobs");
+    await renderShell("/jobs");
 
     for (const region of jobRegions()) {
       const bar = region.querySelector("progress");
@@ -444,7 +446,7 @@ describe("App", () => {
 
   test("renders the job's sidebar variant as a card and its compact variant as an inline pill", async () => {
     virtualPrinter = receiving;
-    await renderShell("/app/jobs");
+    await renderShell("/jobs");
 
     const [sidebar, compact] = jobRegions();
     expect(sidebar.getAttribute("class")).toContain("text-sm");
@@ -459,7 +461,7 @@ describe("App", () => {
   // reader when the other one comes or goes.
   test("stacks a scan and an incoming job in a fixed order in both variants", async () => {
     virtualPrinter = receiving;
-    const { stream } = await startScanInShell("/app/jobs");
+    const { stream } = await startScanInShell("/jobs");
     act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
 
     const [sidebarScan, compactScan] = discoveryRegions();
@@ -484,7 +486,7 @@ describe("App", () => {
   // they stay direct children of the anchored column.
   test("lays the compact pills out as a wrapping row and the sidebar pills as a stack", async () => {
     virtualPrinter = receiving;
-    const { stream } = await startScanInShell("/app/printers");
+    const { stream } = await startScanInShell("/printers");
     act(() => { stream.emit("progress", { completed: 4, total: 508 }); });
 
     const [sidebarScan, compactScan] = discoveryRegions();
@@ -497,7 +499,7 @@ describe("App", () => {
 
   test("announces an arriving job, and both activities while they overlap", async () => {
     virtualPrinter = receiving;
-    const view = await renderShell("/app/jobs");
+    const view = await renderShell("/jobs");
 
     expect(announcers(view.container)).toHaveLength(2);
     for (const announcer of announcers(view.container)) {
@@ -523,7 +525,7 @@ describe("App", () => {
   // block reading "Disconnected".
   test("hides an incoming job while disconnected and restores it after reconnection", async () => {
     virtualPrinter = receiving;
-    await renderShell("/app/jobs");
+    await renderShell("/jobs");
     expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
 
     const statusStream = FakeEventSource.forUrl("/api/status/events");
@@ -545,7 +547,7 @@ describe("App", () => {
 
   test("drops the job block and its announcement once the job stops arriving", async () => {
     virtualPrinter = receiving;
-    const view = await renderShell("/app/jobs");
+    const view = await renderShell("/jobs");
     expect(screen.getAllByRole("region", { name: "Print job" })).toHaveLength(2);
 
     act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", {

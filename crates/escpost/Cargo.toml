@@ -11,6 +11,21 @@ readme = "README.md"
 keywords = ["escpos", "printer", "receipt", "cli", "pos"]
 categories = ["command-line-utilities", "development-tools"]
 
+# The published crate must hold the built web app. Git ignores `frontend/dist/`,
+# thus cargo leaves it out of the package by default and `build.rs` stops the
+# build for the user. This list replaces the git rules. Build the frontend
+# before you publish. `just publish` does the two steps in the correct order.
+# A pattern without a `/` prefix finds the file at each directory level. Thus
+# `/` starts each line and keeps `node_modules` out of the package.
+include = [
+    "/src/**/*",
+    "/tests/**/*",
+    "/frontend/dist/**/*",
+    "/build.rs",
+    "/README.md",
+    "/LICENSE",
+]
+
 [[bin]]
 name = "escpost"
 path = "src/main.rs"

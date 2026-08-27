@@ -30,7 +30,7 @@ The Rust workspace contains four crates:
 - `escpost-render` parses ESC/POS, applies printer state, rasterizes content, and
   encodes PNG.
 - `escpost` provides the native `escpost` executable, PNG destinations,
-  embedded local web viewer, named USB and RAW TCP output, passive printer
+  embedded local web app, named USB and RAW TCP output, passive printer
   inventory, and platform-native machine configuration.
 - `escpost-python` exposes coarse-grained rendering functions through PyO3.
 
@@ -282,12 +282,12 @@ Profile resolution → escpost_render::render
              ┌─────────────┼─────────────┐
              ▼             ▼             ▼
         one PNG       sheet directory   in-memory job
-        or stdout     plus manifest     and web viewer
+        or stdout     plus manifest     and web app
 ```
 
 Single-PNG output never drops later sheets. Directory output publishes its
 manifest only after all current sheets are complete. An explicit file and the
-web viewer may consume the same render without parsing or rendering twice.
+web app may consume the same render without parsing or rendering twice.
 
 Rendered PNGs live in a shared in-memory job store. The viewer reports ordered
 sheet names and printer-dot dimensions, uses one screen pixel per dot initially,
@@ -298,17 +298,10 @@ from the asynchronous HTTP task. A successful result atomically replaces the
 visible job. A parse or render failure is reported by the page while the last
 complete sheets remain available.
 
-The current embedded viewer is a latest-job projection. Axum serves one inline
-HTML document, current render metadata at `/api/render`, the current raw input
-at `/job`, and current sheets under `/sheets/`. These routes do not provide
-stable job identity and are not the target workbench API.
-
 ### Embedded web applications
 
-The existing latest-job viewer remains available at `/` as a behavioral
-reference. A Preact and TypeScript workbench is available at `/app/`, with
-`preact-iso` client routing for Overview, Print jobs, Printers, Profiles, and
-Calibration. Its responsive shell uses semantic tables on wide screens and
+A Preact and TypeScript workbench is available at `/`, with `preact-iso`
+client routing for Overview, Print jobs, Printers, Profiles, and Calibration. Its responsive shell uses semantic tables on wide screens and
 labeled cards on narrow screens. Print jobs renders the current job directly;
 job history is a later capability. Printers discovers and registers printers as
 well as listing them, which makes it the first page that writes. Its inventory

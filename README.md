@@ -54,11 +54,10 @@ changes:
 escpost render receipt.hex --profile REFERENCE --web --watch
 ```
 
-Or run a virtual printer and point an application at the reported RAW TCP
-address:
+Or run a virtual printer and point an application at the reported address:
 
 ```bash
-escpost serve
+escpost serve --listen --web-listen
 ```
 
 <p align="center">
@@ -118,19 +117,14 @@ The [`justfile`](justfile) wraps both workflows:
 
 `docker compose up` is the complete development stack. `./escpost serve` and
 `just docker-web-dev` are aliases for it. Backend source changes restart the
-Rust process; Vite serves the frontend at `http://127.0.0.1:5173/app/` with hot
-reload. The backend continues to serve the existing embedded viewer at
-`http://127.0.0.1:9000/`. The `/app/` workbench does not remove that viewer.
-It provides five read-only routes:
+Rust process; Vite serves the frontend at `http://127.0.0.1:5173/` with hot
+reload. The workbench provides five read-only routes:
 
-- `/app/` — Overview
-- `/app/jobs` — current print job, sheets, command trace, and annotations
-- `/app/printers` — configured printer inventory
-- `/app/profiles` — complete printer-profile catalog
-- `/app/calibration` — calibration guidance
-
-The viewer at `/` remains available as a behavioral reference while the Preact
-workbench gains the remaining operational features.
+- `/` — Overview
+- `/jobs` — current print job, sheets, command trace, and annotations
+- `/printers` — configured printer inventory
+- `/profiles` — complete printer-profile catalog
+- `/calibration` — calibration guidance
 
 For a production-like run of the embedded frontend without development
 watchers, use `docker compose run --rm -e ESCPOST_WATCH=0 escpost serve`.

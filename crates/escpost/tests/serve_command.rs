@@ -15,19 +15,20 @@ fn serve_help_contract_is_unchanged() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("serve help should be UTF-8"),
         "\
-Capture RAW TCP print jobs and preview them in the web viewer
+Capture RAW TCP print jobs and preview them in the web app
 
 Usage: escpost serve [OPTIONS]
 
 Options:
       --non-interactive          Never prompt for missing values
       --profile <PROFILE>        Printer profile used to render captured jobs [default: REFERENCE]
-      --listen <LISTEN>          Address for the RAW TCP printer. When omitted, the first free loopback port from 9100 through 9109 is used
-      --web-listen <WEB_LISTEN>  Address for the web viewer. When omitted, the first free loopback port from 9000 through 9099 is used
+      --listen [<ADDRESS>]       Start the virtual IP printer. Without an address, the first free loopback port from 9100 through 9109 is used
+      --web-listen [<ADDRESS>]   Start the web and API server. Without an address, the first free loopback port from 9000 through 9099 is used
       --idle-timeout <SECONDS>   Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]
       --scale <N>                Preview pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 3]
       --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias=false for faithful 1-bit dots [default: true] [possible values: true, false]
-      --no-open                  Do not open the web viewer in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
+      --no-open                  Do not open the web app in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
+      --no-web-app               Serve the API but not the web application. Needs --web-listen. Use it when no web application is necessary, or when a Vite development server serves the web application and sends each /api request to this server
   -h, --help                     Print help
 "
     );
@@ -96,21 +97,21 @@ fn serve_captures_a_raw_job_and_previews_its_sheets() {
     send_raw_job(raw_port, b"Captured over RAW\n");
 
     let metadata = wait_for_first_job(web_port);
-    let sheets = metadata["sheets"]
+    let sheets = metadata["job"]["sheets"]
         .as_array()
         .expect("sheets should be an array");
     assert!(!sheets.is_empty(), "the captured job should render a sheet");
     assert_eq!(metadata["profile"], "REFERENCE");
 
     // A job ended by the client closing the connection is labelled "closed".
-    assert_eq!(metadata["completion"], "closed");
+    assert_eq!(metadata["job"]["completion"], "closed");
     // Its completion time is reported so the viewer always shows a status.
     assert!(
-        metadata["completed_at"].as_u64().is_some(),
+        metadata["job"]["completed_at_unix_ms"].as_u64().is_some(),
         "a completed job should carry a completion timestamp"
     );
 
-    let png = response_body(&http_get_bytes(web_port, "/sheets/1.png")).to_vec();
+    let png = sheet_png(web_port, 1);
     stop(&mut child);
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 }
@@ -138,9 +139,8 @@ fn api_status_reports_virtual_printer_and_only_successful_captured_jobs() {
     assert_eq!(initial["virtual_printer"]["address"], raw_address);
     assert_eq!(initial["jobs_processed"], 0);
 
-    let generation = render_metadata(web_port)["generation"]
-        .as_u64()
-        .expect("the initial render generation should be numeric");
+    // No job is captured yet, thus each captured job gets a higher generation.
+    let generation = 0;
     send_raw_job(raw_port, b"Count this captured job\n");
     wait_for_generation_change(web_port, generation);
     assert_eq!(status_metadata(web_port)["jobs_processed"], 1);
@@ -248,13 +248,13 @@ fn serve_finalizes_a_held_open_connection_after_the_idle_timeout() {
 
     let metadata = wait_for_first_job(web_port);
     assert!(
-        !metadata["sheets"]
+        !metadata["job"]["sheets"]
             .as_array()
             .expect("sheets should be an array")
             .is_empty(),
         "the held-open job should render once the idle timeout elapses"
     );
-    assert_eq!(metadata["completion"], "timeout");
+    assert_eq!(metadata["job"]["completion"], "timeout");
 
     drop(stream);
     stop(&mut child);
@@ -269,8 +269,7 @@ fn serve_offers_the_captured_raw_input_for_download() {
 
     let sent = b"Downloadable raw input\n";
     send_raw_job(raw_port, sent);
-    let metadata = wait_for_first_job(web_port);
-    assert_eq!(metadata["input_available"], true);
+    wait_for_first_job(web_port);
 
     let current_response = http_get_bytes(web_port, "/api/jobs/current");
     let current: serde_json::Value = serde_json::from_slice(response_body(&current_response))
@@ -331,13 +330,13 @@ fn serve_flags_a_connection_that_is_still_receiving() {
     stop(&mut child);
 
     assert!(
-        !metadata["sheets"]
+        !metadata["job"]["sheets"]
             .as_array()
             .expect("sheets should be an array")
             .is_empty(),
         "the finalized job should render"
     );
-    assert_eq!(metadata["completion"], "closed");
+    assert_eq!(metadata["job"]["completion"], "closed");
     assert_eq!(status["virtual_printer"]["state"], "ready");
 }
 
@@ -350,12 +349,12 @@ fn serve_replaces_the_preview_with_the_most_recent_job() {
 
     send_raw_job(raw_port, b"First job\n");
     wait_for_first_job(web_port);
-    let first = response_body(&http_get_bytes(web_port, "/sheets/1.png")).to_vec();
+    let first = sheet_png(web_port, 1);
 
     send_raw_job(raw_port, b"A visibly different second job\n");
     let deadline = Instant::now() + Duration::from_secs(5);
     let second = loop {
-        let candidate = response_body(&http_get_bytes(web_port, "/sheets/1.png")).to_vec();
+        let candidate = sheet_png(web_port, 1);
         if candidate != first {
             break candidate;
         }
@@ -378,14 +377,7 @@ fn serve_viewer_shows_instructions_before_the_first_job() {
     let metadata = render_metadata(web_port);
     stop(&mut child);
 
-    assert_eq!(
-        metadata["sheets"]
-            .as_array()
-            .expect("sheets should be an array")
-            .len(),
-        0,
-        "no job has been captured yet"
-    );
+    assert!(metadata["job"].is_null(), "no job has been captured yet");
     let hint = metadata["hint"]
         .as_str()
         .expect("an idle viewer should carry a waiting hint");
@@ -410,13 +402,13 @@ fn serve_reassembles_a_job_sent_one_byte_at_a_time() {
 
     let metadata = wait_for_first_job(web_port);
     assert!(
-        !metadata["sheets"]
+        !metadata["job"]["sheets"]
             .as_array()
             .expect("sheets should be an array")
             .is_empty(),
         "a byte-by-byte job should still render"
     );
-    let png = response_body(&http_get_bytes(web_port, "/sheets/1.png")).to_vec();
+    let png = sheet_png(web_port, 1);
     stop(&mut child);
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 }
@@ -462,12 +454,8 @@ fn serve_reports_a_render_error_without_a_sheet() {
         .read_to_string(&mut remaining_stderr)
         .expect("the render warning should be readable");
 
-    assert_eq!(
-        metadata["sheets"]
-            .as_array()
-            .expect("sheets should be an array")
-            .len(),
-        0,
+    assert!(
+        metadata["job"].is_null(),
         "a failed render produces no sheet"
     );
     let error = metadata["error"]
@@ -505,14 +493,14 @@ fn serve_splits_and_warns_on_a_cut_without_a_cutter() {
     stop(&mut child);
 
     assert_eq!(
-        metadata["sheets"]
+        metadata["job"]["sheets"]
             .as_array()
             .expect("sheets should be an array")
             .len(),
         2,
         "the cut should still split the preview into two receipts"
     );
-    let warnings = metadata["warnings"]
+    let warnings = metadata["job"]["warnings"]
         .as_array()
         .expect("warnings should be an array");
     assert_eq!(
@@ -526,6 +514,97 @@ fn serve_splits_and_warns_on_a_cut_without_a_cutter() {
             .unwrap_or_default()
             .contains("not physically"),
         "the warning should explain the cut was not performed:\n{warnings:?}"
+    );
+}
+
+#[test]
+fn serve_without_a_listener_fails_and_names_the_flags() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["--non-interactive", "serve"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("serve needs --listen, --web-listen, or both")
+    );
+}
+
+#[test]
+fn no_web_app_without_a_web_listener_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "--non-interactive",
+            "serve",
+            "--listen",
+            "127.0.0.1:0",
+            "--no-web-app",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--no-web-app needs --web-listen"));
+}
+
+#[test]
+fn no_web_app_keeps_the_api_and_drops_the_web_application() {
+    let mut child = start_serve(&[
+        "--listen",
+        "127.0.0.1:0",
+        "--web-listen",
+        "127.0.0.1:0",
+        "--no-web-app",
+    ]);
+    let (raw_port, web_port) = read_listen_ports(&mut child);
+    wait_until_listening(&mut child, raw_port);
+    wait_until_listening(&mut child, web_port);
+
+    let root = http_get_bytes(web_port, "/");
+    let status = http_get_bytes(web_port, "/api/status");
+    stop(&mut child);
+
+    assert_eq!(response_status(&root), "HTTP/1.1 404 Not Found");
+    assert_eq!(response_status(&status), "HTTP/1.1 200 OK");
+}
+
+#[test]
+fn web_listen_alone_starts_no_virtual_printer() {
+    let mut child = start_serve(&["--web-listen", "127.0.0.1:0"]);
+    let mut stderr = BufReader::new(
+        child
+            .stderr
+            .take()
+            .expect("the serve command stderr should be piped"),
+    );
+    let mut lines = Vec::new();
+    let web_port = loop {
+        let mut line = String::new();
+        let read = stderr
+            .read_line(&mut line)
+            .expect("the serve status should be readable");
+        assert!(read != 0, "serve exited before reporting its API address");
+        if let Some(port) = line
+            .trim()
+            .strip_prefix("API: http://127.0.0.1:")
+            .and_then(|value| value.strip_suffix("/api"))
+            .and_then(|value| value.parse::<u16>().ok())
+        {
+            break port;
+        }
+        lines.push(line);
+    };
+    wait_until_listening(&mut child, web_port);
+    let status = http_get_bytes(web_port, "/api/status");
+    stop(&mut child);
+
+    assert_eq!(response_status(&status), "HTTP/1.1 200 OK");
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with("Virtual IP printer:")),
+        "no virtual IP printer should start:\n{lines:?}"
     );
 }
 
@@ -585,15 +664,15 @@ fn read_listen_ports_from(stderr: &mut impl BufRead) -> (u16, u16) {
         assert!(read != 0, "serve exited before reporting its listen ports");
         if let Some(port) = line
             .trim()
-            .strip_prefix("RAW printer: 127.0.0.1:")
+            .strip_prefix("Virtual IP printer: 127.0.0.1:")
             .and_then(|value| value.parse::<u16>().ok())
         {
             raw = Some(port);
         }
         if let Some(port) = line
             .trim()
-            .strip_prefix("Web viewer: http://127.0.0.1:")
-            .and_then(|value| value.strip_suffix('/'))
+            .strip_prefix("API: http://127.0.0.1:")
+            .and_then(|value| value.strip_suffix("/api"))
             .and_then(|value| value.parse::<u16>().ok())
         {
             web = Some(port);
@@ -613,7 +692,7 @@ fn send_raw_job(port: u16, bytes: &[u8]) {
             Err(error) => {
                 assert!(
                     Instant::now() < deadline,
-                    "the RAW printer never accepted data: {error}"
+                    "the virtual IP printer never accepted data: {error}"
                 );
                 thread::sleep(Duration::from_millis(25));
             }
@@ -636,7 +715,7 @@ fn open_raw_connection(port: u16) -> TcpStream {
             Err(error) => {
                 assert!(
                     Instant::now() < deadline,
-                    "the RAW printer never accepted a connection: {error}"
+                    "the virtual IP printer never accepted a connection: {error}"
                 );
                 thread::sleep(Duration::from_millis(25));
             }
@@ -652,7 +731,7 @@ fn send_raw_job_one_byte_at_a_time(port: u16, bytes: &[u8]) {
             Err(error) => {
                 assert!(
                     Instant::now() < deadline,
-                    "the RAW printer never accepted data: {error}"
+                    "the virtual IP printer never accepted data: {error}"
                 );
                 thread::sleep(Duration::from_millis(25));
             }
@@ -677,7 +756,7 @@ fn wait_for_first_job(web_port: u16) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let metadata = render_metadata(web_port);
-        let has_sheets = metadata["sheets"]
+        let has_sheets = metadata["job"]["sheets"]
             .as_array()
             .is_some_and(|sheets| !sheets.is_empty());
         if has_sheets {
@@ -695,8 +774,9 @@ fn wait_for_generation_change(web_port: u16, previous: u64) -> serde_json::Value
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let metadata = render_metadata(web_port);
-        if metadata["generation"]
-            .as_u64()
+        if metadata["job"]["id"]
+            .as_str()
+            .and_then(|id| id.parse::<u64>().ok())
             .is_some_and(|generation| generation > previous)
         {
             return metadata;
@@ -725,8 +805,18 @@ fn wait_for_render_error(web_port: u16) -> serde_json::Value {
 }
 
 fn render_metadata(web_port: u16) -> serde_json::Value {
-    let response = http_get_bytes(web_port, "/api/render");
-    serde_json::from_slice(response_body(&response)).expect("the metadata response should be JSON")
+    let response = http_get_bytes(web_port, "/api/jobs/current");
+    serde_json::from_slice(response_body(&response))
+        .expect("the current job response should be JSON")
+}
+
+/// The PNG bytes of sheet `number` of the current job, through the jobs API.
+fn sheet_png(web_port: u16, number: usize) -> Vec<u8> {
+    let url = render_metadata(web_port)["job"]["sheets"][number - 1]["image_url"]
+        .as_str()
+        .expect("a rendered sheet should have an image URL")
+        .to_owned();
+    response_body(&http_get_bytes(web_port, &url)).to_vec()
 }
 
 fn status_metadata(web_port: u16) -> serde_json::Value {
@@ -865,6 +955,14 @@ fn response_body(response: &[u8]) -> &[u8] {
         .position(|window| window == b"\r\n\r\n")
         .expect("the HTTP response should contain a header boundary");
     &response[boundary + 4..]
+}
+
+fn response_status(response: &[u8]) -> &str {
+    std::str::from_utf8(response)
+        .expect("an HTTP status line should be UTF-8")
+        .lines()
+        .next()
+        .expect("an HTTP response should have a status line")
 }
 
 fn response_header<'a>(response: &'a [u8], requested: &str) -> Option<&'a str> {

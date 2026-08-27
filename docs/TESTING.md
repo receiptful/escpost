@@ -88,7 +88,7 @@ They should not duplicate the complete Rust conformance suite.
 ### Rust CLI and HTTP tests
 
 `crates/escpost/tests/` exercises the developer command as a subprocess
-and the embedded viewer over real loopback sockets. These tests cover:
+and the web app over real loopback sockets. These tests cover:
 
 - binary, hexadecimal, stdin, and case-directory inputs;
 - explicit and metadata-supplied profile resolution;
@@ -150,7 +150,7 @@ list --monitor`, and redirected monitor stdout, fail with the interactive
 terminal error.
 
 Rust HTTP integration tests exercise the embedded production bundle, including
-the `/app` redirect, direct navigation to every workbench route, navigation
+direct navigation to every workbench route, navigation
 labels in the production bundle, asset MIME and cache headers, missing assets,
 and traversal rejection. They also cover the read-only `/api/status`,
 `/api/printers/list`, `/api/printers/list/events`, `/api/profiles/list`, and
@@ -189,7 +189,7 @@ is fixed.
 ### Network discovery without hardware
 
 `printers discover` needs something on the network to find. A Compose profile
-provides a RAW TCP printer for that, so the scan can be exercised without a
+provides a virtual IP printer for that, so the scan can be exercised without a
 physical device:
 
 ```sh

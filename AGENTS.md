@@ -41,10 +41,19 @@ docker compose run --rm frontend-build
 docker compose up
 ```
 
-The Rust build embeds `crates/escpost/frontend/dist/`. The `test` and `escpost`
-services build that bundle automatically. Do not commit `dist/` or
-`node_modules/`; commit `bun.lock`. Native Just recipes require Bun in addition
-to Rust and build the frontend before invoking Cargo.
+### The web app
+
+Open `http://127.0.0.1:5173/` during development. Vite serves the web app
+from `crates/escpost/frontend/src/` with hot reload, and forwards each `/api`
+request to the backend on port 9000, thus the web app calls the API on its
+own origin.
+
+The backend on port 9000 serves the API. It does not serve the web app during
+development; that comes from Vite.
+
+A release build embeds `crates/escpost/frontend/dist/` in the binary. The
+`test` service builds that bundle, because the Rust tests request the web app from
+the server. Do not commit `dist/` or `node_modules/`; commit `bun.lock`.
 
 ### Running the CLI
 

@@ -594,7 +594,7 @@ The `escpost-render` crate is embedded by the CLI and the Python binding today, 
 the roadmap adds more consumers: replay, proxying, linting, and integration
 into other projects. Some future hosts may not be developer-machine processes
 at all; rendering inside a browser through WebAssembly is a realistic option
-for the web viewer. Hardware access, networking, and terminal interaction
+for the web app. Hardware access, networking, and terminal interaction
 each narrow the set of environments the crate can run in and enlarge the
 surface that must be audited and tested.
 
@@ -712,7 +712,7 @@ real printer does not produce.
 
 The 1-bit dot grid is faithful to what a thermal printer prints, but on screen
 its hard-edged glyphs read as harsh — a preview-oriented viewer (`serve`, the
-web viewer) benefits from smoother text. A printer cannot lay down gray, so any
+web app) benefits from smoother text. A printer cannot lay down gray, so any
 smoothing is cosmetic and must never be mistaken for real output or leak into
 the golden comparison.
 

@@ -279,7 +279,7 @@ stable public contract.
 ## Web workbench
 
 When the CLI web mode is active, it uses the traced renderer and exposes every
-successfully parsed command through `/api/render`. Five command types have
+successfully parsed command through `/api/jobs/current`. Five command types have
 specialized presentation; the rest use their protocol family and opcode with a
 default “annotations not yet modeled” description. Non-web CLI rendering
 continues to call the ordinary renderer.

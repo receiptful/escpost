@@ -24,18 +24,21 @@ x-frontend-service: &frontend-service
     - frontend-node-modules:/workspace/crates/escpost/frontend/node_modules
 
 services:
+  # The production bundle, for the Rust tests that serve it. A profile keeps it
+  # out of `docker compose up`, where it would write the node_modules volume at
+  # the same time as `frontend`.
   frontend-build:
     <<: *frontend-service
-    command: /workspace/scripts/frontend-build
+    profiles:
+      - tools
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
 
   frontend:
     <<: *frontend-service
     depends_on:
-      frontend-build:
-        condition: service_completed_successfully
       escpost:
         condition: service_healthy
-    command: ["bun", "run", "dev"]
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run dev"]
 
   test:
     <<: *development-service
@@ -87,9 +90,6 @@ services:
 
   escpost:
     <<: *development-service
-    depends_on:
-      frontend-build:
-        condition: service_completed_successfully
     # The test has two parts. The container uses the network of the host.
     # Thus a test of the port only can find the server of a different
     # directory. The start period gives time for the first build. The
@@ -136,7 +136,6 @@ services:
             --watch /workspace/Cargo.lock \
             --watch /workspace/crates/escpost/Cargo.toml \
             --watch /workspace/crates/escpost/build.rs \
-            --watch /workspace/crates/escpost/assets \
             --watch /workspace/crates/escpost/src \
             --watch /workspace/crates/escpost-profiles/Cargo.toml \
             --watch /workspace/crates/escpost-profiles/profiles \
@@ -157,6 +156,10 @@ services:
       - --web-listen
       - 127.0.0.1:9000
       - --no-open
+      # Vite serves the web app on port 5173 and sends each /api request here.
+      # Without this flag port 9000 would answer with the last built bundle,
+      # which is easy to open by accident and is usually out of date.
+      - --no-web-app
 
 networks:
   # Fixed subnet so the address the dummy printer answers on is stable, and

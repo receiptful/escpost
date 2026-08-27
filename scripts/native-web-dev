@@ -5,12 +5,11 @@ set -eu
 repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository"
 
-scripts/frontend-build
-
 cargo run -q -p escpost -- serve \
     --listen 127.0.0.1:9100 \
     --web-listen 127.0.0.1:9000 \
-    --no-open &
+    --no-open \
+    --no-web-app &
 backend_pid=$!
 
 (

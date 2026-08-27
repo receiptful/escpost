@@ -725,19 +725,20 @@ The command requires an interactive terminal and is unavailable with
 
 ## `escpost serve`
 
-Run a virtual RAW TCP printer and preview captured jobs in the web viewer:
+Run a virtual IP printer and preview captured jobs in the web app:
 
 ```text
 escpost serve [OPTIONS]
 
 Options:
     --profile <PROFILE>
-    --listen <ADDRESS>
-    --web-listen <ADDRESS>
+    --listen [<ADDRESS>]
+    --web-listen [<ADDRESS>]
     --idle-timeout <SECONDS>
     --scale <N>
     --antialias[=true|false]
     --no-open
+    --no-web-app
 ```
 
 Example:
@@ -749,9 +750,17 @@ escpost serve \
   --web-listen 127.0.0.1:9000
 ```
 
-The profile defaults to `REFERENCE`. Without explicit addresses, the RAW TCP
-listener selects the first free loopback port from 9100 through 9109 and the
-web viewer selects one from 9000 through 9099.
+`--listen` starts the virtual IP printer and `--web-listen` starts the web and
+API server. Each flag accepts an address. Without one, the virtual IP printer
+selects the first free loopback port from 9100 through 9109 and the web server
+selects one from 9000 through 9099. A `serve` without either flag is an error,
+because it would start nothing.
+
+`--no-web-app` needs `--web-listen`. The server then answers the API but not
+the web application, which suits a Vite development server that serves the web
+application itself and sends each `/api` request on.
+
+The profile defaults to `REFERENCE`.
 
 A job completes when its client connection closes or after the configured
 idle period. `--idle-timeout` defaults to 20 seconds; `0` disables idle
@@ -766,8 +775,8 @@ skipped with `--non-interactive`, without a terminal, under CI, or when
 Antialiasing is enabled by default; pass `--antialias=false` for faithful
 one-bit printer dots.
 
-RAW TCP port 9100 has no authentication or encryption. Binding either listener
-to a non-loopback address can expose receipt data and should be deliberate.
+Port 9100 has no authentication or encryption. Binding either listener to a
+non-loopback address can expose receipt data and should be deliberate.
 
 ## Errors and output
 

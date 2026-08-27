@@ -39,15 +39,15 @@ pub(crate) struct RenderArgs {
     #[arg(long, conflicts_with = "output_dir", requires = "output")]
     pub(crate) sheet: Option<usize>,
 
-    /// Start the local web viewer and keep running.
+    /// Start the local web app and keep running.
     #[arg(long)]
     pub(crate) web: bool,
 
-    /// Start the web viewer and open it in the default browser.
+    /// Start the web app and open it in the default browser.
     #[arg(long)]
     pub(crate) browser: bool,
 
-    /// Exact address for the web viewer.
+    /// Exact address for the web app.
     #[arg(long)]
     pub(crate) web_listen: Option<SocketAddr>,
 
@@ -162,7 +162,7 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
                 jobs.clone(),
             )?;
         }
-        crate::cli::web::serve(listener, jobs, None, arguments.browser).await?;
+        crate::cli::web::serve(listener, jobs, None, arguments.browser, true).await?;
     }
     Ok(())
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use escpost_render::TracedRenderResult;
 use tokio::sync::{RwLock, watch};
 
-use super::{CommandResponse, RenderResponse, SheetResponse, command_responses, epoch_millis};
+use super::{CommandResponse, command_responses, epoch_millis};
 
 #[derive(Clone)]
 pub(crate) struct JobStore {
@@ -82,7 +82,7 @@ impl JobStore {
         }
     }
 
-    /// Create a store with no job yet. The web viewer shows `hint` and the
+    /// Create a store with no job yet. The web app shows `hint` and the
     /// `profile` until the first job arrives, which suits a listener that
     /// renders on demand with a known profile.
     pub(crate) fn awaiting_jobs(profile: String, hint: String, antialias: bool) -> Self {
@@ -186,76 +186,8 @@ impl JobStore {
         }
     }
 
-    /// The current job's captured bytes and completion time, for download.
-    pub(super) async fn raw_input_download(&self) -> Option<(Vec<u8>, u64)> {
-        let state = self.state.read().await;
-        let bytes = state.raw_input.clone()?;
-        Some((bytes, state.completed_at.unwrap_or(0)))
-    }
-
     pub(crate) async fn set_error(&self, error: String) {
         self.state.write().await.error = Some(error);
-    }
-
-    pub(super) async fn snapshot(&self) -> Option<(Arc<RenderedJob>, u64, Option<String>)> {
-        let state = self.state.read().await;
-        state
-            .jobs
-            .front()
-            .cloned()
-            .map(|job| (job, state.generation, state.error.clone()))
-    }
-
-    pub(super) async fn render_response(&self) -> RenderResponse {
-        let state = self.state.read().await;
-        let Some(job) = state.jobs.front() else {
-            // No job yet: report a waiting state so the viewer can guide the
-            // developer rather than showing a bare error.
-            return RenderResponse {
-                profile: state.session_profile.clone(),
-                generation: state.generation,
-                error: state.error.clone(),
-                hint: state.waiting_hint.clone(),
-                completion: None,
-                receiving: state.receiving > 0,
-                completed_at: None,
-                input_available: false,
-                antialias: state.antialias,
-                warnings: Vec::new(),
-                sheets: Vec::new(),
-            };
-        };
-        let sheets = job
-            .trace_sheets
-            .iter()
-            .enumerate()
-            .map(|(index, trace_sheet)| {
-                let rendered = job.sheets.get(index);
-                SheetResponse {
-                    name: rendered
-                        .map(|sheet| sheet.name.clone())
-                        .unwrap_or_else(|| format!("sheet-{:03}", index + 1)),
-                    order: index + 1,
-                    width_dots: rendered.map(|sheet| sheet.width_dots),
-                    height_dots: rendered.map(|sheet| sheet.height_dots),
-                    url: rendered.map(|_| format!("/sheets/{}.png", index + 1)),
-                    commands: trace_sheet.commands.clone(),
-                }
-            })
-            .collect();
-        RenderResponse {
-            profile: job.profile.clone(),
-            generation: state.generation,
-            error: state.error.clone(),
-            hint: None,
-            completion: state.completion,
-            receiving: state.receiving > 0,
-            completed_at: state.completed_at,
-            input_available: state.raw_input.is_some(),
-            antialias: state.antialias,
-            warnings: job.warnings.clone(),
-            sheets,
-        }
     }
 }
 

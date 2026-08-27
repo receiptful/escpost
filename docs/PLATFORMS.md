@@ -42,7 +42,7 @@ As of 2026-07-28, development and physical-printer calibration have been
 performed on Linux x86-64:
 
 - the Rust renderer and profile compiler pass their complete automated suites;
-- the Rust `render` CLI and embedded web viewer pass their CLI and HTTP
+- the Rust `render` CLI and embedded web app pass their CLI and HTTP
   integration suites in Docker and have been checked in a headless Chromium
   browser;
 - Rust `printers list` enumerates the connected NT-5890K printer through
@@ -54,7 +54,7 @@ performed on Linux x86-64:
 - named Rust RAW TCP output has been exercised through the interactive Docker
   workflow and physically confirmed on paper with a connected Munbyn ITPP047.
 
-macOS and Windows builds have not yet been verified by ESCPost. The virtual RAW
+macOS and Windows builds have not yet been verified by ESCPost. The virtual IP
 printer and native Windows spooler are planned work. The Rust CLI, embedded
 web server, and direct-USB backend are implemented but still need native
 macOS/Windows verification.

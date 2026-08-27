@@ -40,7 +40,7 @@ export function ServerStatus({ compact = false }: { compact?: boolean }) {
           barLabel="Scan progress"
           compact={compact}
           completed={scan.total > 0 ? scan.completed : undefined}
-          href="/app/printers"
+          href="/printers"
           label="Scanning printers"
           region="Printer discovery"
           // A zero probe total means either that the `prepared` event has not
@@ -57,7 +57,7 @@ export function ServerStatus({ compact = false }: { compact?: boolean }) {
         <ActivityProgress
           barLabel="Print job progress"
           compact={compact}
-          href="/app/jobs"
+          href="/jobs"
           label="Incoming print job"
           region="Print job"
           // No readout: nothing measures a job's size, so the only thing this

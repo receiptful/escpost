@@ -1,11 +1,11 @@
 import { useLocation } from "preact-iso";
 
 const destinations = [
-  { href: "/app/", label: "Overview" },
-  { href: "/app/jobs", label: "Print jobs" },
-  { href: "/app/printers", label: "Printers" },
-  { href: "/app/profiles", label: "Profiles" },
-  { href: "/app/calibration", label: "Calibration" },
+  { href: "/", label: "Overview" },
+  { href: "/jobs", label: "Print jobs" },
+  { href: "/printers", label: "Printers" },
+  { href: "/profiles", label: "Profiles" },
+  { href: "/calibration", label: "Calibration" },
 ] as const;
 
 type NavigationProps = {
@@ -13,7 +13,7 @@ type NavigationProps = {
 };
 
 function isCurrentPath(path: string, href: string) {
-  return path === href || (href === "/app/" && path === "/app");
+  return path === href;
 }
 
 export function Navigation({ mobile = false }: NavigationProps) {

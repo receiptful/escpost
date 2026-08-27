@@ -10,8 +10,10 @@ export function App() {
     <ServerStatusProvider>
       <PrinterInventoryProvider>
         <AppDataProvider>
-          <LocationProvider scope="/app">
-            <AppShell><AppRoutes /></AppShell>
+          <LocationProvider>
+            <AppShell>
+              <AppRoutes />
+            </AppShell>
           </LocationProvider>
         </AppDataProvider>
       </PrinterInventoryProvider>
