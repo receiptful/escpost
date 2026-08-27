@@ -43,6 +43,15 @@ export type ParameterByte = { hex: string; character: string };
  */
 const IMAGE_COMMANDS = new Set(["GS v 0", "GS ( L", "GS 8 L", "ESC *"]);
 
+/**
+ * The commands that print the line the printer holds.
+ *
+ * The style reaches these as well: the justification places the line, and the
+ * font and the height magnification decide how far the paper moves, because
+ * `feed_lines` feeds by the tallest character cell of the line.
+ */
+const LINE_COMMANDS = new Set(["LF", "CR", "ESC J", "ESC d"]);
+
 export type CommandGroupView = {
   name: string;
   byteStart: number;
@@ -64,6 +73,8 @@ export type CommandGroupView = {
   characterPairing: boolean;
   /** True when the command puts an image on the paper. */
   printsImage: boolean;
+  /** True when the style of the moment reaches what this command does. */
+  showsStyle: boolean;
   fixedParameters: boolean;
   annotation?: JobCommand["annotation"];
   paintLifecycle?: "buffered" | "committed";
@@ -152,6 +163,7 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     parameterBytes,
     characterPairing,
     printsImage: IMAGE_COMMANDS.has(first.name),
+    showsStyle: text || LINE_COMMANDS.has(first.name),
     totalParameterBytes: group.commands.reduce(
       (total, command) => total + command.total_parameter_bytes,
       0,

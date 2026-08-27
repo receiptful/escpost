@@ -249,7 +249,7 @@ export function CommandPanel(props: Props) {
                     </span>
                   </span>
                 )}
-                {view.style && <TextStyleBar style={view.style} />}
+                {view.style && view.showsStyle && <TextStyleBar style={view.style} />}
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>
                 )}

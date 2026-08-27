@@ -95,13 +95,14 @@ function style(overrides: Partial<import("../../api/types").TextStyle> = {}) {
   };
 }
 
-function showStyled(overrides: Parameters<typeof style>[0]) {
+function showStyled(overrides: Parameters<typeof style>[0], extra: JobCommand[] = []) {
   const job = {
     sheets: [{
       number: 1,
       commands: [
         { ...character(0, "N", "4E"), style: style(overrides) },
         character(1, "O", "4F"),
+        ...extra,
       ],
     }],
   };
@@ -122,7 +123,14 @@ function showStyled(overrides: Parameters<typeof style>[0]) {
       onPin={() => {}}
     />,
   );
-  return within(screen.getByRole("button")).getByLabelText("Text style");
+  return within(screen.getAllByRole("button")[0]).getByLabelText("Text style");
+}
+
+function styleBars() {
+  return screen.queryAllByLabelText("Text style").map((bar) => ({
+    alignment: within(bar).queryByLabelText("Align center") !== null,
+    bold: within(bar).queryByLabelText(/^Bold/) !== null,
+  }));
 }
 
 describe("the style a run printed with", () => {
@@ -155,5 +163,38 @@ describe("the style a run printed with", () => {
 
     expect(within(toolbar).getByLabelText("Width 2x").getAttribute("data-active")).toBe("true");
     expect(within(toolbar).getByLabelText("Height 1x").getAttribute("data-active")).toBe("false");
+  });
+});
+
+describe("where the style shows", () => {
+  function other(name: string): JobCommand {
+    return {
+      byte_start: 2,
+      byte_end: 4,
+      name,
+      detail: name,
+      code_bytes: "1B 4A",
+      capped_parameter_bytes: "1E",
+      total_parameter_bytes: 1,
+      fixed_parameters: true,
+      effects: [],
+    };
+  }
+
+  test("shows the style on text and on the commands that print a line", () => {
+    showStyled({}, [other("LF")]);
+    const bars = styleBars();
+
+    // A line feed moves the paper by the tallest character of the line, thus
+    // the font and the magnification reach it as the justification does.
+    expect(bars).toHaveLength(2);
+    expect(bars[0]).toEqual({ alignment: true, bold: true });
+    expect(bars[1]).toEqual({ alignment: true, bold: true });
+  });
+
+  test("shows no style on a command the style does not reach", () => {
+    showStyled({}, [other("GS V")]);
+
+    expect(styleBars()).toHaveLength(1);
   });
 });

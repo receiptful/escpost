@@ -303,4 +303,24 @@ describe("job visualization model", () => {
     expect(groups[2].style?.emphasized).toBe(true);
     expect(groups[3].style?.emphasized).toBe(true);
   });
+
+  test("knows which commands the style reaches", () => {
+    const reaches = (name: string) =>
+      commandGroupView(groupAdjacentCommands([
+        command({ byte_start: 0, byte_end: 2, name }),
+      ], 1)[0]).showsStyle;
+
+    // Text prints with the style.
+    expect(reaches("Text")).toBe(true);
+    // These print the line the printer holds. The justification places it, and
+    // the font and the height magnification decide how far the paper moves.
+    expect(reaches("LF")).toBe(true);
+    expect(reaches("CR")).toBe(true);
+    expect(reaches("ESC J")).toBe(true);
+    expect(reaches("ESC d")).toBe(true);
+    // Everything else leaves the paper as it found it.
+    expect(reaches("ESC a")).toBe(false);
+    expect(reaches("GS v 0")).toBe(false);
+    expect(reaches("GS V")).toBe(false);
+  });
 });
