@@ -75,6 +75,7 @@
 .trace-group {
   --trace-color: oklch(55% 0 0);
   --trace-fill: oklch(70% 0 0 / 28%);
+  --trace-fill-strong: oklch(55% 0 0 / 45%);
   cursor: pointer;
   outline: none;
 }
@@ -82,11 +83,13 @@
 .trace-group.trace-previewed {
   --trace-color: oklch(55% 0 0);
   --trace-fill: oklch(70% 0 0 / 30%);
+  --trace-fill-strong: oklch(55% 0 0 / 48%);
 }
 
 .trace-group.trace-pinned {
   --trace-color: oklch(58% 0.2 250);
   --trace-fill: oklch(70% 0.18 250 / 34%);
+  --trace-fill-strong: oklch(58% 0.2 250 / 55%);
 }
 
 .trace-region {
@@ -94,6 +97,15 @@
   stroke: transparent;
   stroke-width: 1.5;
   pointer-events: all;
+}
+
+/* The one character the pointer rests on, apart from the rest of its group. */
+.trace-group :is(:hover, :focus-visible) > .trace-region-active,
+.trace-group:is(.trace-previewed, .trace-pinned) .trace-region-active,
+.trace-group:is(:hover, :focus-visible) .trace-region-active {
+  fill: var(--trace-fill-strong);
+  stroke: var(--trace-color);
+  stroke-width: 2.5;
 }
 
 .trace-motion,

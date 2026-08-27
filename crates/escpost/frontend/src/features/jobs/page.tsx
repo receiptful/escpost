@@ -22,6 +22,9 @@ export function JobsPage() {
   const grouped = useMemo(() => job ? groupJobCommands(job) : null, [job]);
   const [previewedGroupId, setPreviewedGroupId] = useState<string | null>(null);
   const [pinnedGroupId, setPinnedGroupId] = useState<string | null>(null);
+  // The character of the previewed group the pointer rests on, by its place in
+  // the group. A byte and a printed character share that place.
+  const [previewedCharacter, setPreviewedCharacter] = useState<number | null>(null);
   const [paperMargin, setPaperMargin] = useState(readPaperMargin);
   const [marginFlash, setMarginFlash] = useState(false);
   const sheetWorkspace = useRef<HTMLElement | null>(null);
@@ -35,6 +38,7 @@ export function JobsPage() {
     if (selectionJobId.current !== null && selectionJobId.current !== nextJobId) {
       setPreviewedGroupId(null);
       setPinnedGroupId(null);
+      setPreviewedCharacter(null);
     }
     selectionJobId.current = nextJobId;
     annotations.current.clear();
@@ -67,7 +71,10 @@ export function JobsPage() {
   }, []);
   const endPreview = useCallback((id: string) => {
     setPreviewedGroupId((current) => current === id ? null : current);
+    setPreviewedCharacter(null);
   }, []);
+  const previewCharacter = useCallback((index: number) => setPreviewedCharacter(index), []);
+  const endCharacterPreview = useCallback(() => setPreviewedCharacter(null), []);
   const pinFromCommand = useCallback((id: string) => {
     setPinnedGroupId(id);
     revealWithin(annotations.current.get(id), sheetWorkspace.current, true);
@@ -120,6 +127,9 @@ export function JobsPage() {
                   marginFlash={marginFlash}
                   previewedGroupId={previewedGroupId}
                   pinnedGroupId={pinnedGroupId}
+                  previewedCharacter={previewedCharacter}
+                  onPreviewCharacter={previewCharacter}
+                  onPreviewCharacterEnd={endCharacterPreview}
                   register={registerAnnotation}
                   onPreview={previewFromAnnotation}
                   onPreviewEnd={endPreview}
@@ -137,6 +147,9 @@ export function JobsPage() {
               groups={grouped.groups}
               previewedGroupId={previewedGroupId}
               pinnedGroupId={pinnedGroupId}
+              previewedCharacter={previewedCharacter}
+              onPreviewCharacter={previewCharacter}
+              onPreviewCharacterEnd={endCharacterPreview}
               panelRef={(element) => { commandPanel.current = element; }}
               register={registerCommand}
               onPreview={previewFromCommand}

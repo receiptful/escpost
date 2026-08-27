@@ -13,8 +13,12 @@ export type GroupedJob = {
   groups: CommandGroup[];
 };
 
-/** How many parameter bytes a command shows before it counts the rest. */
-export const PARAMETER_BYTES_SHOWN = 12;
+/**
+ * How many parameter bytes one row shows before the count stands for the rest.
+ * Only a text run reaches this, because every other group holds one command,
+ * which the server already bounds on its own.
+ */
+export const GROUP_BYTES_SHOWN = 256;
 
 export type CommandGroupView = {
   name: string;
@@ -25,8 +29,12 @@ export type CommandGroupView = {
   byteLast: number;
   detail: string;
   codeBytes: string;
-  cappedParameterBytes: string;
+  /** One entry per parameter byte, so a single byte can be pointed at. */
+  parameterBytes: string[];
   totalParameterBytes: number;
+  /** True when each command of the group gives exactly one byte, thus a byte
+   * and a printed character stand for each other. */
+  characterPairing: boolean;
   fixedParameters: boolean;
   annotation?: JobCommand["annotation"];
   paintLifecycle?: "buffered" | "committed";
@@ -70,10 +78,10 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
   const last = group.commands.at(-1) ?? first;
   const text = first.name === "Text";
   const lineFeeds = first.name === "LF" && group.commands.length > 1;
-  const shown = group.commands
+  const parameterBytes = group.commands
     .flatMap((command) => command.capped_parameter_bytes.split(" "))
     .filter((byte) => byte !== "")
-    .slice(0, PARAMETER_BYTES_SHOWN);
+    .slice(0, GROUP_BYTES_SHOWN);
   return {
     name: first.name,
     byteStart: first.byte_start,
@@ -81,7 +89,9 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     byteLast: last.byte_end - 1,
     codeBytes: first.code_bytes,
     fixedParameters: group.commands.length === 1 && first.fixed_parameters,
-    cappedParameterBytes: shown.join(" "),
+    parameterBytes,
+    characterPairing: group.commands.length > 1
+      && parameterBytes.length === group.commands.length,
     totalParameterBytes: group.commands.reduce(
       (total, command) => total + command.total_parameter_bytes,
       0,

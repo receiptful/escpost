@@ -5,8 +5,10 @@ use escpost_render::{
 };
 use serde::Serialize;
 
-/// How many parameter bytes the command list shows before it counts the rest.
-pub(super) const PARAMETER_BYTES_SHOWN: usize = 12;
+/// How many parameter bytes one command shows before the count stands for the
+/// rest. A command that carries data, such as a raster image, would otherwise
+/// fill the command list with its payload.
+const PARAMETER_BYTES_SHOWN: usize = 8;
 
 #[derive(Clone, Serialize)]
 pub(crate) struct CommandResponse {
@@ -664,7 +666,7 @@ fn justification_name(justification: Justification) -> &'static str {
 mod tests {
     use escpost_render::{CommandCode, CommandTrace, DecodedCommand, Justification};
 
-    use super::{PARAMETER_BYTES_SHOWN, command_responses, display};
+    use super::{command_responses, display};
 
     fn described(command: DecodedCommand) -> (String, String) {
         let shown = display(&command);
@@ -934,8 +936,8 @@ mod tests {
 
         assert_eq!(responses[0].code_bytes, "1D 76 30");
         assert_eq!(
-            responses[0].capped_parameter_bytes.split(' ').count(),
-            PARAMETER_BYTES_SHOWN
+            responses[0].capped_parameter_bytes,
+            "5A 5A 5A 5A 5A 5A 5A 5A"
         );
         assert_eq!(responses[0].total_parameter_bytes, 2045);
     }

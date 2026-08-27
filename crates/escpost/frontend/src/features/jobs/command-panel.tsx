@@ -4,20 +4,48 @@ import { commandGroupView, type CommandGroup, type CommandGroupView } from "./mo
 
 /** Tells whether the parameters are short and fixed enough to sit inline. */
 function inlineParameters(view: CommandGroupView): boolean {
-  return view.fixedParameters && view.cappedParameterBytes !== "";
+  return view.fixedParameters && view.parameterBytes.length > 0;
 }
 
-/** Shows the parameter bytes, and counts them when they do not all fit. */
-function parameterBytes(view: CommandGroupView): string {
-  const shown = view.cappedParameterBytes.split(" ").length;
-  if (shown >= view.totalParameterBytes) return view.cappedParameterBytes;
-  return `${view.cappedParameterBytes} … (${view.totalParameterBytes} bytes)`;
+/** Shows each parameter byte on its own, so one byte can be pointed at.
+ *
+ * A byte keeps a fixed width, thus marking one of them never moves the rest. */
+function ParameterBytes({ view, active, onPreview, onPreviewEnd }: {
+  view: CommandGroupView;
+  active: number | null;
+  onPreview: (index: number) => void;
+  onPreviewEnd: () => void;
+}) {
+  const pairing = view.characterPairing;
+  return (
+    <>
+      {view.parameterBytes.map((hex, index) => (
+        <span
+          key={index}
+          data-byte={index}
+          class={`w-[2.5ch] text-center ${
+            pairing && active === index ? "rounded-sm font-bold ring-1 ring-base-content/40" : ""
+          }`}
+          onPointerEnter={pairing ? () => onPreview(index) : undefined}
+          onPointerLeave={pairing ? onPreviewEnd : undefined}
+        >
+          {hex}
+        </span>
+      ))}
+      {view.parameterBytes.length < view.totalParameterBytes && (
+        <span class="text-base-content/60">… ({view.totalParameterBytes} bytes)</span>
+      )}
+    </>
+  );
 }
 
 type Props = {
   groups: CommandGroup[];
   previewedGroupId: string | null;
   pinnedGroupId: string | null;
+  previewedCharacter: number | null;
+  onPreviewCharacter: (index: number) => void;
+  onPreviewCharacterEnd: () => void;
   panelRef: (element: HTMLElement | null) => void;
   register: (id: string, element: HTMLElement | null) => void;
   onPreview: (id: string) => void;
@@ -87,22 +115,38 @@ export function CommandPanel(props: Props) {
                     {inlineParameters(view) && (
                       <span
                         aria-label="Parameter bytes"
-                        class="rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
+                        class="flex flex-wrap items-center gap-x-1 gap-y-1 rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
                       >
-                        {view.cappedParameterBytes}
+                        <ParameterBytes
+                          view={view}
+                          active={previewed ? props.previewedCharacter : null}
+                          onPreview={(index) => {
+                            props.onPreview(group.id);
+                            props.onPreviewCharacter(index);
+                          }}
+                          onPreviewEnd={props.onPreviewCharacterEnd}
+                        />
                       </span>
                     )}
                   </span>
                   <span class="font-mono text-xs text-base-content/55">{view.byteStart}..{view.byteLast}</span>
                 </span>
                 <span class="mt-1 block break-words text-sm">{view.detail}</span>
-                {!inlineParameters(view) && view.cappedParameterBytes && (
+                {!inlineParameters(view) && view.parameterBytes.length > 0 && (
                   <span class="mt-2 flex font-mono text-xs">
                     <span
                       aria-label="Parameter bytes"
-                      class="min-w-0 break-all rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
+                      class="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
                     >
-                      {parameterBytes(view)}
+                      <ParameterBytes
+                        view={view}
+                        active={previewed ? props.previewedCharacter : null}
+                        onPreview={(index) => {
+                          props.onPreview(group.id);
+                          props.onPreviewCharacter(index);
+                        }}
+                        onPreviewEnd={props.onPreviewCharacterEnd}
+                      />
                     </span>
                   </span>
                 )}

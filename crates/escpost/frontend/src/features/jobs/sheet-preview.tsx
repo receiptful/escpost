@@ -10,6 +10,9 @@ type Props = {
   marginFlash: boolean;
   previewedGroupId: string | null;
   pinnedGroupId: string | null;
+  previewedCharacter: number | null;
+  onPreviewCharacter: (index: number) => void;
+  onPreviewCharacterEnd: () => void;
   register: (id: string, element: SVGElement | null) => void;
   onPreview: (id: string) => void;
   onPreviewEnd: (id: string) => void;
@@ -76,6 +79,9 @@ function TraceOverlay(props: Props) {
           markerId={markerId}
           previewed={props.previewedGroupId === group.id}
           pinned={props.pinnedGroupId === group.id}
+          previewedCharacter={props.previewedGroupId === group.id ? props.previewedCharacter : null}
+          onPreviewCharacter={props.onPreviewCharacter}
+          onPreviewCharacterEnd={props.onPreviewCharacterEnd}
           register={props.register}
           onPreview={props.onPreview}
           onPreviewEnd={props.onPreviewEnd}
@@ -88,6 +94,9 @@ function TraceOverlay(props: Props) {
 
 type TraceGroupProps = {
   group: CommandGroup;
+  previewedCharacter: number | null;
+  onPreviewCharacter: (index: number) => void;
+  onPreviewCharacterEnd: () => void;
   groupIndex: number;
   sheetGroups: CommandGroup[];
   markerId: string;
@@ -108,6 +117,9 @@ function TraceGroup(props: TraceGroupProps) {
     (effect): effect is Extract<CommandEffect, { type: "motion" }> => effect.type === "motion",
   );
   if (paints.length === 0 && motions.length === 0) return null;
+  // A character and its byte share a place in the group. That holds only while
+  // every command of the group paints exactly once.
+  const pairing = view.characterPairing && paints.length === props.group.commands.length;
   const stateClass = props.pinned ? "trace-pinned" : props.previewed ? "trace-previewed" : "";
   const activate = () => props.onPin(props.group.id);
   return (
@@ -132,7 +144,19 @@ function TraceGroup(props: TraceGroupProps) {
     >
       {paints.map((paint, index) => (
         <g key={`paint-${index}`}>
-          <rect class="trace-region" {...paint.bounds} />
+          <rect
+            class={`trace-region ${
+              pairing && props.previewedCharacter === index ? "trace-region-active" : ""
+            }`}
+            onPointerEnter={pairing
+              ? () => {
+                props.onPreview(props.group.id);
+                props.onPreviewCharacter(index);
+              }
+              : undefined}
+            onPointerLeave={pairing ? props.onPreviewCharacterEnd : undefined}
+            {...paint.bounds}
+          />
           {view.annotation && (props.previewed || props.pinned) && (
             <AnnotationLabel annotation={view.annotation} bounds={paint.bounds} />
           )}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { JobCommand } from "../../api/types";
 import {
-  PARAMETER_BYTES_SHOWN,
+  GROUP_BYTES_SHOWN,
   commandGroupView,
   groupAdjacentCommands,
   motionTerminals,
@@ -63,7 +63,7 @@ describe("job visualization model", () => {
     const view = commandGroupView(groups[0]);
 
     expect(view.codeBytes).toBe("");
-    expect(view.cappedParameterBytes).toBe("48 69");
+    expect(view.parameterBytes).toEqual(["48", "69"]);
     expect(view.totalParameterBytes).toBe(2);
   });
 
@@ -81,11 +81,11 @@ describe("job visualization model", () => {
     const view = commandGroupView(groups[0]);
 
     expect(view.codeBytes).toBe("1B 61");
-    expect(view.cappedParameterBytes).toBe("01");
+    expect(view.parameterBytes).toEqual(["01"]);
     expect(view.totalParameterBytes).toBe(1);
   });
 
-  test("stops joining bytes once the shown parameters are complete", () => {
+  test("keeps every byte of a text run, so each character has one", () => {
     const letters = Array.from({ length: 15 }, (_, index) =>
       command({
         byte_start: index,
@@ -98,8 +98,39 @@ describe("job visualization model", () => {
     const groups = groupAdjacentCommands(letters, 1);
     const view = commandGroupView(groups[0]);
 
-    expect(view.cappedParameterBytes.split(" ")).toHaveLength(PARAMETER_BYTES_SHOWN);
+    expect(view.parameterBytes).toHaveLength(15);
     expect(view.totalParameterBytes).toBe(15);
+  });
+
+  test("stops a text run that outgrows the row, and counts the rest", () => {
+    const letters = Array.from({ length: GROUP_BYTES_SHOWN + 40 }, (_, index) =>
+      command({
+        byte_start: index,
+        byte_end: index + 1,
+        name: "Text",
+        detail: "a",
+        capped_parameter_bytes: "61",
+        total_parameter_bytes: 1,
+      }));
+    const groups = groupAdjacentCommands(letters, 1);
+    const view = commandGroupView(groups[0]);
+
+    expect(view.parameterBytes).toHaveLength(GROUP_BYTES_SHOWN);
+    expect(view.totalParameterBytes).toBe(GROUP_BYTES_SHOWN + 40);
+  });
+
+  test("pairs bytes with characters only when each command gives one byte", () => {
+    const groups = groupAdjacentCommands([
+      command({ byte_start: 0, byte_end: 1, name: "Text", detail: "H", capped_parameter_bytes: "48", total_parameter_bytes: 1 }),
+      command({ byte_start: 1, byte_end: 2, name: "Text", detail: "i", capped_parameter_bytes: "69", total_parameter_bytes: 1 }),
+      command({ byte_start: 2, byte_end: 3, name: "LF" }),
+      command({ byte_start: 3, byte_end: 4, name: "LF" }),
+      command({ byte_start: 4, byte_end: 7, name: "ESC a", code_bytes: "1B 61", capped_parameter_bytes: "01", total_parameter_bytes: 1 }),
+    ], 1);
+
+    expect(commandGroupView(groups[0]).characterPairing).toBe(true);
+    expect(commandGroupView(groups[1]).characterPairing).toBe(false);
+    expect(commandGroupView(groups[2]).characterPairing).toBe(false);
   });
 
   test("names the last byte of a command, not the byte after it", () => {

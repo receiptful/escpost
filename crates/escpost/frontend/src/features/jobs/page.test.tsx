@@ -35,6 +35,10 @@ const currentJob = {
   },
 };
 
+function byteSpans(box: HTMLElement): string[] {
+  return [...box.querySelectorAll("[data-byte]")].map((span) => span.textContent ?? "");
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -194,7 +198,7 @@ describe("command bytes", () => {
     const text = await screen.findByRole("button", { name: "Text 0..1: Hi" });
 
     expect(within(text).queryByLabelText("Command bytes")).toBeNull();
-    expect(within(text).getByLabelText("Parameter bytes").textContent).toBe("48 69");
+    expect(byteSpans(within(text).getByLabelText("Parameter bytes"))).toEqual(["48", "69"]);
   });
 
   test("counts the parameter bytes it cannot show", async () => {
@@ -206,9 +210,9 @@ describe("command bytes", () => {
     });
 
     expect(within(qr).getByLabelText("Command bytes").textContent).toBe("1D 28 6B");
-    expect(within(qr).getByLabelText("Parameter bytes").textContent).toBe(
-      "03 00 31 51 30 … (3005 bytes)",
-    );
+    const parameters = within(qr).getByLabelText("Parameter bytes");
+    expect(byteSpans(parameters)).toEqual(["03", "00", "31", "51", "30"]);
+    expect(parameters.textContent).toContain("… (3005 bytes)");
   });
 });
 
@@ -234,9 +238,9 @@ describe("command byte layout", () => {
 
     expect(within(header).getByLabelText("Command bytes").textContent).toBe("1D 28 6B");
     expect(within(header).queryByLabelText("Parameter bytes")).toBeNull();
-    expect(within(qr).getByLabelText("Parameter bytes").textContent).toBe(
-      "03 00 31 51 30 … (3005 bytes)",
-    );
+    const parameters = within(qr).getByLabelText("Parameter bytes");
+    expect(byteSpans(parameters)).toEqual(["03", "00", "31", "51", "30"]);
+    expect(parameters.textContent).toContain("… (3005 bytes)");
   });
 });
 
@@ -276,5 +280,44 @@ describe("command panel header", () => {
     // Scrolling a row into view measures this header, thus the panel has to
     // find it by the marker the reveal helper looks for.
     expect(panel.querySelector("[data-sticky-header]")).toBe(header);
+  });
+});
+
+describe("character highlighting", () => {
+  async function textRun() {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    const view = render(<JobsPage />);
+    const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const bytes = [...within(row).getByLabelText("Parameter bytes").querySelectorAll("[data-byte]")];
+    const regions = [...view.container.querySelectorAll(".trace-region")];
+    return { row, bytes, regions };
+  }
+
+  test("hovering a character marks its byte and only that byte", async () => {
+    const { bytes, regions } = await textRun();
+
+    fireEvent.pointerEnter(regions[1]);
+
+    expect(bytes[1].className).toContain("font-bold");
+    expect(bytes[0].className).not.toContain("font-bold");
+  });
+
+  test("hovering a byte marks its character and only that character", async () => {
+    const { bytes, regions } = await textRun();
+
+    fireEvent.pointerEnter(bytes[0]);
+
+    expect(regions[0].getAttribute("class")).toContain("trace-region-active");
+    expect(regions[1].getAttribute("class")).not.toContain("trace-region-active");
+  });
+
+  test("forgets the character once the pointer leaves", async () => {
+    const { bytes, regions } = await textRun();
+
+    fireEvent.pointerEnter(regions[0]);
+    fireEvent.pointerLeave(regions[0]);
+
+    expect(bytes[0].className).not.toContain("font-bold");
+    expect(regions[0].getAttribute("class")).not.toContain("trace-region-active");
   });
 });
