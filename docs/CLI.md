@@ -186,7 +186,9 @@ escpost printers [--config <FILE>] add [<NAME>]
     [--serial <SERIAL>]
     [--profile <PROFILE>]
     [--discover [--subnet <CIDR>]... [--timeout <MS>]]
-escpost printers [--config <FILE>] list [--transport <TRANSPORT>] [--json]
+escpost printers [--config <FILE>] list
+    [--transport usb|network]
+    [--monitor]
 escpost printers [--config <FILE>] discover
     [--port <PORT>]
     [--subnet <CIDR>]...
@@ -378,6 +380,22 @@ when no USB printer is configured, USB is not even enumerated. After the
 listing, a stderr hint always points at `printers discover` for finding
 connected printers not yet in the listing, regardless of how many (if any)
 configured printers were shown.
+
+`--monitor` turns the same registry inventory into a compact interactive table
+on a terminal. It first shows that configured printers are being checked, then
+redraws the name, status, transport, connection, and profile rows as complete
+inventory snapshots arrive. While active, it re-reads the selected
+configuration and checks availability every five seconds. Network failures use
+the same two-probe confirmation as a one-shot listing, so a transient refused
+or timed-out connection is not immediately reported as unavailable.
+
+In monitor mode, `--transport usb|network` is a presentation filter for the
+table; the monitor still collects the complete configured inventory. Edit the
+configuration file to have its next collection reflected in the display. Press
+Ctrl+C to leave the alternate-screen table and restore the terminal. Monitoring
+requires interactive standard output: `--non-interactive`, or redirected
+stdout, is rejected with an interactive-terminal error instead of emitting
+terminal control sequences into a pipeline.
 
 ### `printers discover`
 

@@ -330,13 +330,34 @@ its runtime values change. Persistent streams that mirror one snapshot
 resource use the default event type; named events are reserved for streams
 that carry several payload shapes.
 `JobStore` exposes the watch-backed runtime projection that drives both status
-routes. In the browser,
-`ServerStatusProvider` owns the status stream's reconnection and stale-status
-state, while a coordinator forces a printer refresh after reconnection. The
-current-job and printer-inventory polling remain at 750 ms and 10 seconds,
-respectively. The shell retains successful printer and profile responses for
-the app session and reports loading, empty, error, retry, and stale-data states
-without introducing client-side filters or search parameters.
+routes. `GET /api/printers/list` remains the one-shot complete inventory
+snapshot, including its timestamp, optional warning, every configured printer,
+and each printer's complete connection facts. `GET
+/api/printers/list/events` is its persistent counterpart: every event omits
+the SSE `event` field and carries that same complete JSON shape at the payload
+root. This follows DD-036: a stream for one snapshot resource uses the default
+`message` event rather than an SSE-only name or envelope.
+
+The application owns one subscriber-driven `PrinterMonitor`, not one polling
+loop per browser. Its first subscriber starts an immediate collection and an
+active five-second collection cycle; additional subscribers share the same
+snapshots. It re-reads the resolved printer registration on every collection,
+publishes an initial snapshot and later changed inventory or warning snapshots,
+and stops probing as soon as the final subscription closes. A returning
+subscriber receives the retained last snapshot first, followed by a forced
+fresh collection. A successful backend printer registration wakes an active
+monitor so its next authoritative snapshot reflects the new configuration
+without waiting for the normal interval.
+
+In the browser, the app-scoped `PrinterInventoryProvider` owns the one
+`EventSource` and replaces its cached complete snapshot atomically. It keeps
+the last good rows and warning visible while the stream reconnects, and it
+closes the source only when the application provider unmounts. Navigation
+therefore keeps one inventory stream; there is no printer-list polling, list
+GET after registration, or status-reconnection coordinator. The shell retains
+successful profile responses for the app session and reports loading, empty,
+error, retry, and stale-data states without introducing client-side filters or
+search parameters. Current-job polling remains at 750 ms.
 
 Printer discovery and registration are three routes. `GET
 /api/printers/discover/networks` prepares the browser's discovery card: the
@@ -447,6 +468,7 @@ HTTP operation paths will follow the CLI command tree below an unversioned
 
 ```text
 escpost printers list       GET  /api/printers/list
+                            GET  /api/printers/list/events
 escpost printers discover   GET  /api/printers/discover
                             GET  /api/printers/discover/networks
 escpost printers add        POST /api/printers/add

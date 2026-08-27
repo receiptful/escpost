@@ -398,6 +398,10 @@ rules are specified in `CLI.md`.
 - [x] List configured RAW network targets with concurrent, one-second,
       zero-byte reachability probes. (`CLI-M14`)
 - [x] Add `--transport usb|network` filtering. (`CLI-M02`)
+- [x] Add `printers list --monitor` and subscriber-driven printer inventory
+      snapshots for the terminal and `/api/printers/list/events`, with
+      five-second active collection, retained-first resume, default unnamed
+      SSE messages, and a refresh after backend registration.
 - [ ] Extend `printers list` to Bluetooth and operating-system spooler
       transports as their backends are implemented. (`CLI-M02`)
 - [ ] Add versioned `--json` inventory output. (`CLI-M04`)
