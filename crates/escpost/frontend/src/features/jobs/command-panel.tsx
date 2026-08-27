@@ -36,13 +36,19 @@ export function CommandPanel(props: Props) {
         <p class="text-sm text-base-content/65">Hover or focus to preview. Click to pin.</p>
       </div>
       <ol class="divide-y divide-base-300">
-        {props.groups.map((group) => {
+        {props.groups.map((group, row) => {
           const view = commandGroupView(group);
           const previewed = props.previewedGroupId === group.id;
           const pinned = props.pinnedGroupId === group.id;
           const href = view.annotation ? webUrl(view.annotation.content) : null;
           return (
-            <li key={group.id} class="p-2">
+            <li
+              key={group.id}
+              // A shade on every second row keeps neighbouring commands apart.
+              // It covers the whole row, thus the hover and pinned colours of
+              // the command stay the only inset ones.
+              class={`p-2 ${row % 2 === 1 ? "bg-base-200/40" : ""}`}
+            >
               <button
                 ref={(element) => props.register(group.id, element)}
                 type="button"

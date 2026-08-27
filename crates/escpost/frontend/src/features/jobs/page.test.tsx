@@ -239,3 +239,21 @@ describe("command byte layout", () => {
     );
   });
 });
+
+describe("command rows", () => {
+  test("alternates the row background so neighbouring commands differ", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const panel = await screen.findByRole("complementary", {
+      name: "Commands in the current print job",
+    });
+    const rows = within(panel).getAllByRole("listitem");
+    const buttons = within(panel).getAllByRole("button");
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0].className).toBe(rows[2].className);
+    expect(rows[1].className).not.toBe(rows[0].className);
+    expect(buttons[0].className).toBe(buttons[1].className);
+  });
+});
