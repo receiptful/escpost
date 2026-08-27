@@ -10,21 +10,41 @@ export type ServerStatusResource =
 
 const ServerStatusContext = createContext<ServerStatusResource | null>(null);
 
-export function ServerStatusProvider({ children }: { children: preact.ComponentChildren }) {
+/** How long to wait before opening the status stream again. */
+const RETRY_DELAY_MS = 2000;
+
+export function ServerStatusProvider({ children, retryDelayMs = RETRY_DELAY_MS }: {
+  children: preact.ComponentChildren;
+  retryDelayMs?: number;
+}) {
   const [resource, setResource] = useState<ServerStatusResource>({
     phase: "checking",
     snapshot: null,
     error: null,
   });
+  const [attempt, setAttempt] = useState(0);
 
-  useEffect(() => openServerStatusStream({
-    onStatus: (snapshot) => {
-      setResource({ phase: "ready", snapshot, error: null });
-    },
-    onError: (error) => {
-      setResource((current) => ({ phase: "disconnected", snapshot: current.snapshot, error }));
-    },
-  }), []);
+  useEffect(() => {
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const close = openServerStatusStream({
+      onStatus: (snapshot) => {
+        setResource({ phase: "ready", snapshot, error: null });
+      },
+      onError: (error) => {
+        setResource((current) => ({ phase: "disconnected", snapshot: current.snapshot, error }));
+        // A browser opens a dropped stream again on its own, but gives up for
+        // good where the answer is not an event stream, which is what a proxy
+        // sends while the server it stands in front of restarts. Opening the
+        // stream again is the only way back, thus the status returns on its
+        // own rather than waiting for the reader to reload the page.
+        retry ??= setTimeout(() => setAttempt((current) => current + 1), retryDelayMs);
+      },
+    });
+    return () => {
+      clearTimeout(retry);
+      close();
+    };
+  }, [attempt, retryDelayMs]);
 
   return <ServerStatusContext.Provider value={resource}>{children}</ServerStatusContext.Provider>;
 }

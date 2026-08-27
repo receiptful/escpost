@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, cleanup, render, screen } from "@testing-library/preact";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/preact";
 import { ServerStatusProvider, useServerStatus } from "./server-status-data";
 
 class FakeEventSource {
@@ -36,10 +36,12 @@ function Probe() {
   return <p>{`${resource.phase}:${resource.snapshot?.jobs_processed ?? "null"}:${resource.error?.message ?? "none"}`}</p>;
 }
 
-function renderProvider() {
+function renderProvider(retryDelayMs?: number) {
   FakeEventSource.instances = [];
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
-  return render(<ServerStatusProvider><Probe /></ServerStatusProvider>);
+  return render(
+    <ServerStatusProvider retryDelayMs={retryDelayMs}><Probe /></ServerStatusProvider>,
+  );
 }
 
 afterEach(() => {
@@ -88,5 +90,46 @@ describe("ServerStatusProvider", () => {
 
     expect(screen.getByText("disconnected:4:The server returned invalid status data.")).toBeTruthy();
     expect(source.closed).toBe(false);
+  });
+
+  // A browser reopens a dropped stream on its own, but gives up for good when
+  // the answer is not an event stream at all, which is what a proxy sends
+  // while the server it stands in front of restarts. The status would then
+  // stay unavailable until the reader reloaded the page.
+  test("opens the stream again after the browser gives up on it", async () => {
+    renderProvider(0);
+    const first = FakeEventSource.instances[0]!;
+    act(() => {
+      first.emit("message", { virtual_printer: null, jobs_processed: 4, config_path: "/tmp/printers.toml" });
+    });
+
+    act(() => {
+      first.emit("error");
+    });
+    expect(screen.getByText("disconnected:4:Unable to reach the ESCPost server.")).toBeTruthy();
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    expect(first.closed).toBe(true);
+    act(() => {
+      FakeEventSource.instances[1]!.emit("message", {
+        virtual_printer: null,
+        jobs_processed: 6,
+        config_path: "/tmp/printers.toml",
+      });
+    });
+
+    expect(screen.getByText("ready:6:none")).toBeTruthy();
+  });
+
+  test("stops trying once the reader leaves the page", async () => {
+    const view = renderProvider(0);
+    act(() => {
+      FakeEventSource.instances[0]!.emit("error");
+    });
+    view.unmount();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 });
