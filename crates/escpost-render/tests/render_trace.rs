@@ -2,7 +2,7 @@ mod support;
 
 use escpost_render::{
     DecodedCommand, Effect, Justification, PaintLifecycle, Position, StateChange,
-    TRACED_COMMAND_BYTES, render_with_trace,
+    TRACED_COMMAND_BYTES, TextFont, render_with_trace,
 };
 use support::test_profile;
 
@@ -296,4 +296,65 @@ fn a_long_payload_keeps_only_the_start_of_its_bytes() {
     assert_eq!(command.byte_range, 0..input.len());
     assert_eq!(command.bytes.len(), TRACED_COMMAND_BYTES);
     assert_eq!(command.bytes[..8], input[..8]);
+}
+
+#[test]
+fn the_first_command_carries_the_style_the_printer_starts_with() {
+    let profile = test_profile();
+
+    let traced = render_with_trace(b"A", &profile).expect("tracing should succeed");
+    let style = traced.trace.sheets[0].commands[0]
+        .style
+        .as_ref()
+        .expect("the first command carries the style the job starts with");
+
+    assert_eq!(style.font, TextFont::A);
+    assert!(!style.emphasized);
+    assert_eq!(style.underline_thickness, 0);
+    assert_eq!(style.width_magnification, 1);
+    assert_eq!(style.height_magnification, 1);
+    assert!(!style.reversed);
+    assert_eq!(style.justification, Justification::Left);
+}
+
+#[test]
+fn a_style_rides_only_on_the_command_that_changed_it() {
+    let profile = test_profile();
+    let input = [b'A', 0x1b, b'E', 1, b'B', 0x1b, b'E', 1, b'C'];
+
+    let traced = render_with_trace(&input, &profile).expect("tracing should succeed");
+    let commands = &traced.trace.sheets[0].commands;
+
+    // The first command holds the style the job starts with.
+    assert!(commands[0].style.is_some());
+    // ESC E turns emphasis on, thus it carries the style it produced.
+    assert_eq!(
+        commands[1].style.as_ref().map(|style| style.emphasized),
+        Some(true)
+    );
+    // A text byte changes no style of its own.
+    assert!(commands[2].style.is_none());
+    // The second ESC E asks for emphasis that is already on.
+    assert!(commands[3].style.is_none());
+    assert!(commands[4].style.is_none());
+}
+
+#[test]
+fn a_style_carries_the_whole_state_that_prints_a_character() {
+    let profile = test_profile();
+    // ESC ! sets font, emphasis, height and width at once; ESC a centres.
+    let input = [0x1b, b'!', 0x39, 0x1b, b'a', 1, b'A'];
+
+    let traced = render_with_trace(&input, &profile).expect("tracing should succeed");
+    let commands = &traced.trace.sheets[0].commands;
+    let style = commands[1]
+        .style
+        .as_ref()
+        .expect("ESC a changes the justification");
+
+    assert_eq!(style.font, TextFont::B);
+    assert!(style.emphasized);
+    assert_eq!(style.height_magnification, 2);
+    assert_eq!(style.width_magnification, 2);
+    assert_eq!(style.justification, Justification::Center);
 }

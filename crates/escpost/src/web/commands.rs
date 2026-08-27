@@ -2,6 +2,7 @@
 
 use escpost_render::{
     CommandCode, CommandTrace, DecodedCommand, Effect, Justification, PaintLifecycle, StateChange,
+    TextFont, TextStyle,
 };
 use serde::Serialize;
 
@@ -25,6 +26,10 @@ pub(crate) struct CommandResponse {
     /// True when the command itself fixes how many parameter bytes follow,
     /// thus the command list can show them beside the command name.
     fixed_parameters: bool,
+    /// The text style after the command, where the command changed it. Every
+    /// later command prints with the last style a command carried.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    style: Option<TextStyleResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     paint_lifecycle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +67,7 @@ pub(crate) fn command_responses(commands: Vec<CommandTrace>) -> Vec<CommandRespo
                 ),
                 total_parameter_bytes: command.byte_range.len().saturating_sub(code_length),
                 fixed_parameters: fixed_parameters(&command.command),
+                style: command.style.map(text_style_response),
                 paint_lifecycle: command.paint_lifecycle.map(|lifecycle| match lifecycle {
                     PaintLifecycle::Buffered => "buffered",
                     PaintLifecycle::Committed => "committed",
@@ -568,6 +574,41 @@ fn opcode_name(opcode: u8) -> String {
 }
 
 #[derive(Clone, Serialize)]
+pub(crate) struct TextStyleResponse {
+    font: &'static str,
+    emphasized: bool,
+    underline_thickness: u8,
+    width_magnification: u8,
+    height_magnification: u8,
+    reversed: bool,
+    justification: &'static str,
+    code_page: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encoding: Option<String>,
+    international_character_set: String,
+    right_side_character_spacing_dots: u32,
+}
+
+fn text_style_response(style: TextStyle) -> TextStyleResponse {
+    TextStyleResponse {
+        font: match style.font {
+            TextFont::A => "A",
+            TextFont::B => "B",
+        },
+        emphasized: style.emphasized,
+        underline_thickness: style.underline_thickness,
+        width_magnification: style.width_magnification,
+        height_magnification: style.height_magnification,
+        reversed: style.reversed,
+        justification: justification_name(style.justification),
+        code_page: style.code_page,
+        encoding: style.encoding,
+        international_character_set: international_character_set(style.international_character_set),
+        right_side_character_spacing_dots: style.right_side_character_spacing_dots,
+    }
+}
+
+#[derive(Clone, Serialize)]
 struct AnnotationResponse {
     label: String,
     content: String,
@@ -664,7 +705,9 @@ fn justification_name(justification: Justification) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use escpost_render::{CommandCode, CommandTrace, DecodedCommand, Justification};
+    use escpost_render::{
+        CommandCode, CommandTrace, DecodedCommand, Justification, TextFont, TextStyle,
+    };
 
     use super::{command_responses, display};
 
@@ -759,6 +802,7 @@ mod tests {
             CommandTrace {
                 byte_range: 0..2,
                 bytes: vec![0x1b, b'@'],
+                style: None,
                 command: DecodedCommand::Initialize,
                 paint_lifecycle: None,
                 effects: vec![],
@@ -766,6 +810,7 @@ mod tests {
             CommandTrace {
                 byte_range: 2..10,
                 bytes: vec![0x1d, b'k', 73, 4, b'1', b'2', b'3', b'4'],
+                style: None,
                 command: DecodedCommand::PrintBarcode {
                     system: 73,
                     data: b"1234".to_vec(),
@@ -777,6 +822,52 @@ mod tests {
 
         assert!(responses[0].fixed_parameters);
         assert!(!responses[1].fixed_parameters);
+    }
+
+    #[test]
+    fn a_command_carries_the_style_it_left_behind() {
+        let style = TextStyle {
+            font: TextFont::B,
+            emphasized: true,
+            underline_thickness: 2,
+            width_magnification: 2,
+            height_magnification: 3,
+            reversed: false,
+            justification: Justification::Center,
+            code_page: 2,
+            encoding: Some("CP850".to_owned()),
+            international_character_set: 2,
+            right_side_character_spacing_dots: 3,
+        };
+        let responses = command_responses(vec![
+            CommandTrace {
+                byte_range: 0..3,
+                bytes: vec![0x1b, b'!', 0x39],
+                style: Some(style),
+                command: DecodedCommand::SelectPrintMode(0x39),
+                paint_lifecycle: None,
+                effects: vec![],
+            },
+            CommandTrace {
+                byte_range: 3..4,
+                bytes: vec![b'A'],
+                style: None,
+                command: DecodedCommand::TextByte(b'A'),
+                paint_lifecycle: None,
+                effects: vec![],
+            },
+        ]);
+
+        let shown = responses[0].style.as_ref().expect("the style rides along");
+        assert_eq!(shown.font, "B");
+        assert!(shown.emphasized);
+        assert_eq!(shown.underline_thickness, 2);
+        assert_eq!(shown.width_magnification, 2);
+        assert_eq!(shown.height_magnification, 3);
+        assert_eq!(shown.justification, "center");
+        assert_eq!(shown.encoding.as_deref(), Some("CP850"));
+        assert_eq!(shown.international_character_set, "Germany");
+        assert!(responses[1].style.is_none());
     }
 
     #[test]
@@ -891,6 +982,7 @@ mod tests {
         let responses = command_responses(vec![CommandTrace {
             byte_range: 0..3,
             bytes: vec![0x1b, b'a', 1],
+            style: None,
             command: DecodedCommand::SetJustification(Justification::Center),
             paint_lifecycle: None,
             effects: vec![],
@@ -906,6 +998,7 @@ mod tests {
         let responses = command_responses(vec![CommandTrace {
             byte_range: 4..5,
             bytes: vec![b'A'],
+            style: None,
             command: DecodedCommand::TextByte(b'A'),
             paint_lifecycle: None,
             effects: vec![],
@@ -924,6 +1017,7 @@ mod tests {
         let responses = command_responses(vec![CommandTrace {
             byte_range: 0..2048,
             bytes,
+            style: None,
             command: DecodedCommand::RasterImage {
                 width_dots: 16,
                 height_dots: 128,

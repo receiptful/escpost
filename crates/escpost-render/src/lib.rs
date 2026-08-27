@@ -18,7 +18,7 @@ pub use error::{LimitKind, RenderError, RenderWarning};
 pub use surface::MonoSurface;
 pub use trace::{
     CommandCode, CommandTrace, DecodedCommand, Effect, Justification, PaintLifecycle, PaintRegion,
-    Position, SheetTrace, StateChange, TRACED_COMMAND_BYTES, Trace,
+    Position, SheetTrace, StateChange, TRACED_COMMAND_BYTES, TextFont, TextStyle, Trace,
 };
 
 use command::{execute_esc_command, execute_gs_command};
@@ -278,7 +278,11 @@ fn render_surfaces_with_sink<S: RenderSurface, C: CommandSink>(
         };
         if C::ENABLED {
             let end = (offset + command_length).min(data.len());
-            command_sink.finish_command(&data[offset..end], state.trace_paint_lifecycle(offset));
+            command_sink.finish_command(
+                &data[offset..end],
+                state.trace_paint_lifecycle(offset),
+                state.trace_text_style(),
+            );
         }
         offset += command_length;
     }

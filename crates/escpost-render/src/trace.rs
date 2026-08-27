@@ -97,6 +97,36 @@ pub enum CommandCode {
     Gs(u8),
 }
 
+/// The character font a text byte prints with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextFont {
+    A,
+    B,
+}
+
+/// The printer state that decides how a text byte reaches the paper.
+///
+/// It holds no position and no data, thus it changes only where a command
+/// changes it, and a trace carries it only there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextStyle {
+    pub font: TextFont,
+    pub emphasized: bool,
+    /// Dots of underline below a character, and 0 for none.
+    pub underline_thickness: u8,
+    pub width_magnification: u8,
+    pub height_magnification: u8,
+    /// True while the printer prints light characters on a dark cell.
+    pub reversed: bool,
+    pub justification: Justification,
+    pub code_page: u8,
+    /// The encoding the printer profile maps the code page to.
+    pub encoding: Option<String>,
+    pub international_character_set: u8,
+    /// Dots the printer adds to the right of each character.
+    pub right_side_character_spacing_dots: u32,
+}
+
 /// Experimental justification value used by command traces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Justification {
@@ -167,6 +197,9 @@ pub const TRACED_COMMAND_BYTES: usize = 40;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandTrace {
     pub byte_range: Range<usize>,
+    /// The text style after this command, where the command changed it. The
+    /// first command of a job carries it as the style the job starts with.
+    pub style: Option<TextStyle>,
     /// The start of the command, at most [`TRACED_COMMAND_BYTES`] long.
     pub bytes: Vec<u8>,
     pub command: DecodedCommand,
@@ -191,7 +224,12 @@ pub(crate) trait CommandSink {
 
     fn begin_command(&mut self, sheet_index: usize, offset: usize);
     fn describe_command(&mut self, command: DecodedCommand, effects: Vec<Effect>);
-    fn finish_command(&mut self, bytes: &[u8], paint_lifecycle: Option<PaintLifecycle>);
+    fn finish_command(
+        &mut self,
+        bytes: &[u8],
+        paint_lifecycle: Option<PaintLifecycle>,
+        style: TextStyle,
+    );
 }
 
 #[inline]
@@ -469,7 +507,12 @@ impl CommandSink for NoTrace {
     }
 
     #[inline]
-    fn finish_command(&mut self, _bytes: &[u8], _paint_lifecycle: Option<PaintLifecycle>) {
+    fn finish_command(
+        &mut self,
+        _bytes: &[u8],
+        _paint_lifecycle: Option<PaintLifecycle>,
+        _style: TextStyle,
+    ) {
         unreachable!("NoTrace commands are guarded by CommandSink::ENABLED")
     }
 }
@@ -485,6 +528,8 @@ struct PendingCommand {
 pub(crate) struct TraceCollector {
     commands: Vec<(usize, CommandTrace)>,
     pending: Option<PendingCommand>,
+    /// The style the last command left behind, to tell a change from a repeat.
+    style: Option<TextStyle>,
 }
 
 impl TraceCollector {
@@ -563,7 +608,12 @@ impl CommandSink for TraceCollector {
         pending.description = Some((command, effects));
     }
 
-    fn finish_command(&mut self, bytes: &[u8], paint_lifecycle: Option<PaintLifecycle>) {
+    fn finish_command(
+        &mut self,
+        bytes: &[u8],
+        paint_lifecycle: Option<PaintLifecycle>,
+        style: TextStyle,
+    ) {
         let pending = self
             .pending
             .take()
@@ -571,11 +621,19 @@ impl CommandSink for TraceCollector {
         let (command, effects) = pending
             .description
             .unwrap_or_else(|| (describe(bytes), vec![]));
+        // The first command carries the style the job starts with. Every later
+        // command carries it only where it changed, thus a reader of the trace
+        // holds the last style it saw.
+        let changed = self.style.as_ref() != Some(&style);
+        if changed {
+            self.style = Some(style.clone());
+        }
         self.commands.push((
             pending.sheet_index,
             CommandTrace {
                 byte_range: pending.start_offset..pending.start_offset + bytes.len(),
                 bytes: bytes[..bytes.len().min(TRACED_COMMAND_BYTES)].to_vec(),
+                style: changed.then_some(style),
                 command,
                 paint_lifecycle,
                 effects,
@@ -902,6 +960,7 @@ mod tests {
             CommandTrace {
                 byte_range: 0..3,
                 bytes: vec![0x1b, b'a', 1],
+                style: commands[0].style.clone(),
                 command: DecodedCommand::SetJustification(Justification::Center),
                 paint_lifecycle: None,
                 effects: vec![Effect::StateChange(StateChange::Justification {
@@ -925,6 +984,7 @@ mod tests {
             CommandTrace {
                 byte_range: 4..5,
                 bytes: vec![0x0a],
+                style: None,
                 command: DecodedCommand::LineFeed,
                 paint_lifecycle: None,
                 effects: vec![Effect::Motion {
