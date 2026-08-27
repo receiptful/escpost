@@ -297,7 +297,10 @@ export function CommandPanel(props: Props) {
                   <span class="mt-2 flex font-mono text-xs">
                     <span
                       aria-label="Parameter bytes"
-                      class="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
+                      // A cell stands two lines tall, thus wrapped lines of a
+                      // run need more room between them than the bytes need
+                      // beside each other.
+                      class="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-2.5 rounded border border-base-content/20 px-1.5 py-1 text-base-content/70"
                     >
                       <ParameterBytes
                         view={view}
