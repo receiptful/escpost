@@ -240,4 +240,18 @@ describe("job visualization model", () => {
 
     expect(boxes).toEqual([{ x: 0, y: 12, width: 36, height: 48 }]);
   });
+
+  test("knows which commands print an image", () => {
+    const image = (name: string) =>
+      commandGroupView(groupAdjacentCommands([
+        command({ byte_start: 0, byte_end: 8, name }),
+      ], 1)[0]).printsImage;
+
+    expect(image("GS v 0")).toBe(true);
+    expect(image("GS ( L")).toBe(true);
+    expect(image("GS 8 L")).toBe(true);
+    expect(image("ESC *")).toBe(true);
+    expect(image("GS k")).toBe(false);
+    expect(image("Text")).toBe(false);
+  });
 });

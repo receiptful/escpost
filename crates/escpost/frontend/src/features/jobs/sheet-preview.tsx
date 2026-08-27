@@ -179,11 +179,32 @@ function TraceGroup(props: TraceGroupProps) {
             {view.annotation && (props.previewed || props.pinned) && (
               <AnnotationLabel annotation={view.annotation} bounds={paint.bounds} />
             )}
+            {view.printsImage && (props.previewed || props.pinned) && (
+              <SizeLabel bounds={paint.bounds} />
+            )}
           </g>
         ))}
       {motions.map((motion, index) => (
         <MotionDecoration key={`motion-${index}`} groups={props.sheetGroups} groupIndex={props.groupIndex} motion={motion} markerId={props.markerId} />
       ))}
+    </g>
+  );
+}
+
+/** Names the dots an image covers, below the image on the sheet. */
+function SizeLabel({ bounds }: {
+  bounds: Extract<CommandEffect, { type: "paint" }>["bounds"];
+}) {
+  const size = `${bounds.width} × ${bounds.height} dots`;
+  const labelWidth = Math.max(28, size.length * 7 + 12);
+  const labelX = bounds.x + bounds.width / 2 - labelWidth / 2;
+  const labelY = bounds.y + bounds.height + 11;
+  return (
+    // The label lies below the image, over whatever the printer put there,
+    // thus it never takes the pointer from it.
+    <g class="trace-label trace-size-label" pointer-events="none">
+      <rect x={labelX} y={labelY - 9} width={labelWidth} height="18" rx="2" />
+      <text x={labelX + labelWidth / 2} y={labelY} dy="0.35em" text-anchor="middle">{size}</text>
     </g>
   );
 }

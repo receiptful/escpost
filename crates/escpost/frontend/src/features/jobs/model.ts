@@ -23,6 +23,14 @@ export const GROUP_BYTES_SHOWN = 256;
 /** One parameter byte, beside the character it printed if it printed one. */
 export type ParameterByte = { hex: string; character: string };
 
+/**
+ * The commands that put an image on the paper.
+ *
+ * The server names a command as the Epson command manual does, thus a name
+ * stands for one command and holds while that manual holds.
+ */
+const IMAGE_COMMANDS = new Set(["GS v 0", "GS ( L", "GS 8 L", "ESC *"]);
+
 export type CommandGroupView = {
   name: string;
   byteStart: number;
@@ -39,6 +47,8 @@ export type CommandGroupView = {
   /** True when each command of the group gives exactly one byte, thus a byte
    * and a printed character stand for each other. */
   characterPairing: boolean;
+  /** True when the command puts an image on the paper. */
+  printsImage: boolean;
   fixedParameters: boolean;
   annotation?: JobCommand["annotation"];
   paintLifecycle?: "buffered" | "committed";
@@ -108,6 +118,7 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     fixedParameters: group.commands.length === 1 && first.fixed_parameters,
     parameterBytes,
     characterPairing,
+    printsImage: IMAGE_COMMANDS.has(first.name),
     totalParameterBytes: group.commands.reduce(
       (total, command) => total + command.total_parameter_bytes,
       0,
