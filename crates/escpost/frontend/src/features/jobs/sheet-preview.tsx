@@ -223,7 +223,7 @@ function StyleLabel({ style, box, sheetWidth }: {
     style.width_magnification > 1 || style.height_magnification > 1
       ? `${style.width_magnification}×${style.height_magnification}`
       : null,
-    style.reversed ? "reverse" : null,
+    style.reversed ? "white on black" : null,
     style.justification,
     style.encoding ?? `page ${style.code_page}`,
   ].filter((name) => name !== null).join(" · ");

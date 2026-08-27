@@ -1,5 +1,6 @@
 import { copyText, webUrl } from "./annotation";
 import { STICKY_HEADER } from "./reveal";
+import type preact from "preact";
 import type { StyleDefaults, TextStyle } from "../../api/types";
 import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
 
@@ -21,11 +22,15 @@ type Props = {
   onPin: (id: string) => void;
 };
 
-/** One style of the toolbar, marked while the printer holds it. */
+/** One style of the toolbar, marked while the printer holds it.
+ *
+ * A style that is off keeps its place, so a reader sees the whole set at once
+ * and finds each style where it stood on the row above. */
 function Chip({ label, active, children, joined }: {
+  /** The whole label, because only some styles read as on or off. */
   label: string;
   active: boolean;
-  children: string;
+  children: preact.ComponentChildren;
   joined?: boolean;
 }) {
   return (
@@ -33,12 +38,14 @@ function Chip({ label, active, children, joined }: {
       aria-label={label}
       title={label}
       data-active={String(active)}
-      class={`px-1.5 py-0.5 text-[0.65rem] leading-none ${
-        joined ? "border-y border-r first:rounded-l-sm first:border-l last:rounded-r-sm" : "rounded-sm border"
+      class={`px-1.5 py-0.5 text-[0.7rem] leading-none ${
+        joined
+          ? "border-y border-r first:rounded-l-sm first:border-l last:rounded-r-sm"
+          : "rounded-sm border"
       } ${
         active
-          ? "border-base-content/40 bg-base-content/15 font-bold text-base-content"
-          : "border-base-content/15 text-base-content/35"
+          ? "border-base-content/60 bg-base-content/25 text-base-content"
+          : "border-dashed border-base-content/20 text-base-content/30"
       }`}
     >
       {children}
@@ -46,60 +53,95 @@ function Chip({ label, active, children, joined }: {
   );
 }
 
-/** Shows the style a run printed with, the way a word processor shows the
- * styles of the text under the caret: every style listed, and the ones in
- * force marked. */
+/** Shows the style a command printed with, the way a word processor shows the
+ * styles of the text under the caret: every style listed, the ones in force
+ * marked and the rest dimmed. */
 function TextStyleBar({ style, defaults }: { style: TextStyle; defaults: StyleDefaults }) {
+  // A style the printer profile decides counts as set only where a command
+  // moved it away from what the profile starts with.
+  const toggle = (on: boolean) => on ? "on" : "off";
+  const chosen = (on: boolean) => on ? "selected" : "not selected";
+  const orDefault = (set: boolean) => set ? "" : " (default)";
+  const underline = style.underline_thickness > 0;
+  const codePage = `${style.encoding ?? `page ${style.code_page}`}, ${style.international_character_set}`;
+  const codePageSet = style.code_page !== defaults.code_page
+    || style.international_character_set !== defaults.international_character_set;
+  const spacingSet = style.line_spacing_dots !== defaults.line_spacing_dots;
   return (
     <span aria-label="Text style" class="mt-2 flex flex-wrap items-center gap-1.5 font-mono">
       <span class="flex">
-        <Chip label="Font A" active={style.font === "A"} joined>A</Chip>
-        <Chip label="Font B" active={style.font === "B"} joined>B</Chip>
+        <Chip label={`Font A: ${chosen(style.font === "A")}`} active={style.font === "A"} joined>
+          A
+        </Chip>
+        <Chip label={`Font B: ${chosen(style.font === "B")}`} active={style.font === "B"} joined>
+          B
+        </Chip>
       </span>
-      <Chip label={`Bold ${style.emphasized ? "on" : "off"}`} active={style.emphasized}>B</Chip>
-      <Chip
-        label={style.underline_thickness > 0
-          ? `Underline ${style.underline_thickness} dot`
-          : "Underline off"}
-        active={style.underline_thickness > 0}
-      >
-        U
+      <Chip label={`Bold (Emphasized): ${toggle(style.emphasized)}`} active={style.emphasized}>
+        <span class="font-bold">B</span>
       </Chip>
-      <Chip label={`Reverse ${style.reversed ? "on" : "off"}`} active={style.reversed}>R</Chip>
+      <Chip
+        label={underline
+          ? `Underline: on, ${style.underline_thickness} dot`
+          : "Underline: off"}
+        active={underline}
+      >
+        <span class="underline underline-offset-2">U</span>
+      </Chip>
+      <Chip
+        label={`White on black (Reverse): ${toggle(style.reversed)}`}
+        active={style.reversed}
+      >
+        ◧
+      </Chip>
       <span class="flex">
-        <Chip label="Align left" active={style.justification === "left"} joined>⇤</Chip>
-        <Chip label="Align center" active={style.justification === "center"} joined>≡</Chip>
-        <Chip label="Align right" active={style.justification === "right"} joined>⇥</Chip>
+        <Chip
+          label={`Align left: ${chosen(style.justification === "left")}`}
+          active={style.justification === "left"}
+          joined
+        >
+          ⇤
+        </Chip>
+        <Chip
+          label={`Align centre: ${chosen(style.justification === "center")}`}
+          active={style.justification === "center"}
+          joined
+        >
+          ≡
+        </Chip>
+        <Chip
+          label={`Align right: ${chosen(style.justification === "right")}`}
+          active={style.justification === "right"}
+          joined
+        >
+          ⇥
+        </Chip>
       </span>
       <Chip
-        label={`Width ${style.width_magnification}x`}
+        label={`Character width: x${style.width_magnification}${orDefault(style.width_magnification > 1)}`}
         active={style.width_magnification > 1}
       >
-        {`${style.width_magnification}xw`}
+        {`${style.width_magnification}xW`}
       </Chip>
       <Chip
-        label={`Height ${style.height_magnification}x`}
+        label={`Character height: x${style.height_magnification}${orDefault(style.height_magnification > 1)}`}
         active={style.height_magnification > 1}
       >
-        {`${style.height_magnification}xh`}
+        {`${style.height_magnification}xH`}
       </Chip>
-      {/* A printer profile decides where these start, thus a style counts as
-          set only where it differs from the profile. */}
-      <Chip
-        label={`Code page ${style.encoding ?? style.code_page}, ${style.international_character_set}`}
-        active={style.code_page !== defaults.code_page
-          || style.international_character_set !== defaults.international_character_set}
-      >
+      <Chip label={`Code page: ${codePage}${orDefault(codePageSet)}`} active={codePageSet}>
         {style.encoding ?? `page ${style.code_page}`}
       </Chip>
       <Chip
-        label={`Line spacing ${style.line_spacing_dots} dots`}
-        active={style.line_spacing_dots !== defaults.line_spacing_dots}
+        label={`Line spacing: ${style.line_spacing_dots} dots${orDefault(spacingSet)}`}
+        active={spacingSet}
       >
         {`↕${style.line_spacing_dots}`}
       </Chip>
       <Chip
-        label={`Character spacing ${style.right_side_character_spacing_dots} dots`}
+        label={`Character spacing: ${style.right_side_character_spacing_dots} dots${
+          orDefault(style.right_side_character_spacing_dots > 0)
+        }`}
         active={style.right_side_character_spacing_dots > 0}
       >
         {`↔${style.right_side_character_spacing_dots}`}

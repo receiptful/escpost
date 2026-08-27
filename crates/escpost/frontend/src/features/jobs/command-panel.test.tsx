@@ -133,8 +133,8 @@ function showStyled(overrides: Parameters<typeof style>[0], extra: JobCommand[] 
 
 function styleBars() {
   return screen.queryAllByLabelText("Text style").map((bar) => ({
-    alignment: within(bar).queryByLabelText("Align center") !== null,
-    bold: within(bar).queryByLabelText(/^Bold/) !== null,
+    alignment: within(bar).queryByLabelText(/^Align centre/) !== null,
+    bold: within(bar).queryByLabelText(/^Bold \(Emphasized\)/) !== null,
   }));
 }
 
@@ -143,31 +143,31 @@ describe("the style a run printed with", () => {
     const toolbar = showStyled({ emphasized: true, justification: "center" });
     const chip = (label: string) => within(toolbar).getByLabelText(label);
 
-    expect(chip("Bold on").getAttribute("data-active")).toBe("true");
-    expect(chip("Underline off").getAttribute("data-active")).toBe("false");
-    expect(chip("Reverse off").getAttribute("data-active")).toBe("false");
+    expect(chip("Bold (Emphasized): on").getAttribute("data-active")).toBe("true");
+    expect(chip("Underline: off").getAttribute("data-active")).toBe("false");
+    expect(chip("White on black (Reverse): off").getAttribute("data-active")).toBe("false");
   });
 
   test("marks one of the three alignments, and only one", () => {
     const toolbar = showStyled({ justification: "center" });
 
-    expect(within(toolbar).getByLabelText("Align left").getAttribute("data-active")).toBe("false");
-    expect(within(toolbar).getByLabelText("Align center").getAttribute("data-active")).toBe("true");
-    expect(within(toolbar).getByLabelText("Align right").getAttribute("data-active")).toBe("false");
+    expect(within(toolbar).getByLabelText("Align left: not selected").getAttribute("data-active")).toBe("false");
+    expect(within(toolbar).getByLabelText("Align centre: selected").getAttribute("data-active")).toBe("true");
+    expect(within(toolbar).getByLabelText("Align right: not selected").getAttribute("data-active")).toBe("false");
   });
 
   test("marks one of the two fonts, and only one", () => {
     const toolbar = showStyled({ font: "B" });
 
-    expect(within(toolbar).getByLabelText("Font A").getAttribute("data-active")).toBe("false");
-    expect(within(toolbar).getByLabelText("Font B").getAttribute("data-active")).toBe("true");
+    expect(within(toolbar).getByLabelText("Font A: not selected").getAttribute("data-active")).toBe("false");
+    expect(within(toolbar).getByLabelText("Font B: selected").getAttribute("data-active")).toBe("true");
   });
 
   test("marks a magnification only while it magnifies", () => {
     const toolbar = showStyled({ width_magnification: 2, height_magnification: 1 });
 
-    expect(within(toolbar).getByLabelText("Width 2x").getAttribute("data-active")).toBe("true");
-    expect(within(toolbar).getByLabelText("Height 1x").getAttribute("data-active")).toBe("false");
+    expect(within(toolbar).getByLabelText("Character width: x2").getAttribute("data-active")).toBe("true");
+    expect(within(toolbar).getByLabelText("Character height: x1 (default)").getAttribute("data-active")).toBe("false");
   });
 });
 
@@ -208,28 +208,52 @@ describe("styles the printer profile decides", () => {
   test("dims a line spacing the job never changed", () => {
     const toolbar = showStyled({});
 
-    expect(within(toolbar).getByLabelText("Line spacing 30 dots").getAttribute("data-active"))
+    expect(within(toolbar).getByLabelText("Line spacing: 30 dots (default)").getAttribute("data-active"))
       .toBe("false");
   });
 
   test("marks a line spacing a command set", () => {
     const toolbar = showStyled({ line_spacing_dots: 48 });
 
-    expect(within(toolbar).getByLabelText("Line spacing 48 dots").getAttribute("data-active"))
+    expect(within(toolbar).getByLabelText("Line spacing: 48 dots").getAttribute("data-active"))
       .toBe("true");
   });
 
   test("dims the code page the profile starts with, whatever its number", () => {
     const toolbar = showStyled({ code_page: 0, encoding: "CP437" });
 
-    expect(within(toolbar).getByLabelText(/^Code page CP437/).getAttribute("data-active"))
+    expect(within(toolbar).getByLabelText(/^Code page: CP437/).getAttribute("data-active"))
       .toBe("false");
   });
 
   test("marks a code page a command selected", () => {
     const toolbar = showStyled({ code_page: 2, encoding: "CP850" });
 
-    expect(within(toolbar).getByLabelText(/^Code page CP850/).getAttribute("data-active"))
+    expect(within(toolbar).getByLabelText(/^Code page: CP850/).getAttribute("data-active"))
       .toBe("true");
+  });
+});
+
+describe("telling a style that is on from one that is off", () => {
+  test("marks the two apart by more than the text alone", () => {
+    const toolbar = showStyled({ emphasized: true });
+    const on = within(toolbar).getByLabelText("Bold (Emphasized): on");
+    const off = within(toolbar).getByLabelText("Underline: off");
+
+    // A style that is off carries no fill and a broken border, thus it reads
+    // as off without the reader having to compare it with its neighbour.
+    expect(on.className).toContain("bg-base-content/25");
+    expect(off.className).not.toContain("bg-base-content/25");
+    expect(off.className).toContain("border-dashed");
+    expect(on.className).not.toContain("border-dashed");
+  });
+
+  test("shows the underline style underlined, and the widths as W and H", () => {
+    const toolbar = showStyled({ width_magnification: 2, height_magnification: 3 });
+
+    expect(within(toolbar).getByLabelText("Underline: off").querySelector("span")?.className)
+      .toContain("underline");
+    expect(within(toolbar).getByLabelText("Character width: x2").textContent).toBe("2xW");
+    expect(within(toolbar).getByLabelText("Character height: x3").textContent).toBe("3xH");
   });
 });
