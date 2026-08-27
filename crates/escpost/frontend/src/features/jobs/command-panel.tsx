@@ -226,10 +226,7 @@ export function CommandPanel(props: Props) {
           <span>Index</span>
         </div>
       </div>
-      {/* A row grows tall where a run of text wraps its bytes over several
-          lines, thus a line between rows carries the border on its own rather
-          than leaving the shading to mark where a row ends. */}
-      <ol class="divide-y divide-base-content/20">
+      <ol class="divide-y divide-base-300">
         {props.groups.map((group, row) => {
           const view = commandGroupView(group);
           const previewed = props.previewedGroupId === group.id;
