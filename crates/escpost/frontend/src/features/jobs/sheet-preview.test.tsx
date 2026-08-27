@@ -18,6 +18,69 @@ function command(overrides: Partial<JobCommand> & Pick<JobCommand, "name">): Job
   };
 }
 
+function styled(overrides: Record<string, unknown> = {}) {
+  return {
+    font: "A",
+    emphasized: true,
+    underline_thickness: 0,
+    width_magnification: 2,
+    height_magnification: 2,
+    reversed: false,
+    justification: "center",
+    code_page: 0,
+    encoding: "CP437",
+    international_character_set: "U.S.A.",
+    right_side_character_spacing_dots: 0,
+    ...overrides,
+  };
+}
+
+function run(cells: { x: number; width: number }[], sheetWidth: number) {
+  const commands = cells.map((cell, index) => ({
+    ...command({ name: "Text", detail: "A" }),
+    byte_start: index,
+    byte_end: index + 1,
+    capped_parameter_bytes: "41",
+    total_parameter_bytes: 1,
+    style: index === 0 ? styled() : undefined,
+    effects: [{ type: "paint", bounds: { x: cell.x, y: 20, width: cell.width, height: 24 } }],
+  }));
+  const job = {
+    id: "1",
+    antialias: false,
+    warnings: [],
+    sheets: [{
+      number: 1,
+      name: "sheet-001.png",
+      width_dots: sheetWidth,
+      height_dots: 80,
+      image_url: "/api/jobs/1/sheets/1",
+      commands,
+    }],
+  };
+  const grouped = groupJobCommands(job as never);
+  const view = render(
+    <SheetPreview
+      sheet={grouped.sheets[0]}
+      sheetCount={1}
+      antialias={false}
+      paperMargin={false}
+      marginFlash={false}
+      previewedGroupId={grouped.groups[0].id}
+      pinnedGroupId={null}
+      previewedCharacter={null}
+      onPreviewCharacter={() => {}}
+      onPreviewCharacterEnd={() => {}}
+      register={() => {}}
+      onPreview={() => {}}
+      onPreviewEnd={() => {}}
+      onPin={() => {}}
+      onClearPin={() => {}}
+    />,
+  );
+  return view.container.querySelector(".trace-style-label");
+}
+
 function show(commands: JobCommand[], previewed: boolean) {
   const job = {
     id: "1",
@@ -72,5 +135,33 @@ describe("the size of an image", () => {
 
   test("names no size for a command that prints no image", () => {
     expect(show([command({ name: "GS k" })], true)).toBeNull();
+  });
+});
+
+describe("the style of a run on the sheet", () => {
+  test("names the style above the run", () => {
+    const label = run([{ x: 0, width: 24 }, { x: 24, width: 24 }], 384);
+
+    expect(label?.textContent).toContain("bold");
+    expect(label?.getAttribute("pointer-events")).toBe("none");
+    // Above the run, whose cells start at y 20.
+    expect(Number(label?.querySelector("rect")?.getAttribute("y"))).toBeLessThan(20);
+  });
+
+  test("keeps the label on the sheet when the run ends at the right edge", () => {
+    const wide = run([{ x: 300, width: 40 }, { x: 340, width: 40 }], 384);
+    const box = wide?.querySelector("rect");
+    const left = Number(box?.getAttribute("x"));
+    const width = Number(box?.getAttribute("width"));
+
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(left + width).toBeLessThanOrEqual(384);
+  });
+
+  test("starts the label at the run when there is room to its right", () => {
+    const early = run([{ x: 10, width: 24 }], 384);
+    const box = early?.querySelector("rect");
+
+    expect(Number(box?.getAttribute("x"))).toBe(10);
   });
 });

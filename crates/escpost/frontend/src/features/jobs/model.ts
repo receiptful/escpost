@@ -127,12 +127,13 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     .flatMap((command) => command.capped_parameter_bytes.split(" "))
     .filter((byte) => byte !== "")
     .slice(0, GROUP_BYTES_SHOWN);
-  const characterPairing = group.commands.length > 1
-    && hexadecimal.length === group.commands.length;
+  // Only a run of text pairs a byte with a character. A command such as
+  // `ESC a` also carries one byte, but that byte prints nothing.
+  const characterPairing = text && hexadecimal.length === group.commands.length;
   // A byte of a run printed the character its own command reports. Anything
   // else the renderer names, such as "0xE9", is not a character.
   const named = (index: number) => {
-    if (!characterPairing || !text) return "";
+    if (!characterPairing) return "";
     const detail = group.commands[index].detail;
     return detail.length === 1 ? detail : "";
   };

@@ -1,6 +1,14 @@
 import type { CommandEffect } from "../../api/types";
 import { activateAnnotation, webUrl } from "./annotation";
-import { commandGroupView, motionTerminals, runBoxes, type CommandGroup, type GroupedSheet } from "./model";
+import type { TextStyle } from "../../api/types";
+import {
+  commandGroupView,
+  motionTerminals,
+  runBoxes,
+  type CommandGroup,
+  type GroupedSheet,
+  type PaintBounds,
+} from "./model";
 
 type Props = {
   sheet: GroupedSheet;
@@ -79,6 +87,7 @@ function TraceOverlay(props: Props) {
           markerId={markerId}
           previewed={props.previewedGroupId === group.id}
           pinned={props.pinnedGroupId === group.id}
+          sheetWidth={props.sheet.width_dots ?? 0}
           previewedCharacter={props.previewedGroupId === group.id ? props.previewedCharacter : null}
           onPreviewCharacter={props.onPreviewCharacter}
           onPreviewCharacterEnd={props.onPreviewCharacterEnd}
@@ -94,6 +103,7 @@ function TraceOverlay(props: Props) {
 
 type TraceGroupProps = {
   group: CommandGroup;
+  sheetWidth: number;
   previewedCharacter: number | null;
   onPreviewCharacter: (index: number) => void;
   onPreviewCharacterEnd: () => void;
@@ -149,7 +159,12 @@ function TraceGroup(props: TraceGroupProps) {
         ? (
           <>
             {runBoxes(paints.map((paint) => paint.bounds)).map((box, index) => (
-              <rect key={`run-${index}`} class="trace-region" pointer-events="none" {...box} />
+              <g key={`run-${index}`}>
+                <rect class="trace-region" pointer-events="none" {...box} />
+                {view.style && (props.previewed || props.pinned) && (
+                  <StyleLabel style={view.style} box={box} sheetWidth={props.sheetWidth} />
+                )}
+              </g>
             ))}
             {props.previewedCharacter !== null && paints[props.previewedCharacter] && (
               <CharacterLabel
@@ -187,6 +202,43 @@ function TraceGroup(props: TraceGroupProps) {
       {motions.map((motion, index) => (
         <MotionDecoration key={`motion-${index}`} groups={props.sheetGroups} groupIndex={props.groupIndex} motion={motion} markerId={props.markerId} />
       ))}
+    </g>
+  );
+}
+
+/** Names the styles a run printed with, above the run.
+ *
+ * The label starts where the run starts, and ends where the run ends when it
+ * would otherwise reach past the paper. A reader thus keeps the whole label
+ * whatever the run does. */
+function StyleLabel({ style, box, sheetWidth }: {
+  style: TextStyle;
+  box: PaintBounds;
+  sheetWidth: number;
+}) {
+  const named = [
+    `Font ${style.font}`,
+    style.emphasized ? "bold" : null,
+    style.underline_thickness > 0 ? `underline ${style.underline_thickness}` : null,
+    style.width_magnification > 1 || style.height_magnification > 1
+      ? `${style.width_magnification}×${style.height_magnification}`
+      : null,
+    style.reversed ? "reverse" : null,
+    style.justification,
+    style.encoding ?? `page ${style.code_page}`,
+  ].filter((name) => name !== null).join(" · ");
+  const labelWidth = Math.max(28, named.length * 6 + 12);
+  const fits = box.x + labelWidth <= sheetWidth;
+  const labelX = fits
+    ? box.x
+    : Math.max(0, Math.min(box.x + box.width - labelWidth, sheetWidth - labelWidth));
+  const labelY = box.y - 5;
+  return (
+    // The label lies over whatever the printer put above the run, thus it
+    // never takes the pointer from it.
+    <g class="trace-label trace-style-label" pointer-events="none">
+      <rect x={labelX} y={labelY - 9} width={labelWidth} height="18" rx="2" />
+      <text x={labelX + 6} y={labelY} dy="0.35em">{named}</text>
     </g>
   );
 }
