@@ -11,6 +11,8 @@ export type GroupedSheet = JobSheet & { groups: CommandGroup[] };
 export type GroupedJob = {
   sheets: GroupedSheet[];
   groups: CommandGroup[];
+  /** How many bytes the job holds, which is where its last command ends. */
+  byteCount: number;
 };
 
 /**
@@ -36,8 +38,11 @@ export type CommandGroupView = {
   byteStart: number;
   /** The byte after the command, for grouping and for element identity. */
   byteEnd: number;
-  /** The last byte of the command, which is what a reader wants to see. */
-  byteLast: number;
+  /** The first byte of the command, counted from one as a reader counts. */
+  firstByte: number;
+  /** The last byte of the command, counted from one. A range that counts from
+   * one ends where a range that counts from zero ends, thus `byteEnd` serves. */
+  lastByte: number;
   detail: string;
   codeBytes: string;
   /** One entry per parameter byte, so a single byte can be pointed at, each
@@ -84,7 +89,12 @@ export function groupJobCommands(job: CurrentJob): GroupedJob {
     ...sheet,
     groups: groupAdjacentCommands(sheet.commands, sheet.number),
   }));
-  return { sheets, groups: sheets.flatMap((sheet) => sheet.groups) };
+  const groups = sheets.flatMap((sheet) => sheet.groups);
+  const byteCount = Math.max(
+    0,
+    ...groups.flatMap((group) => group.commands.map((command) => command.byte_end)),
+  );
+  return { sheets, groups, byteCount };
 }
 
 export function commandGroupView(group: CommandGroup): CommandGroupView {
@@ -113,7 +123,8 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     name: first.name,
     byteStart: first.byte_start,
     byteEnd: last.byte_end,
-    byteLast: last.byte_end - 1,
+    firstByte: first.byte_start + 1,
+    lastByte: last.byte_end,
     codeBytes: first.code_bytes,
     fixedParameters: group.commands.length === 1 && first.fixed_parameters,
     parameterBytes,

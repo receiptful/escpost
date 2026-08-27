@@ -4,6 +4,8 @@ import { commandGroupView, type CommandGroup, type CommandGroupView } from "./mo
 
 type Props = {
   groups: CommandGroup[];
+  /** How many bytes the job holds, which the panel explains one by one. */
+  byteCount: number;
   previewedGroupId: string | null;
   pinnedGroupId: string | null;
   previewedCharacter: number | null;
@@ -66,7 +68,7 @@ export function CommandPanel(props: Props) {
   return (
     <aside
       ref={props.panelRef}
-      aria-label="Commands in the current print job"
+      aria-label="ESC/POS bytes in the current print job"
       class="max-h-[70vh] overflow-auto rounded-box border border-base-300 bg-base-100 xl:sticky xl:top-6 xl:max-h-[calc(100vh-8rem)]"
     >
       {/* The rows pass under the header, thus it needs a surface and a shadow
@@ -75,8 +77,19 @@ export function CommandPanel(props: Props) {
         {...{ [STICKY_HEADER]: "" }}
         class="sticky top-0 z-10 border-b border-base-content/10 bg-base-300 p-4 shadow-sm"
       >
-        <h2 class="text-lg font-bold">Commands</h2>
-        <p class="text-sm text-base-content/65">Hover or focus to preview. Click to pin.</p>
+        <h2 class="flex items-center gap-2 text-lg font-bold">
+          {props.byteCount} bytes
+          <span class="badge badge-outline badge-sm font-normal">ESC/POS</span>
+        </h2>
+        {/* The rows below carry the same two columns. A reader of a row hears
+            its own label, thus these headings serve the eye alone. */}
+        <div
+          aria-hidden="true"
+          class="mt-2 flex items-baseline justify-between text-xs text-base-content/60"
+        >
+          <span>Command</span>
+          <span>Index</span>
+        </div>
       </div>
       <ol class="divide-y divide-base-300">
         {props.groups.map((group, row) => {
@@ -95,7 +108,7 @@ export function CommandPanel(props: Props) {
               <button
                 ref={(element) => props.register(group.id, element)}
                 type="button"
-                aria-label={`${view.name} ${view.byteStart}..${view.byteLast}: ${view.detail}`}
+                aria-label={`${view.name} ${view.firstByte}..${view.lastByte}: ${view.detail}`}
                 aria-pressed={pinned}
                 class={`w-full rounded-lg border p-3 text-left transition-colors ${
                   pinned
@@ -138,7 +151,7 @@ export function CommandPanel(props: Props) {
                       </span>
                     )}
                   </span>
-                  <span class="font-mono text-xs text-base-content/55">{view.byteStart}..{view.byteLast}</span>
+                  <span class="font-mono text-xs text-base-content/55">{view.firstByte}..{view.lastByte}</span>
                 </span>
                 {/* A run of characters carries its text over its bytes, thus
                     it needs no line of its own for the same text. */}

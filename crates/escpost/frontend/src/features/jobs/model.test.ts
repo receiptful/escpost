@@ -4,6 +4,7 @@ import {
   GROUP_BYTES_SHOWN,
   commandGroupView,
   groupAdjacentCommands,
+  groupJobCommands,
   motionTerminals,
   runBoxes,
 } from "./model";
@@ -161,14 +162,16 @@ describe("job visualization model", () => {
     ]);
   });
 
-  test("names the last byte of a command, not the byte after it", () => {
+  test("counts the bytes of a command from one, as a reader does", () => {
     const groups = groupAdjacentCommands([
       command({ byte_start: 0, byte_end: 3, name: "ESC a" }),
       command({ byte_start: 3, byte_end: 4, name: "LF" }),
     ], 1);
 
-    expect(commandGroupView(groups[0]).byteLast).toBe(2);
-    expect(commandGroupView(groups[1]).byteLast).toBe(3);
+    expect(commandGroupView(groups[0]).firstByte).toBe(1);
+    expect(commandGroupView(groups[0]).lastByte).toBe(3);
+    expect(commandGroupView(groups[1]).firstByte).toBe(4);
+    expect(commandGroupView(groups[1]).lastByte).toBe(4);
   });
 
   test("treats a grouped run as having no fixed parameter size", () => {
@@ -253,5 +256,16 @@ describe("job visualization model", () => {
     expect(image("ESC *")).toBe(true);
     expect(image("GS k")).toBe(false);
     expect(image("Text")).toBe(false);
+  });
+
+  test("counts every byte of the job", () => {
+    const job = {
+      sheets: [
+        { number: 1, commands: [command({ byte_start: 0, byte_end: 3, name: "ESC a" })] },
+        { number: 2, commands: [command({ byte_start: 3, byte_end: 840, name: "GS v 0" })] },
+      ],
+    };
+
+    expect(groupJobCommands(job as never).byteCount).toBe(840);
   });
 });

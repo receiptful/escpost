@@ -54,16 +54,16 @@ describe("JobsPage", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    expect(await screen.findByRole("button", { name: "Text 0..1: Hi" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Text 1..2: Hi" })).toBeTruthy();
     expect(screen.getByText("idle-timeout")).toBeTruthy();
     expect(screen.getByText("Unknown command was ignored.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Download raw input" }).getAttribute("href")).toBe("/api/jobs/7/input");
     expect(screen.getByAltText("Rendered receipt sheet 1 of 1").getAttribute("src")).toBe("/api/jobs/7/sheets/1");
 
-    const textButton = screen.getByRole("button", { name: "Text 0..1: Hi" });
-    const lineFeedButton = screen.getByRole("button", { name: "LF 2..2: Print and line feed" });
-    const textOverlay = screen.getByRole("button", { name: "Highlight Text group at bytes 0 to 1" });
-    const lineFeedOverlay = screen.getByRole("button", { name: "Highlight LF group at bytes 2 to 2" });
+    const textButton = screen.getByRole("button", { name: "Text 1..2: Hi" });
+    const lineFeedButton = screen.getByRole("button", { name: "LF 3..3: Print and line feed" });
+    const textOverlay = screen.getByRole("button", { name: "Highlight Text group at bytes 1 to 2" });
+    const lineFeedOverlay = screen.getByRole("button", { name: "Highlight LF group at bytes 3 to 3" });
     expect(lineFeedOverlay.querySelector("text")?.getAttribute("text-anchor")).toBe("middle");
 
     await act(async () => { await Promise.resolve(); });
@@ -98,7 +98,7 @@ describe("JobsPage", () => {
     const open = jest.spyOn(window, "open").mockImplementation(() => null);
     render(<JobsPage />);
 
-    const command = await screen.findByRole("button", { name: "GS ( k 3..3010: QR Code: Print the symbol data in the symbol storage area · Function 181" });
+    const command = await screen.findByRole("button", { name: "GS ( k 4..3011: QR Code: Print the symbol data in the symbol storage area · Function 181" });
     fireEvent.pointerEnter(command);
     const annotation = screen.getByRole("link", { name: "Copy and open QR content: example.test" });
     fireEvent.keyDown(annotation, { key: "Enter" });
@@ -110,7 +110,7 @@ describe("JobsPage", () => {
   test("defaults paper margin on and persists changes", async () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
-    await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    await screen.findByRole("button", { name: "Text 1..2: Hi" });
 
     const toggle = screen.getByRole("checkbox", { name: "Paper margin" });
     const status = screen.getByRole("group", { name: "Current job status" });
@@ -148,10 +148,10 @@ describe("JobsPage", () => {
   test("reveals annotations from commands and commands from annotations", async () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
-    const command = await screen.findByRole("button", { name: "Text 0..1: Hi" });
-    const annotation = screen.getByRole("button", { name: "Highlight Text group at bytes 0 to 1" });
+    const command = await screen.findByRole("button", { name: "Text 1..2: Hi" });
+    const annotation = screen.getByRole("button", { name: "Highlight Text group at bytes 1 to 2" });
     const workspace = screen.getByRole("region", { name: "Rendered receipt sheets" });
-    const panel = screen.getByRole("complementary", { name: "Commands in the current print job" });
+    const panel = screen.getByRole("complementary", { name: "ESC/POS bytes in the current print job" });
     const sheetScroll = jest.fn();
     const commandScroll = jest.fn();
     workspace.scrollBy = sheetScroll;
@@ -189,7 +189,7 @@ describe("command bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const lineFeed = await screen.findByRole("button", { name: "LF 2..2: Print and line feed" });
+    const lineFeed = await screen.findByRole("button", { name: "LF 3..3: Print and line feed" });
 
     expect(within(lineFeed).getByLabelText("Command bytes").textContent).toBe("0A");
     expect(within(lineFeed).queryByLabelText("Parameter bytes")).toBeNull();
@@ -199,7 +199,7 @@ describe("command bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const text = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const text = await screen.findByRole("button", { name: "Text 1..2: Hi" });
 
     expect(within(text).queryByLabelText("Command bytes")).toBeNull();
     expect(byteSpans(within(text).getByLabelText("Parameter bytes"))).toEqual(["48", "69"]);
@@ -210,7 +210,7 @@ describe("command bytes", () => {
     render(<JobsPage />);
 
     const qr = await screen.findByRole("button", {
-      name: /^GS \( k 3\.\.3010:/,
+      name: /^GS \( k 4\.\.3011:/,
     });
 
     expect(within(qr).getByLabelText("Command bytes").textContent).toBe("1D 28 6B");
@@ -225,7 +225,7 @@ describe("command byte layout", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const lineFeed = await screen.findByRole("button", { name: "LF 2..2: Print and line feed" });
+    const lineFeed = await screen.findByRole("button", { name: "LF 3..3: Print and line feed" });
     const header = within(lineFeed).getByText("LF").parentElement;
     if (!header) throw new Error("expected a header row");
 
@@ -236,7 +236,7 @@ describe("command byte layout", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const qr = await screen.findByRole("button", { name: /^GS \( k 3\.\.3010:/ });
+    const qr = await screen.findByRole("button", { name: /^GS \( k 4\.\.3011:/ });
     const header = within(qr).getByText("GS ( k").parentElement;
     if (!header) throw new Error("expected a header row");
 
@@ -254,7 +254,7 @@ describe("command rows", () => {
     render(<JobsPage />);
 
     const panel = await screen.findByRole("complementary", {
-      name: "Commands in the current print job",
+      name: "ESC/POS bytes in the current print job",
     });
     const rows = within(panel).getAllByRole("listitem");
     const buttons = within(panel).getAllByRole("button");
@@ -272,9 +272,9 @@ describe("command panel header", () => {
     render(<JobsPage />);
 
     const panel = await screen.findByRole("complementary", {
-      name: "Commands in the current print job",
+      name: "ESC/POS bytes in the current print job",
     });
-    const header = within(panel).getByRole("heading", { name: "Commands" }).parentElement;
+    const header = within(panel).getByRole("heading", { name: /3011 bytes/ }).parentElement;
     if (!header) throw new Error("expected a header");
     const rows = within(panel).getAllByRole("listitem");
 
@@ -291,7 +291,7 @@ describe("character highlighting", () => {
   async function textRun() {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     const view = render(<JobsPage />);
-    const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const row = await screen.findByRole("button", { name: "Text 1..2: Hi" });
     const bytes = [...within(row).getByLabelText("Parameter bytes").querySelectorAll("[data-byte]")];
 
     const regions = [...view.container.querySelectorAll(".trace-character")];
@@ -362,7 +362,7 @@ describe("characters beside their bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const row = await screen.findByRole("button", { name: "Text 1..2: Hi" });
     const box = within(row).getByLabelText("Parameter bytes");
 
     expect(characterSpans(box)).toEqual(["H", "i"]);
@@ -373,7 +373,7 @@ describe("characters beside their bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const row = await screen.findByRole("button", { name: "Text 1..2: Hi" });
 
     expect(within(row).queryByText("Hi")).toBeNull();
   });
@@ -382,7 +382,7 @@ describe("characters beside their bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const row = await screen.findByRole("button", { name: "LF 2..2: Print and line feed" });
+    const row = await screen.findByRole("button", { name: "LF 3..3: Print and line feed" });
 
     expect(within(row).getByText("Print and line feed")).toBeTruthy();
   });
@@ -393,11 +393,27 @@ describe("byte cells of any command", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const qr = await screen.findByRole("button", { name: /^GS \( k 3\.\.3010:/ });
+    const qr = await screen.findByRole("button", { name: /^GS \( k 4\.\.3011:/ });
     const cells = [...within(qr).getByLabelText("Parameter bytes").querySelectorAll("[data-byte]")];
 
     expect(cells).toHaveLength(5);
     expect(cells[0].className).toBe(cells[2].className);
     expect(cells[1].className).not.toBe(cells[0].className);
+  });
+});
+
+describe("what the panel holds", () => {
+  test("names the bytes it explains, and how many the job holds", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const panel = await screen.findByRole("complementary", {
+      name: "ESC/POS bytes in the current print job",
+    });
+
+    expect(within(panel).getByRole("heading", { name: /3011 bytes/ }).textContent)
+      .toContain("ESC/POS");
+    expect(within(panel).getByText("Command")).toBeTruthy();
+    expect(within(panel).getByText("Index")).toBeTruthy();
   });
 });

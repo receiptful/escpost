@@ -22,6 +22,7 @@ function show(commands: JobCommand[]) {
   render(
     <CommandPanel
       groups={groupAdjacentCommands(commands, 1)}
+      byteCount={commands.length}
       previewedGroupId={null}
       pinnedGroupId={null}
       previewedCharacter={null}

@@ -128,7 +128,7 @@ function TraceGroup(props: TraceGroupProps) {
       class={`trace-group ${stateClass}`}
       tabIndex={0}
       role="button"
-      aria-label={`Highlight ${view.name} group at bytes ${view.byteStart} to ${view.byteLast}`}
+      aria-label={`Highlight ${view.name} group at bytes ${view.firstByte} to ${view.lastByte}`}
       aria-pressed={props.pinned}
       onPointerEnter={() => props.onPreview(props.group.id)}
       onPointerLeave={() => props.onPreviewEnd(props.group.id)}
