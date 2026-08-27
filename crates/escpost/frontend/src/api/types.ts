@@ -155,6 +155,14 @@ export type TextStyle = {
   encoding?: string;
   international_character_set: string;
   right_side_character_spacing_dots: number;
+  line_spacing_dots: number;
+};
+
+/** The style a printer profile starts a job with. */
+export type StyleDefaults = {
+  line_spacing_dots: number;
+  code_page: number;
+  international_character_set: string;
 };
 
 export type JobCommand = {
@@ -191,6 +199,7 @@ export type CurrentJob = {
   completed_at_unix_ms?: number;
   completion?: "closed" | "timeout";
   antialias: boolean;
+  defaults: StyleDefaults;
   warnings: string[];
   input_url?: string;
   sheets: JobSheet[];

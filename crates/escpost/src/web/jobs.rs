@@ -48,10 +48,20 @@ struct JobResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     completion: Option<&'static str>,
     antialias: bool,
+    /// The style the printer profile starts the job with, which tells a style
+    /// a command set from one no command ever touched.
+    defaults: StyleDefaultsResponse,
     warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     input_url: Option<String>,
     sheets: Vec<JobSheetResponse>,
+}
+
+#[derive(Serialize)]
+pub(super) struct StyleDefaultsResponse {
+    pub(super) line_spacing_dots: u32,
+    pub(super) code_page: u8,
+    pub(super) international_character_set: String,
 }
 
 #[derive(Serialize)]
@@ -106,6 +116,13 @@ fn current_response(state: &JobStoreState) -> CurrentJobResponse {
             completed_at_unix_ms: state.completed_at,
             completion: state.completion,
             antialias: state.antialias,
+            defaults: StyleDefaultsResponse {
+                line_spacing_dots: job.style_defaults.line_spacing_dots,
+                code_page: job.style_defaults.code_page,
+                international_character_set: super::commands::international_character_set(
+                    job.style_defaults.international_character_set,
+                ),
+            },
             warnings: job.warnings.clone(),
             input_url: (state.raw_input.is_some() && !receiving)
                 .then(|| format!("/api/jobs/{id}/input")),

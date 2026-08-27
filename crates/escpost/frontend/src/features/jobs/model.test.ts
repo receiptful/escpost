@@ -281,6 +281,7 @@ describe("job visualization model", () => {
       code_page: 0,
       international_character_set: "U.S.A.",
       right_side_character_spacing_dots: 0,
+      line_spacing_dots: 30,
     });
     const job = {
       sheets: [{

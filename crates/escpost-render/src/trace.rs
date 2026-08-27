@@ -104,6 +104,18 @@ pub enum TextFont {
     B,
 }
 
+/// The state a printer holds at power-on, and after `ESC @`.
+///
+/// A printer profile decides these, thus they belong to the job rather than to
+/// any moment in it. A reader tells a style that was set from one that was
+/// never touched by comparing against them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleDefaults {
+    pub line_spacing_dots: u32,
+    pub code_page: u8,
+    pub international_character_set: u8,
+}
+
 /// The printer state that decides how a text byte reaches the paper.
 ///
 /// It holds no position and no data, thus it changes only where a command
@@ -125,6 +137,8 @@ pub struct TextStyle {
     pub international_character_set: u8,
     /// Dots the printer adds to the right of each character.
     pub right_side_character_spacing_dots: u32,
+    /// Dots a line feed moves the paper, where no character stands taller.
+    pub line_spacing_dots: u32,
 }
 
 /// Experimental justification value used by command traces.

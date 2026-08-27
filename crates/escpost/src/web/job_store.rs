@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use escpost_render::TracedRenderResult;
+use escpost_render::{StyleDefaults, TracedRenderResult};
 use tokio::sync::{RwLock, watch};
 
 use super::{CommandResponse, command_responses, epoch_millis};
@@ -40,6 +40,8 @@ pub(crate) struct JobRuntimeStatus {
 
 pub(super) struct RenderedJob {
     pub(super) profile: String,
+    /// The style the printer profile starts the job with.
+    pub(super) style_defaults: StyleDefaults,
     /// Non-fatal render diagnostics, pre-formatted for display.
     pub(super) warnings: Vec<String>,
     pub(super) sheets: Vec<RenderedWebSheet>,
@@ -196,6 +198,7 @@ impl From<TracedRenderResult> for RenderedJob {
         let TracedRenderResult { render, trace } = traced;
         Self {
             profile: render.metadata.profile_id,
+            style_defaults: render.metadata.style_defaults,
             warnings: render.warnings.iter().map(ToString::to_string).collect(),
             sheets: render
                 .sheets

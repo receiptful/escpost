@@ -1,12 +1,14 @@
 import { copyText, webUrl } from "./annotation";
 import { STICKY_HEADER } from "./reveal";
-import type { TextStyle } from "../../api/types";
+import type { StyleDefaults, TextStyle } from "../../api/types";
 import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
 
 type Props = {
   groups: CommandGroup[];
   /** How many bytes the job holds, which the panel explains one by one. */
   byteCount: number;
+  /** The style the printer profile starts the job with. */
+  defaults: StyleDefaults;
   previewedGroupId: string | null;
   pinnedGroupId: string | null;
   previewedCharacter: number | null;
@@ -47,7 +49,7 @@ function Chip({ label, active, children, joined }: {
 /** Shows the style a run printed with, the way a word processor shows the
  * styles of the text under the caret: every style listed, and the ones in
  * force marked. */
-function TextStyleBar({ style }: { style: TextStyle }) {
+function TextStyleBar({ style, defaults }: { style: TextStyle; defaults: StyleDefaults }) {
   return (
     <span aria-label="Text style" class="mt-2 flex flex-wrap items-center gap-1.5 font-mono">
       <span class="flex">
@@ -81,11 +83,26 @@ function TextStyleBar({ style }: { style: TextStyle }) {
       >
         {`${style.height_magnification}xh`}
       </Chip>
+      {/* A printer profile decides where these start, thus a style counts as
+          set only where it differs from the profile. */}
       <Chip
         label={`Code page ${style.encoding ?? style.code_page}, ${style.international_character_set}`}
-        active={style.code_page !== 0}
+        active={style.code_page !== defaults.code_page
+          || style.international_character_set !== defaults.international_character_set}
       >
         {style.encoding ?? `page ${style.code_page}`}
+      </Chip>
+      <Chip
+        label={`Line spacing ${style.line_spacing_dots} dots`}
+        active={style.line_spacing_dots !== defaults.line_spacing_dots}
+      >
+        {`↕${style.line_spacing_dots}`}
+      </Chip>
+      <Chip
+        label={`Character spacing ${style.right_side_character_spacing_dots} dots`}
+        active={style.right_side_character_spacing_dots > 0}
+      >
+        {`↔${style.right_side_character_spacing_dots}`}
       </Chip>
     </span>
   );
@@ -249,7 +266,9 @@ export function CommandPanel(props: Props) {
                     </span>
                   </span>
                 )}
-                {view.style && view.showsStyle && <TextStyleBar style={view.style} />}
+                {view.style && view.showsStyle && (
+                  <TextStyleBar style={view.style} defaults={props.defaults} />
+                )}
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>
                 )}

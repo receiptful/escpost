@@ -578,6 +578,7 @@ impl<S: RenderSurface> PrinterState<S> {
                 .map(str::to_owned),
             international_character_set: self.active_international_character_set,
             right_side_character_spacing_dots: self.right_side_character_spacing,
+            line_spacing_dots: self.line_spacing,
         }
     }
 

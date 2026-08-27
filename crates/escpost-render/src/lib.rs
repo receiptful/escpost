@@ -18,7 +18,8 @@ pub use error::{LimitKind, RenderError, RenderWarning};
 pub use surface::MonoSurface;
 pub use trace::{
     CommandCode, CommandTrace, DecodedCommand, Effect, Justification, PaintLifecycle, PaintRegion,
-    Position, SheetTrace, StateChange, TRACED_COMMAND_BYTES, TextFont, TextStyle, Trace,
+    Position, SheetTrace, StateChange, StyleDefaults, TRACED_COMMAND_BYTES, TextFont, TextStyle,
+    Trace,
 };
 
 use command::{execute_esc_command, execute_gs_command};
@@ -126,6 +127,8 @@ pub struct RenderMetadata {
     pub renderer_version: &'static str,
     pub profile_id: String,
     pub canonical_profile_sha256: String,
+    /// The style the printer profile starts a job with.
+    pub style_defaults: StyleDefaults,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +168,7 @@ pub fn render_with_options(
             renderer_version: env!("CARGO_PKG_VERSION"),
             profile_id: profile.id.clone(),
             canonical_profile_sha256: profile.canonical_profile_sha256.clone(),
+            style_defaults: style_defaults(profile),
         },
     })
 }
@@ -207,6 +211,7 @@ pub fn render_with_trace_and_options(
                 renderer_version: env!("CARGO_PKG_VERSION"),
                 profile_id: profile.id.clone(),
                 canonical_profile_sha256: profile.canonical_profile_sha256.clone(),
+                style_defaults: style_defaults(profile),
             },
         },
         trace,
@@ -294,6 +299,15 @@ fn render_surfaces_with_sink<S: RenderSurface, C: CommandSink>(
         device_events,
         warnings,
     })
+}
+
+/// The style a printer profile starts a job with.
+fn style_defaults(profile: &PrinterProfile) -> StyleDefaults {
+    StyleDefaults {
+        line_spacing_dots: profile.defaults.line_spacing_dots,
+        code_page: profile.defaults.code_page,
+        international_character_set: profile.defaults.international_character_set,
+    }
 }
 
 fn validate_initial_limits(

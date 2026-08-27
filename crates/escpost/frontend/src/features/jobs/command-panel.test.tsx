@@ -23,6 +23,7 @@ function show(commands: JobCommand[]) {
     <CommandPanel
       groups={groupAdjacentCommands(commands, 1)}
       byteCount={commands.length}
+      defaults={DEFAULTS}
       previewedGroupId={null}
       pinnedGroupId={null}
       previewedCharacter={null}
@@ -91,9 +92,12 @@ function style(overrides: Partial<import("../../api/types").TextStyle> = {}) {
     encoding: "CP437",
     international_character_set: "U.S.A.",
     right_side_character_spacing_dots: 0,
+    line_spacing_dots: 30,
     ...overrides,
   };
 }
+
+const DEFAULTS = { line_spacing_dots: 30, code_page: 0, international_character_set: "U.S.A." };
 
 function showStyled(overrides: Parameters<typeof style>[0], extra: JobCommand[] = []) {
   const job = {
@@ -111,6 +115,7 @@ function showStyled(overrides: Parameters<typeof style>[0], extra: JobCommand[] 
     <CommandPanel
       groups={grouped.groups}
       byteCount={grouped.byteCount}
+      defaults={DEFAULTS}
       previewedGroupId={null}
       pinnedGroupId={null}
       previewedCharacter={null}
@@ -196,5 +201,35 @@ describe("where the style shows", () => {
     showStyled({}, [other("GS V")]);
 
     expect(styleBars()).toHaveLength(1);
+  });
+});
+
+describe("styles the printer profile decides", () => {
+  test("dims a line spacing the job never changed", () => {
+    const toolbar = showStyled({});
+
+    expect(within(toolbar).getByLabelText("Line spacing 30 dots").getAttribute("data-active"))
+      .toBe("false");
+  });
+
+  test("marks a line spacing a command set", () => {
+    const toolbar = showStyled({ line_spacing_dots: 48 });
+
+    expect(within(toolbar).getByLabelText("Line spacing 48 dots").getAttribute("data-active"))
+      .toBe("true");
+  });
+
+  test("dims the code page the profile starts with, whatever its number", () => {
+    const toolbar = showStyled({ code_page: 0, encoding: "CP437" });
+
+    expect(within(toolbar).getByLabelText(/^Code page CP437/).getAttribute("data-active"))
+      .toBe("false");
+  });
+
+  test("marks a code page a command selected", () => {
+    const toolbar = showStyled({ code_page: 2, encoding: "CP850" });
+
+    expect(within(toolbar).getByLabelText(/^Code page CP850/).getAttribute("data-active"))
+      .toBe("true");
   });
 });

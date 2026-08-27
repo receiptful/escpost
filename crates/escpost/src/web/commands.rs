@@ -492,7 +492,7 @@ fn motion_unit(unit: u8) -> String {
     }
 }
 
-fn international_character_set(set: u8) -> String {
+pub(super) fn international_character_set(set: u8) -> String {
     match set {
         0 => "U.S.A.",
         1 => "France",
@@ -587,6 +587,7 @@ pub(crate) struct TextStyleResponse {
     encoding: Option<String>,
     international_character_set: String,
     right_side_character_spacing_dots: u32,
+    line_spacing_dots: u32,
 }
 
 fn text_style_response(style: TextStyle) -> TextStyleResponse {
@@ -605,6 +606,7 @@ fn text_style_response(style: TextStyle) -> TextStyleResponse {
         encoding: style.encoding,
         international_character_set: international_character_set(style.international_character_set),
         right_side_character_spacing_dots: style.right_side_character_spacing_dots,
+        line_spacing_dots: style.line_spacing_dots,
     }
 }
 
@@ -838,6 +840,7 @@ mod tests {
             encoding: Some("CP850".to_owned()),
             international_character_set: 2,
             right_side_character_spacing_dots: 3,
+            line_spacing_dots: 30,
         };
         let responses = command_responses(vec![
             CommandTrace {

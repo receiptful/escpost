@@ -146,6 +146,7 @@ export function JobsPage() {
             <CommandPanel
               groups={grouped.groups}
               byteCount={grouped.byteCount}
+              defaults={job.defaults}
               previewedGroupId={previewedGroupId}
               pinnedGroupId={pinnedGroupId}
               previewedCharacter={previewedCharacter}
