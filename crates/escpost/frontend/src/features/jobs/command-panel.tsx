@@ -43,10 +43,15 @@ function ParameterBytes({ view, active, onPreview, onPreviewEnd }: {
           onPointerEnter={pairing ? () => onPreview(index) : undefined}
           onPointerLeave={pairing ? onPreviewEnd : undefined}
         >
-          {pairing && (
-            <span data-character={index} class="text-base-content">{byte.character}</span>
-          )}
           <span data-hex={index}>{byte.hex}</span>
+          {pairing && (
+            // A printed space carries no ink, but it holds a place on the
+            // paper. `whitespace-pre` keeps it, and a byte that names no
+            // character borrows the same space to hold its line open.
+            <span data-character={index} class="whitespace-pre text-base-content">
+              {byte.character === "" ? " " : byte.character}
+            </span>
+          )}
         </span>
       ))}
       {view.parameterBytes.length < view.totalParameterBytes && (
