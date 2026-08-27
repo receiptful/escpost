@@ -257,3 +257,21 @@ describe("command rows", () => {
     expect(buttons[0].className).toBe(buttons[1].className);
   });
 });
+
+describe("command panel header", () => {
+  test("keeps the header on its own surface above the rows", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const panel = await screen.findByRole("complementary", {
+      name: "Commands in the current print job",
+    });
+    const header = within(panel).getByRole("heading", { name: "Commands" }).parentElement;
+    if (!header) throw new Error("expected a header");
+    const rows = within(panel).getAllByRole("listitem");
+
+    expect(header.className).toContain("bg-base-300");
+    expect(header.className).toContain("shadow");
+    expect(rows[0].className).not.toContain("bg-base-300");
+  });
+});

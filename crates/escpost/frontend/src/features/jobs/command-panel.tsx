@@ -31,7 +31,9 @@ export function CommandPanel(props: Props) {
       aria-label="Commands in the current print job"
       class="max-h-[70vh] overflow-auto rounded-box border border-base-300 bg-base-100 xl:sticky xl:top-6 xl:max-h-[calc(100vh-8rem)]"
     >
-      <div class="sticky top-0 z-10 border-b border-base-300 bg-base-100 p-4">
+      {/* The rows pass under the header, thus it needs a surface and a shadow
+          of its own to stay apart from the row that scrolls behind it. */}
+      <div class="sticky top-0 z-10 border-b border-base-content/10 bg-base-300 p-4 shadow-sm">
         <h2 class="text-lg font-bold">Commands</h2>
         <p class="text-sm text-base-content/65">Hover or focus to preview. Click to pin.</p>
       </div>
