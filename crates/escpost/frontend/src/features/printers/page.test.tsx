@@ -122,12 +122,21 @@ describe("PrintersPage", () => {
   test("uses monitor states, complete inventory snapshots, warning, and timestamp", () => {
     renderPage();
     expect(screen.getByText("Connecting to printer monitor…")).toBeTruthy();
-    act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", inventory([
-      { name: "Kitchen", transport: "network", availability: "connected", profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } },
-    ], "Monitor is catching up")));
+    const updatedAt = "2026-08-27T11:36:50.502523006Z";
+    act(() => FakeEventSource.forUrl("/api/printers/list/events")?.emit("message", {
+      ...inventory([
+        { name: "Kitchen", transport: "network", availability: "connected", profile: null, connection: { type: "network", host: "10.0.0.8", port: 9100 } },
+      ], "Monitor is catching up"),
+      updated_at: updatedAt,
+    }));
     expect(screen.getAllByText("Kitchen")).toHaveLength(2);
     expect(screen.getByText("Monitor is catching up")).toBeTruthy();
-    expect(screen.getByText("Last updated").querySelector("time")?.getAttribute("dateTime")).toBe("2026-08-26T14:32:10Z");
+    const time = screen.getByText("Last updated").querySelector("time");
+    expect(time?.getAttribute("dateTime")).toBe(updatedAt);
+    expect(time?.textContent).not.toBe(updatedAt);
+    expect(time?.textContent).toContain("2026");
+    expect(time?.textContent).not.toContain("T");
+    expect(time?.textContent).not.toContain("502523006");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 

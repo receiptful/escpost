@@ -3,6 +3,11 @@ import type { PrinterFlashes } from "../../app/printer-inventory-data";
 import { usePrinterInventory } from "../../app/printer-inventory-data";
 import { usbHex } from "./usb";
 
+const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+});
+
 // The highlight a printer is currently carrying, or no class at all. Both
 // layouts render the same printer, so both get the same treatment: the class
 // goes on the `<tr>` and on the mobile `<article>`, which are the elements
@@ -117,7 +122,9 @@ export function PrinterList() {
           ))}
         </div>
       </>}
-      <p class="text-sm text-base-content/60">Last updated <time dateTime={snapshot.updated_at}>{snapshot.updated_at}</time></p>
+      <p class="text-sm text-base-content/60">
+        Last updated <time dateTime={snapshot.updated_at}>{timestampFormatter.format(new Date(snapshot.updated_at))}</time>
+      </p>
     </div>
   );
 }
