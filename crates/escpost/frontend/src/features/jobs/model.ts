@@ -20,6 +20,9 @@ export type GroupedJob = {
  */
 export const GROUP_BYTES_SHOWN = 256;
 
+/** One parameter byte, beside the character it printed if it printed one. */
+export type ParameterByte = { hex: string; character: string };
+
 export type CommandGroupView = {
   name: string;
   byteStart: number;
@@ -29,8 +32,9 @@ export type CommandGroupView = {
   byteLast: number;
   detail: string;
   codeBytes: string;
-  /** One entry per parameter byte, so a single byte can be pointed at. */
-  parameterBytes: string[];
+  /** One entry per parameter byte, so a single byte can be pointed at, each
+   * beside the character it printed. */
+  parameterBytes: ParameterByte[];
   totalParameterBytes: number;
   /** True when each command of the group gives exactly one byte, thus a byte
    * and a printed character stand for each other. */
@@ -78,10 +82,23 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
   const last = group.commands.at(-1) ?? first;
   const text = first.name === "Text";
   const lineFeeds = first.name === "LF" && group.commands.length > 1;
-  const parameterBytes = group.commands
+  const hexadecimal = group.commands
     .flatMap((command) => command.capped_parameter_bytes.split(" "))
     .filter((byte) => byte !== "")
     .slice(0, GROUP_BYTES_SHOWN);
+  const characterPairing = group.commands.length > 1
+    && hexadecimal.length === group.commands.length;
+  // A byte of a run printed the character its own command reports. Anything
+  // else the renderer names, such as "0xE9", is not a character.
+  const named = (index: number) => {
+    if (!characterPairing || !text) return "";
+    const detail = group.commands[index].detail;
+    return detail.length === 1 ? detail : "";
+  };
+  const parameterBytes = hexadecimal.map((hex, index) => ({
+    hex,
+    character: named(index),
+  }));
   return {
     name: first.name,
     byteStart: first.byte_start,
@@ -90,8 +107,7 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     codeBytes: first.code_bytes,
     fixedParameters: group.commands.length === 1 && first.fixed_parameters,
     parameterBytes,
-    characterPairing: group.commands.length > 1
-      && parameterBytes.length === group.commands.length,
+    characterPairing,
     totalParameterBytes: group.commands.reduce(
       (total, command) => total + command.total_parameter_bytes,
       0,

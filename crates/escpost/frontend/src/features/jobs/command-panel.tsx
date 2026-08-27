@@ -2,43 +2,6 @@ import { copyText, webUrl } from "./annotation";
 import { STICKY_HEADER } from "./reveal";
 import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
 
-/** Tells whether the parameters are short and fixed enough to sit inline. */
-function inlineParameters(view: CommandGroupView): boolean {
-  return view.fixedParameters && view.parameterBytes.length > 0;
-}
-
-/** Shows each parameter byte on its own, so one byte can be pointed at.
- *
- * A byte keeps a fixed width, thus marking one of them never moves the rest. */
-function ParameterBytes({ view, active, onPreview, onPreviewEnd }: {
-  view: CommandGroupView;
-  active: number | null;
-  onPreview: (index: number) => void;
-  onPreviewEnd: () => void;
-}) {
-  const pairing = view.characterPairing;
-  return (
-    <>
-      {view.parameterBytes.map((hex, index) => (
-        <span
-          key={index}
-          data-byte={index}
-          class={`w-[2.5ch] text-center ${
-            pairing && active === index ? "rounded-sm font-bold ring-1 ring-base-content/40" : ""
-          }`}
-          onPointerEnter={pairing ? () => onPreview(index) : undefined}
-          onPointerLeave={pairing ? onPreviewEnd : undefined}
-        >
-          {hex}
-        </span>
-      ))}
-      {view.parameterBytes.length < view.totalParameterBytes && (
-        <span class="text-base-content/60">… ({view.totalParameterBytes} bytes)</span>
-      )}
-    </>
-  );
-}
-
 type Props = {
   groups: CommandGroup[];
   previewedGroupId: string | null;
@@ -52,6 +15,46 @@ type Props = {
   onPreviewEnd: (id: string) => void;
   onPin: (id: string) => void;
 };
+
+/** Tells whether the parameters are short and fixed enough to sit inline. */
+function inlineParameters(view: CommandGroupView): boolean {
+  return view.fixedParameters && view.parameterBytes.length > 0;
+}
+
+/** Shows each parameter byte on its own, over the character it printed.
+ *
+ * A byte keeps a fixed width, thus marking one of them never moves the rest. */
+function ParameterBytes({ view, active, onPreview, onPreviewEnd }: {
+  view: CommandGroupView;
+  active: number | null;
+  onPreview: (index: number) => void;
+  onPreviewEnd: () => void;
+}) {
+  const pairing = view.characterPairing;
+  return (
+    <>
+      {view.parameterBytes.map((byte, index) => (
+        <span
+          key={index}
+          data-byte={index}
+          class={`flex w-[2.5ch] flex-col items-center leading-tight ${
+            pairing && active === index ? "rounded-sm font-bold ring-1 ring-base-content/40" : ""
+          }`}
+          onPointerEnter={pairing ? () => onPreview(index) : undefined}
+          onPointerLeave={pairing ? onPreviewEnd : undefined}
+        >
+          {pairing && (
+            <span data-character={index} class="text-base-content">{byte.character}</span>
+          )}
+          <span data-hex={index}>{byte.hex}</span>
+        </span>
+      ))}
+      {view.parameterBytes.length < view.totalParameterBytes && (
+        <span class="text-base-content/60">… ({view.totalParameterBytes} bytes)</span>
+      )}
+    </>
+  );
+}
 
 export function CommandPanel(props: Props) {
   return (
@@ -131,7 +134,11 @@ export function CommandPanel(props: Props) {
                   </span>
                   <span class="font-mono text-xs text-base-content/55">{view.byteStart}..{view.byteLast}</span>
                 </span>
-                <span class="mt-1 block break-words text-sm">{view.detail}</span>
+                {/* A run of characters carries its text over its bytes, thus
+                    it needs no line of its own for the same text. */}
+                {!view.characterPairing && (
+                  <span class="mt-1 block break-words text-sm">{view.detail}</span>
+                )}
                 {!inlineParameters(view) && view.parameterBytes.length > 0 && (
                   <span class="mt-2 flex font-mono text-xs">
                     <span

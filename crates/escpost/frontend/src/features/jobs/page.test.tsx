@@ -36,7 +36,11 @@ const currentJob = {
 };
 
 function byteSpans(box: HTMLElement): string[] {
-  return [...box.querySelectorAll("[data-byte]")].map((span) => span.textContent ?? "");
+  return [...box.querySelectorAll("[data-hex]")].map((span) => span.textContent ?? "");
+}
+
+function characterSpans(box: HTMLElement): string[] {
+  return [...box.querySelectorAll("[data-character]")].map((span) => span.textContent ?? "");
 }
 
 afterEach(() => {
@@ -50,7 +54,7 @@ describe("JobsPage", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    expect(await screen.findByText("Hi")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Text 0..1: Hi" })).toBeTruthy();
     expect(screen.getByText("idle-timeout")).toBeTruthy();
     expect(screen.getByText("Unknown command was ignored.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Download raw input" }).getAttribute("href")).toBe("/api/jobs/7/input");
@@ -106,7 +110,7 @@ describe("JobsPage", () => {
   test("defaults paper margin on and persists changes", async () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
-    await screen.findByText("Hi");
+    await screen.findByRole("button", { name: "Text 0..1: Hi" });
 
     const toggle = screen.getByRole("checkbox", { name: "Paper margin" });
     const status = screen.getByRole("group", { name: "Current job status" });
@@ -289,6 +293,7 @@ describe("character highlighting", () => {
     const view = render(<JobsPage />);
     const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
     const bytes = [...within(row).getByLabelText("Parameter bytes").querySelectorAll("[data-byte]")];
+
     const regions = [...view.container.querySelectorAll(".trace-character")];
     return { row, bytes, regions, view };
   }
@@ -328,5 +333,36 @@ describe("character highlighting", () => {
 
     expect(bytes[0].className).not.toContain("font-bold");
     expect(regions[0].getAttribute("class")).not.toContain("trace-character-active");
+  });
+});
+
+describe("characters beside their bytes", () => {
+  test("shows each character over the byte that printed it", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const box = within(row).getByLabelText("Parameter bytes");
+
+    expect(characterSpans(box)).toEqual(["H", "i"]);
+    expect(byteSpans(box)).toEqual(["48", "69"]);
+  });
+
+  test("drops the separate text line, because the bytes now carry it", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const row = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+
+    expect(within(row).queryByText("Hi")).toBeNull();
+  });
+
+  test("keeps the description of a command that prints no text", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const row = await screen.findByRole("button", { name: "LF 2..2: Print and line feed" });
+
+    expect(within(row).getByText("Print and line feed")).toBeTruthy();
   });
 });

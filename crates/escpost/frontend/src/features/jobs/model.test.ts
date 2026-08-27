@@ -64,7 +64,7 @@ describe("job visualization model", () => {
     const view = commandGroupView(groups[0]);
 
     expect(view.codeBytes).toBe("");
-    expect(view.parameterBytes).toEqual(["48", "69"]);
+    expect(view.parameterBytes.map((byte) => byte.hex)).toEqual(["48", "69"]);
     expect(view.totalParameterBytes).toBe(2);
   });
 
@@ -82,7 +82,7 @@ describe("job visualization model", () => {
     const view = commandGroupView(groups[0]);
 
     expect(view.codeBytes).toBe("1B 61");
-    expect(view.parameterBytes).toEqual(["01"]);
+    expect(view.parameterBytes.map((byte) => byte.hex)).toEqual(["01"]);
     expect(view.totalParameterBytes).toBe(1);
   });
 
@@ -132,6 +132,33 @@ describe("job visualization model", () => {
     expect(commandGroupView(groups[0]).characterPairing).toBe(true);
     expect(commandGroupView(groups[1]).characterPairing).toBe(false);
     expect(commandGroupView(groups[2]).characterPairing).toBe(false);
+  });
+
+  test("pairs each byte of a run with the character it printed", () => {
+    const groups = groupAdjacentCommands([
+      command({ byte_start: 0, byte_end: 1, name: "Text", detail: "N", capped_parameter_bytes: "4E", total_parameter_bytes: 1 }),
+      command({ byte_start: 1, byte_end: 2, name: "Text", detail: "O", capped_parameter_bytes: "4F", total_parameter_bytes: 1 }),
+      // A byte outside the printable range has no character to name.
+      command({ byte_start: 2, byte_end: 3, name: "Text", detail: "0xE9", capped_parameter_bytes: "E9", total_parameter_bytes: 1 }),
+    ], 1);
+    const view = commandGroupView(groups[0]);
+
+    expect(view.parameterBytes).toEqual([
+      { hex: "4E", character: "N" },
+      { hex: "4F", character: "O" },
+      // A byte outside the printable range has no character to name.
+      { hex: "E9", character: "" },
+    ]);
+  });
+
+  test("names no character for a command that prints no text", () => {
+    const groups = groupAdjacentCommands([
+      command({ byte_start: 0, byte_end: 3, name: "ESC a", code_bytes: "1B 61", capped_parameter_bytes: "01", total_parameter_bytes: 1 }),
+    ], 1);
+
+    expect(commandGroupView(groups[0]).parameterBytes).toEqual([
+      { hex: "01", character: "" },
+    ]);
   });
 
   test("names the last byte of a command, not the byte after it", () => {
