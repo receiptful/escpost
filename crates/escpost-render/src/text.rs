@@ -58,10 +58,16 @@ impl<S: RenderSurface> PrinterState<S> {
 
     pub(crate) fn print_character(&mut self, character: char) -> Result<(), RenderError> {
         let cell_width = self.current_character_advance_width();
-        let cell_height = self
-            .active_font
-            .cell_height_dots
-            .saturating_mul(self.character_height_multiplier);
+        // The cell of the active font is read once here, because drawing the
+        // glyph needs the printer itself and cannot hold the font at the same
+        // time.
+        let font = self.font();
+        let (font_width, font_height, baseline) = (
+            font.cell_width_dots,
+            font.cell_height_dots,
+            font.baseline_dots,
+        );
+        let cell_height = font_height.saturating_mul(self.character_height_multiplier);
         if self.print_x.saturating_add(cell_width) > self.line.width() {
             self.line_feed()?;
         }
@@ -76,12 +82,7 @@ impl<S: RenderSurface> PrinterState<S> {
             }
         }
 
-        self.draw_glyph(
-            character,
-            self.active_font.cell_width_dots,
-            self.active_font.cell_height_dots,
-            self.active_font.baseline_dots,
-        );
+        self.draw_glyph(character, font_width, font_height, baseline);
 
         if !self.reversed {
             let underline_top = cell_height.saturating_sub(self.underline_thickness);
@@ -182,7 +183,7 @@ impl<S: RenderSurface> PrinterState<S> {
     }
 
     pub(crate) fn current_character_advance_width(&self) -> u32 {
-        self.active_font
+        self.font()
             .cell_width_dots
             .saturating_add(self.right_side_character_spacing)
             .saturating_mul(self.character_width_multiplier)

@@ -84,9 +84,9 @@ pub(crate) struct PrinterState<S: RenderSurface = MonoSurface> {
     pub(crate) print_head_to_cutter_dots: Option<u32>,
     pub(crate) font_a: ProfileFont,
     pub(crate) font_b: ProfileFont,
-    pub(crate) active_font: ProfileFont,
-    /// Which of the two fonts `active_font` holds, which the trace names.
-    pub(crate) active_font_id: TextFont,
+    /// Which of the two fonts the printer prints with. The profile holds the
+    /// cell of each, thus the choice is the state and the cell follows it.
+    pub(crate) active_font: TextFont,
     pub(crate) code_pages: BTreeMap<u8, String>,
     pub(crate) default_code_page: u8,
     pub(crate) active_code_page: u8,
@@ -227,8 +227,7 @@ impl<S: RenderSurface> PrinterState<S> {
                 .cutter
                 .as_ref()
                 .map(|cutter| cutter.print_head_to_cutter_dots),
-            active_font: font_a.clone(),
-            active_font_id: TextFont::A,
+            active_font: TextFont::A,
             font_a,
             font_b,
             code_pages: profile.code_pages.clone(),
@@ -290,7 +289,7 @@ impl<S: RenderSurface> PrinterState<S> {
         self.line_spacing = self.default_line_spacing;
         self.horizontal_motion_units_per_inch = self.default_horizontal_motion_units_per_inch;
         self.vertical_motion_units_per_inch = self.default_vertical_motion_units_per_inch;
-        self.active_font = self.font_a.clone();
+        self.active_font = TextFont::A;
         self.active_code_page = self.default_code_page;
         self.active_international_character_set = self.default_international_character_set;
         self.right_side_character_spacing = 0;
@@ -553,19 +552,25 @@ impl<S: RenderSurface> PrinterState<S> {
     }
 
     pub(crate) fn select_font_a(&mut self) {
-        self.active_font = self.font_a.clone();
-        self.active_font_id = TextFont::A;
+        self.active_font = TextFont::A;
     }
 
     pub(crate) fn select_font_b(&mut self) {
-        self.active_font = self.font_b.clone();
-        self.active_font_id = TextFont::B;
+        self.active_font = TextFont::B;
+    }
+
+    /// The cell of the font the printer prints with.
+    pub(crate) fn font(&self) -> &ProfileFont {
+        match self.active_font {
+            TextFont::A => &self.font_a,
+            TextFont::B => &self.font_b,
+        }
     }
 
     /// The state that decides how a text byte reaches the paper.
     pub(crate) fn trace_text_style(&self) -> TextStyle {
         TextStyle {
-            font: self.active_font_id,
+            font: self.active_font,
             emphasized: self.emphasized,
             underline_thickness: self.underline_thickness as u8,
             width_magnification: self.character_width_multiplier as u8,
