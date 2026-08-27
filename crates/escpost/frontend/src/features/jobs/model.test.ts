@@ -287,9 +287,9 @@ describe("job visualization model", () => {
       sheets: [{
         number: 1,
         commands: [
-          command({ byte_start: 0, byte_end: 2, name: "ESC @", style: style(false) }),
+          command({ byte_start: 0, byte_end: 2, name: "ESC @", text_style: style(false) }),
           command({ byte_start: 2, byte_end: 3, name: "Text", detail: "A" }),
-          command({ byte_start: 3, byte_end: 6, name: "ESC E", style: style(true) }),
+          command({ byte_start: 3, byte_end: 6, name: "ESC E", text_style: style(true) }),
           command({ byte_start: 6, byte_end: 7, name: "Text", detail: "B" }),
         ],
       }],
@@ -299,10 +299,10 @@ describe("job visualization model", () => {
 
     // A command that changes the style shows the style it produced, and every
     // later command prints with it until another command changes it.
-    expect(groups[0].style?.emphasized).toBe(false);
-    expect(groups[1].style?.emphasized).toBe(false);
-    expect(groups[2].style?.emphasized).toBe(true);
-    expect(groups[3].style?.emphasized).toBe(true);
+    expect(groups[0].textStyle?.emphasized).toBe(false);
+    expect(groups[1].textStyle?.emphasized).toBe(false);
+    expect(groups[2].textStyle?.emphasized).toBe(true);
+    expect(groups[3].textStyle?.emphasized).toBe(true);
   });
 
   test("knows which commands the style reaches", () => {

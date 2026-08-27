@@ -181,7 +181,7 @@ export type JobCommand = {
   /** True when the command itself fixes how many parameter bytes follow. */
   fixed_parameters: boolean;
   /** The style after this command, sent only where the command changed it. */
-  style?: TextStyle;
+  text_style?: TextStyle;
   paint_lifecycle?: "buffered" | "committed";
   annotation?: { label: string; content: string };
   effects: CommandEffect[];
@@ -201,7 +201,7 @@ export type CurrentJob = {
   completed_at_unix_ms?: number;
   completion?: "closed" | "timeout";
   antialias: boolean;
-  defaults: StyleDefaults;
+  style_defaults: StyleDefaults;
   warnings: string[];
   input_url?: string;
   sheets: JobSheet[];

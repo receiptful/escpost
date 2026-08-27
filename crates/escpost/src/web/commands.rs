@@ -29,7 +29,7 @@ pub(crate) struct CommandResponse {
     /// The text style after the command, where the command changed it. Every
     /// later command prints with the last style a command carried.
     #[serde(skip_serializing_if = "Option::is_none")]
-    style: Option<TextStyleResponse>,
+    text_style: Option<TextStyleResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     paint_lifecycle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,7 +67,7 @@ pub(crate) fn command_responses(commands: Vec<CommandTrace>) -> Vec<CommandRespo
                 ),
                 total_parameter_bytes: command.byte_range.len().saturating_sub(code_length),
                 fixed_parameters: fixed_parameters(&command.command),
-                style: command.style.map(text_style_response),
+                text_style: command.style.map(text_style_response),
                 paint_lifecycle: command.paint_lifecycle.map(|lifecycle| match lifecycle {
                     PaintLifecycle::Buffered => "buffered",
                     PaintLifecycle::Committed => "committed",
@@ -856,7 +856,10 @@ mod tests {
             },
         ]);
 
-        let shown = responses[0].style.as_ref().expect("the style rides along");
+        let shown = responses[0]
+            .text_style
+            .as_ref()
+            .expect("the style rides along");
         assert_eq!(shown.font, "B");
         assert!(shown.emphasized);
         assert_eq!(shown.underline_thickness, 2);
@@ -865,7 +868,7 @@ mod tests {
         assert_eq!(shown.justification, "center");
         assert_eq!(shown.encoding.as_deref(), Some("CP850"));
         assert_eq!(shown.international_character_set, "Germany");
-        assert!(responses[1].style.is_none());
+        assert!(responses[1].text_style.is_none());
     }
 
     #[test]

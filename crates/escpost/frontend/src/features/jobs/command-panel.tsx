@@ -9,7 +9,7 @@ type Props = {
   /** How many bytes the job holds, which the panel explains one by one. */
   byteCount: number;
   /** The style the printer profile starts the job with. */
-  defaults: StyleDefaults;
+  styleDefaults: StyleDefaults;
   previewedGroupId: string | null;
   pinnedGroupId: string | null;
   previewedCharacter: number | null;
@@ -56,95 +56,98 @@ function Chip({ label, active, children, joined }: {
 /** Shows the style a command printed with, the way a word processor shows the
  * styles of the text under the caret: every style listed, the ones in force
  * marked and the rest dimmed. */
-function TextStyleBar({ style, defaults }: { style: TextStyle; defaults: StyleDefaults }) {
+function TextStyleBar({ textStyle, styleDefaults }: {
+  textStyle: TextStyle;
+  styleDefaults: StyleDefaults;
+}) {
   // A style the printer profile decides counts as set only where a command
   // moved it away from what the profile starts with.
   const toggle = (on: boolean) => on ? "on" : "off";
   const chosen = (on: boolean) => on ? "selected" : "not selected";
   const orDefault = (set: boolean) => set ? "" : " (default)";
-  const underline = style.underline_thickness > 0;
-  const codePage = `${style.encoding ?? `page ${style.code_page}`}, ${style.international_character_set}`;
-  const codePageSet = style.code_page !== defaults.code_page
-    || style.international_character_set !== defaults.international_character_set;
-  const spacingSet = style.line_spacing_dots !== defaults.line_spacing_dots;
+  const underline = textStyle.underline_thickness > 0;
+  const codePage = `${textStyle.encoding ?? `page ${textStyle.code_page}`}, ${textStyle.international_character_set}`;
+  const codePageSet = textStyle.code_page !== styleDefaults.code_page
+    || textStyle.international_character_set !== styleDefaults.international_character_set;
+  const spacingSet = textStyle.line_spacing_dots !== styleDefaults.line_spacing_dots;
   return (
     <span aria-label="Text style" class="mt-2 flex flex-wrap items-center gap-1.5 font-mono">
       <span class="flex">
-        <Chip label={`Font A: ${chosen(style.font === "A")}`} active={style.font === "A"} joined>
+        <Chip label={`Font A: ${chosen(textStyle.font === "A")}`} active={textStyle.font === "A"} joined>
           A
         </Chip>
-        <Chip label={`Font B: ${chosen(style.font === "B")}`} active={style.font === "B"} joined>
+        <Chip label={`Font B: ${chosen(textStyle.font === "B")}`} active={textStyle.font === "B"} joined>
           B
         </Chip>
       </span>
-      <Chip label={`Bold (Emphasized): ${toggle(style.emphasized)}`} active={style.emphasized}>
+      <Chip label={`Bold (Emphasized): ${toggle(textStyle.emphasized)}`} active={textStyle.emphasized}>
         <span class="font-bold">B</span>
       </Chip>
       <Chip
         label={underline
-          ? `Underline: on, ${style.underline_thickness} dot`
+          ? `Underline: on, ${textStyle.underline_thickness} dot`
           : "Underline: off"}
         active={underline}
       >
         <span class="underline underline-offset-2">U</span>
       </Chip>
       <Chip
-        label={`White on black (Reverse): ${toggle(style.reversed)}`}
-        active={style.reversed}
+        label={`White on black (Reverse): ${toggle(textStyle.reversed)}`}
+        active={textStyle.reversed}
       >
         ◧
       </Chip>
       <span class="flex">
         <Chip
-          label={`Align left: ${chosen(style.justification === "left")}`}
-          active={style.justification === "left"}
+          label={`Align left: ${chosen(textStyle.justification === "left")}`}
+          active={textStyle.justification === "left"}
           joined
         >
           ⇤
         </Chip>
         <Chip
-          label={`Align centre: ${chosen(style.justification === "center")}`}
-          active={style.justification === "center"}
+          label={`Align centre: ${chosen(textStyle.justification === "center")}`}
+          active={textStyle.justification === "center"}
           joined
         >
           ≡
         </Chip>
         <Chip
-          label={`Align right: ${chosen(style.justification === "right")}`}
-          active={style.justification === "right"}
+          label={`Align right: ${chosen(textStyle.justification === "right")}`}
+          active={textStyle.justification === "right"}
           joined
         >
           ⇥
         </Chip>
       </span>
       <Chip
-        label={`Character width: x${style.width_magnification}${orDefault(style.width_magnification > 1)}`}
-        active={style.width_magnification > 1}
+        label={`Character width: x${textStyle.width_magnification}${orDefault(textStyle.width_magnification > 1)}`}
+        active={textStyle.width_magnification > 1}
       >
-        {`${style.width_magnification}xW`}
+        {`${textStyle.width_magnification}xW`}
       </Chip>
       <Chip
-        label={`Character height: x${style.height_magnification}${orDefault(style.height_magnification > 1)}`}
-        active={style.height_magnification > 1}
+        label={`Character height: x${textStyle.height_magnification}${orDefault(textStyle.height_magnification > 1)}`}
+        active={textStyle.height_magnification > 1}
       >
-        {`${style.height_magnification}xH`}
+        {`${textStyle.height_magnification}xH`}
       </Chip>
       <Chip label={`Code page: ${codePage}${orDefault(codePageSet)}`} active={codePageSet}>
-        {style.encoding ?? `page ${style.code_page}`}
+        {textStyle.encoding ?? `page ${textStyle.code_page}`}
       </Chip>
       <Chip
-        label={`Line spacing: ${style.line_spacing_dots} dots${orDefault(spacingSet)}`}
+        label={`Line spacing: ${textStyle.line_spacing_dots} dots${orDefault(spacingSet)}`}
         active={spacingSet}
       >
-        {`↕${style.line_spacing_dots}`}
+        {`↕${textStyle.line_spacing_dots}`}
       </Chip>
       <Chip
-        label={`Character spacing: ${style.right_side_character_spacing_dots} dots${
-          orDefault(style.right_side_character_spacing_dots > 0)
+        label={`Character spacing: ${textStyle.right_side_character_spacing_dots} dots${
+          orDefault(textStyle.right_side_character_spacing_dots > 0)
         }`}
-        active={style.right_side_character_spacing_dots > 0}
+        active={textStyle.right_side_character_spacing_dots > 0}
       >
-        {`↔${style.right_side_character_spacing_dots}`}
+        {`↔${textStyle.right_side_character_spacing_dots}`}
       </Chip>
     </span>
   );
@@ -311,8 +314,8 @@ export function CommandPanel(props: Props) {
                     </span>
                   </span>
                 )}
-                {view.style && view.showsStyle && (
-                  <TextStyleBar style={view.style} defaults={props.defaults} />
+                {view.textStyle && view.showsStyle && (
+                  <TextStyleBar textStyle={view.textStyle} styleDefaults={props.styleDefaults} />
                 )}
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>

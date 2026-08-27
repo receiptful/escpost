@@ -13,7 +13,7 @@ export type CommandGroup = {
   commands: JobCommand[];
   /** The style in force while the group printed. A command that changes the
    * style carries the style it produced, thus its own group shows that one. */
-  style?: TextStyle;
+  textStyle?: TextStyle;
 };
 
 export type GroupedSheet = JobSheet & { groups: CommandGroup[] };
@@ -80,7 +80,7 @@ export type CommandGroupView = {
   paintLifecycle?: "buffered" | "committed";
   effects: CommandEffect[];
   /** The style in force while the group printed. */
-  style?: TextStyle;
+  textStyle?: TextStyle;
 };
 
 export function groupAdjacentCommands(commands: JobCommand[], sheetNumber: number): CommandGroup[] {
@@ -115,12 +115,12 @@ export function groupJobCommands(job: CurrentJob): GroupedJob {
   const groups = sheets.flatMap((sheet) => sheet.groups);
   // A command carries a style only where it changed one, thus every later
   // command prints with the last style a command carried.
-  let style: TextStyle | undefined;
+  let textStyle: TextStyle | undefined;
   for (const group of groups) {
     for (const command of group.commands) {
-      if (command.style) style = command.style;
+      if (command.text_style) textStyle = command.text_style;
     }
-    group.style = style;
+    group.textStyle = textStyle;
   }
   const byteCount = Math.max(
     0,
@@ -180,7 +180,7 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
         ? "committed"
         : undefined,
     effects: group.commands.flatMap((command) => command.effects),
-    style: group.style,
+    textStyle: group.textStyle,
   };
 }
 

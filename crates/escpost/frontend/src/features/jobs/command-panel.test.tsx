@@ -23,7 +23,7 @@ function show(commands: JobCommand[]) {
     <CommandPanel
       groups={groupAdjacentCommands(commands, 1)}
       byteCount={commands.length}
-      defaults={DEFAULTS}
+      styleDefaults={DEFAULTS}
       previewedGroupId={null}
       pinnedGroupId={null}
       previewedCharacter={null}
@@ -104,7 +104,7 @@ function showStyled(overrides: Parameters<typeof style>[0], extra: JobCommand[] 
     sheets: [{
       number: 1,
       commands: [
-        { ...character(0, "N", "4E"), style: style(overrides) },
+        { ...character(0, "N", "4E"), text_style: style(overrides) },
         character(1, "O", "4F"),
         ...extra,
       ],
@@ -115,7 +115,7 @@ function showStyled(overrides: Parameters<typeof style>[0], extra: JobCommand[] 
     <CommandPanel
       groups={grouped.groups}
       byteCount={grouped.byteCount}
-      defaults={DEFAULTS}
+      styleDefaults={DEFAULTS}
       previewedGroupId={null}
       pinnedGroupId={null}
       previewedCharacter={null}
