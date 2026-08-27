@@ -312,10 +312,11 @@ Calibration. Its responsive shell uses semantic tables on wide screens and
 labeled cards on narrow screens. Print jobs renders the current job directly;
 job history is a later capability. Printers discovers and registers printers as
 well as listing them, which makes it the first page that writes. Its inventory
-polls only while the document is visible, and its scan state lives in the
-application data provider rather than the page component, so in-app navigation
-neither ends a running scan nor restarts it; the shell's global status block
-shows the scan's progress from any page.
+stream is owned by the app-scoped `PrinterInventoryProvider`, while discovery
+scan state lives in the application data provider rather than the page
+component. In-app navigation therefore neither opens another inventory stream
+nor drops the retained inventory rows; the shell's global status block shows a
+scan's progress from any page.
 
 Feature-local HTTP adapters call the same application operations as the CLI.
 Read-only routes mirror CLI paths: `GET /api/printers/list` and
@@ -330,13 +331,15 @@ its runtime values change. Persistent streams that mirror one snapshot
 resource use the default event type; named events are reserved for streams
 that carry several payload shapes.
 `JobStore` exposes the watch-backed runtime projection that drives both status
-routes. `GET /api/printers/list` remains the one-shot complete inventory
-snapshot, including its timestamp, optional warning, every configured printer,
-and each printer's complete connection facts. `GET
-/api/printers/list/events` is its persistent counterpart: every event omits
-the SSE `event` field and carries that same complete JSON shape at the payload
-root. This follows DD-036: a stream for one snapshot resource uses the default
-`message` event rather than an SSE-only name or envelope.
+routes. An unfiltered `GET /api/printers/list` is the one-shot complete
+inventory snapshot, including its timestamp, optional warning, every
+configured printer, and each printer's complete connection facts. Its optional
+`?transport=usb|network` query presents the same response shape filtered to
+one transport. `GET /api/printers/list/events` is the persistent counterpart:
+it is always unfiltered, and every event omits the SSE `event` field and carries
+the complete JSON shape at the payload root. This follows DD-036: a stream for
+one snapshot resource uses the default `message` event rather than an SSE-only
+name or envelope.
 
 The application owns one subscriber-driven `PrinterMonitor`, not one polling
 loop per browser. Its first subscriber starts an immediate collection and an

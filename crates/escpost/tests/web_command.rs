@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1263,16 +1263,16 @@ fn non_loopback_listener_prints_a_receipt_exposure_warning() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("the escpost command should start");
+    let stderr_reader = capture_stderr(&mut child);
 
     wait_until_listening(&mut child, port);
+    wait_until_stderr_contains(
+        &mut child,
+        &stderr_reader,
+        "warning: receipt data is exposed beyond loopback",
+    );
     stop(&mut child);
-    let mut stderr = String::new();
-    child
-        .stderr
-        .take()
-        .expect("stderr should be piped")
-        .read_to_string(&mut stderr)
-        .expect("stderr should be readable");
+    let stderr = finish_stderr(stderr_reader);
 
     assert!(stderr.contains("warning: receipt data is exposed beyond loopback"));
 }
@@ -1401,6 +1401,79 @@ fn wait_until_listening(child: &mut Child, port: u16) {
         );
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+struct StderrReader {
+    lines: mpsc::Receiver<String>,
+    complete: thread::JoinHandle<String>,
+}
+
+/// Start consuming a child's stderr before waiting for a particular startup
+/// line. Keeping the reader on a separate thread lets the test wait for the
+/// line while the long-running child remains alive, instead of making EOF
+/// (which arrives only after `stop`) the first observation point.
+fn capture_stderr(child: &mut Child) -> StderrReader {
+    let stderr = child.stderr.take().expect("stderr should be piped");
+    let (sender, lines) = mpsc::channel();
+    let complete = thread::spawn(move || {
+        let mut output = String::new();
+        for line in BufReader::new(stderr).lines() {
+            let line = line.expect("stderr should be readable");
+            output.push_str(&line);
+            output.push('\n');
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+        output
+    });
+    StderrReader { lines, complete }
+}
+
+/// The socket can accept connections as soon as Axum binds it, while the CLI
+/// writes its status and exposure warning immediately afterward. Wait for the
+/// asserted line before killing the process so test cleanup cannot race that
+/// stdout/stderr observation. The timeout is a startup bound, not a sleep.
+fn wait_until_stderr_contains(child: &mut Child, stderr: &StderrReader, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .unwrap_or_else(|| {
+                let status = child
+                    .try_wait()
+                    .expect("the child status should be readable");
+                panic!(
+                    "web command did not write {expected:?} before the startup deadline; status: {status:?}"
+                );
+            });
+        match stderr.lines.recv_timeout(remaining) {
+            Ok(line) if line.contains(expected) => return,
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let status = child
+                    .try_wait()
+                    .expect("the child status should be readable");
+                panic!(
+                    "web command did not write {expected:?} before the startup deadline; status: {status:?}"
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let status = child
+                    .try_wait()
+                    .expect("the child status should be readable");
+                panic!("web command closed stderr before writing {expected:?}; status: {status:?}");
+            }
+        }
+    }
+}
+
+fn finish_stderr(stderr: StderrReader) -> String {
+    stderr
+        .complete
+        .join()
+        .expect("the stderr reader should not panic")
 }
 
 fn http_get(port: u16, path: &str) -> String {
