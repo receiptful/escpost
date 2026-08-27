@@ -31,7 +31,6 @@ export type CommandGroupView = {
   annotation?: JobCommand["annotation"];
   paintLifecycle?: "buffered" | "committed";
   effects: CommandEffect[];
-  commandCount: number;
 };
 
 export function groupAdjacentCommands(commands: JobCommand[], sheetNumber: number): CommandGroup[] {
@@ -99,27 +98,7 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
         ? "committed"
         : undefined,
     effects: group.commands.flatMap((command) => command.effects),
-    commandCount: group.commands.length,
   };
-}
-
-export function effectSummary(effect: CommandEffect): string {
-  if (effect.type === "state_change") {
-    return `${effect.state}: ${effect.before} → ${effect.after}`;
-  }
-  if (effect.type === "motion") {
-    return `position: (${effect.before.x}, ${effect.before.y}) → (${effect.after.x}, ${effect.after.y})`;
-  }
-  return `paint bounds: ${effect.bounds.width} × ${effect.bounds.height}`;
-}
-
-export function groupEffectSummary(group: CommandGroup): string {
-  const view = commandGroupView(group);
-  if (view.name === "Text" && view.commandCount > 1) {
-    const paints = view.effects.filter((effect) => effect.type === "paint").length;
-    return `${view.commandCount} text commands · ${paints} paint bounds`;
-  }
-  return view.effects.map(effectSummary).join(" · ") || "no visible effect";
 }
 
 export type MotionTerminals = {

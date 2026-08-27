@@ -1,10 +1,5 @@
 import { copyText, webUrl } from "./annotation";
-import {
-  commandGroupView,
-  groupEffectSummary,
-  type CommandGroup,
-  type CommandGroupView,
-} from "./model";
+import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
 
 /** Tells whether the parameters are short and fixed enough to sit inline. */
 function inlineParameters(view: CommandGroupView): boolean {
@@ -102,7 +97,6 @@ export function CommandPanel(props: Props) {
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>
                 )}
-                <span class="mt-2 block text-xs text-base-content/60">{groupEffectSummary(group)}</span>
               </button>
               {view.annotation && (previewed || pinned) && (
                 <div class="mt-2 flex items-center gap-2 px-2 text-sm">
