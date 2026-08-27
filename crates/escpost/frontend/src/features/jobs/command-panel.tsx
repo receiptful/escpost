@@ -1,4 +1,5 @@
 import { copyText, webUrl } from "./annotation";
+import { STICKY_HEADER } from "./reveal";
 import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
 
 /** Tells whether the parameters are short and fixed enough to sit inline. */
@@ -33,7 +34,10 @@ export function CommandPanel(props: Props) {
     >
       {/* The rows pass under the header, thus it needs a surface and a shadow
           of its own to stay apart from the row that scrolls behind it. */}
-      <div class="sticky top-0 z-10 border-b border-base-content/10 bg-base-300 p-4 shadow-sm">
+      <div
+        {...{ [STICKY_HEADER]: "" }}
+        class="sticky top-0 z-10 border-b border-base-content/10 bg-base-300 p-4 shadow-sm"
+      >
         <h2 class="text-lg font-bold">Commands</h2>
         <p class="text-sm text-base-content/65">Hover or focus to preview. Click to pin.</p>
       </div>

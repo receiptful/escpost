@@ -273,5 +273,8 @@ describe("command panel header", () => {
     expect(header.className).toContain("bg-base-300");
     expect(header.className).toContain("shadow");
     expect(rows[0].className).not.toContain("bg-base-300");
+    // Scrolling a row into view measures this header, thus the panel has to
+    // find it by the marker the reveal helper looks for.
+    expect(panel.querySelector("[data-sticky-header]")).toBe(header);
   });
 });

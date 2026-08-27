@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CommandPanel } from "./command-panel";
 import { groupJobCommands } from "./model";
+import { revealWithin } from "./reveal";
 import { SheetPreview } from "./sheet-preview";
 import { useCurrentJob } from "./use-current-job";
 
@@ -13,21 +14,6 @@ function readPaperMargin() {
   } catch {
     return true;
   }
-}
-
-function revealWithin(element: Element | undefined, container: HTMLElement | null, horizontal: boolean) {
-  if (!element || !container) return;
-  const item = element.getBoundingClientRect();
-  const bounds = container.getBoundingClientRect();
-  const bottom = bounds.top + container.clientHeight;
-  const right = bounds.left + container.clientWidth;
-  let top = 0;
-  let left = 0;
-  if (item.top < bounds.top) top = item.top - bounds.top;
-  else if (item.bottom > bottom) top = item.bottom - bottom;
-  if (horizontal && item.left < bounds.left) left = item.left - bounds.left;
-  else if (horizontal && item.right > right) left = item.right - right;
-  if (top !== 0 || left !== 0) container.scrollBy?.({ top, left });
 }
 
 export function JobsPage() {
