@@ -6,6 +6,11 @@ import {
   type CommandGroupView,
 } from "./model";
 
+/** Tells whether the parameters are short and fixed enough to sit inline. */
+function inlineParameters(view: CommandGroupView): boolean {
+  return view.fixedParameters && view.cappedParameterBytes !== "";
+}
+
 /** Shows the parameter bytes, and counts them when they do not all fit. */
 function parameterBytes(view: CommandGroupView): string {
   const shown = view.cappedParameterBytes.split(" ").length;
@@ -46,7 +51,7 @@ export function CommandPanel(props: Props) {
               <button
                 ref={(element) => props.register(group.id, element)}
                 type="button"
-                aria-label={`${view.name} ${view.byteStart}..${view.byteEnd}: ${view.detail}`}
+                aria-label={`${view.name} ${view.byteStart}..${view.byteLast}: ${view.detail}`}
                 aria-pressed={pinned}
                 class={`w-full rounded-lg border p-3 text-left transition-colors ${
                   pinned
@@ -62,28 +67,38 @@ export function CommandPanel(props: Props) {
                 onClick={() => props.onPin(group.id)}
               >
                 <span class="flex items-baseline justify-between gap-3">
-                  <span class="font-mono font-bold">{view.name}</span>
-                  <span class="font-mono text-xs text-base-content/55">{view.byteStart}..{view.byteEnd}</span>
+                  <span class="flex min-w-0 flex-wrap items-baseline gap-1.5 font-mono text-xs">
+                    <span class="text-sm font-bold">{view.name}</span>
+                    {view.codeBytes && (
+                      <span
+                        aria-label="Command bytes"
+                        class="rounded border border-base-content/30 px-1.5 py-0.5 font-bold"
+                      >
+                        {view.codeBytes}
+                      </span>
+                    )}
+                    {inlineParameters(view) && (
+                      <span
+                        aria-label="Parameter bytes"
+                        class="rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
+                      >
+                        {view.cappedParameterBytes}
+                      </span>
+                    )}
+                  </span>
+                  <span class="font-mono text-xs text-base-content/55">{view.byteStart}..{view.byteLast}</span>
                 </span>
                 <span class="mt-1 block break-words text-sm">{view.detail}</span>
-                <span class="mt-2 flex flex-wrap items-start gap-1 font-mono text-xs">
-                  {view.codeBytes && (
-                    <span
-                      aria-label="Command bytes"
-                      class="rounded border border-base-content/30 px-1.5 py-0.5 font-bold"
-                    >
-                      {view.codeBytes}
-                    </span>
-                  )}
-                  {view.cappedParameterBytes && (
+                {!inlineParameters(view) && view.cappedParameterBytes && (
+                  <span class="mt-2 flex font-mono text-xs">
                     <span
                       aria-label="Parameter bytes"
                       class="min-w-0 break-all rounded border border-base-content/20 px-1.5 py-0.5 text-base-content/70"
                     >
                       {parameterBytes(view)}
                     </span>
-                  )}
-                </span>
+                  </span>
+                )}
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>
                 )}

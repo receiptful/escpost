@@ -153,6 +153,8 @@ export type JobCommand = {
   capped_parameter_bytes: string;
   /** How many parameter bytes the command has in total. */
   total_parameter_bytes: number;
+  /** True when the command itself fixes how many parameter bytes follow. */
+  fixed_parameters: boolean;
   paint_lifecycle?: "buffered" | "committed";
   annotation?: { label: string; content: string };
   effects: CommandEffect[];

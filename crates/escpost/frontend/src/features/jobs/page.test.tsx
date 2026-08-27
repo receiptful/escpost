@@ -26,10 +26,10 @@ const currentJob = {
       height_dots: 80,
       image_url: "/api/jobs/7/sheets/1",
       commands: [
-        { byte_start: 0, byte_end: 1, name: "Text", detail: "H", code_bytes: "", capped_parameter_bytes: "48", total_parameter_bytes: 1, paint_lifecycle: "committed", effects: [{ type: "paint", bounds: { x: 0, y: 0, width: 12, height: 24 } }] },
-        { byte_start: 1, byte_end: 2, name: "Text", detail: "i", code_bytes: "", capped_parameter_bytes: "69", total_parameter_bytes: 1, paint_lifecycle: "committed", effects: [{ type: "paint", bounds: { x: 12, y: 0, width: 12, height: 24 } }] },
-        { byte_start: 2, byte_end: 3, name: "LF", detail: "Print and line feed", code_bytes: "0A", capped_parameter_bytes: "", total_parameter_bytes: 0, effects: [{ type: "motion", before: { x: 24, y: 12 }, after: { x: 0, y: 30 } }] },
-        { byte_start: 3, byte_end: 3011, name: "GS ( k", detail: "QR Code: Print the symbol data in the symbol storage area · Function 181", code_bytes: "1D 28 6B", capped_parameter_bytes: "03 00 31 51 30", total_parameter_bytes: 3005, paint_lifecycle: "committed", annotation: { label: "example.test", content: "https://example.test" }, effects: [{ type: "paint", bounds: { x: 0, y: 32, width: 42, height: 42 } }] },
+        { byte_start: 0, byte_end: 1, name: "Text", detail: "H", code_bytes: "", capped_parameter_bytes: "48", total_parameter_bytes: 1, fixed_parameters: false, paint_lifecycle: "committed", effects: [{ type: "paint", bounds: { x: 0, y: 0, width: 12, height: 24 } }] },
+        { byte_start: 1, byte_end: 2, name: "Text", detail: "i", code_bytes: "", capped_parameter_bytes: "69", total_parameter_bytes: 1, fixed_parameters: false, paint_lifecycle: "committed", effects: [{ type: "paint", bounds: { x: 12, y: 0, width: 12, height: 24 } }] },
+        { byte_start: 2, byte_end: 3, name: "LF", detail: "Print and line feed", code_bytes: "0A", capped_parameter_bytes: "", total_parameter_bytes: 0, fixed_parameters: true, effects: [{ type: "motion", before: { x: 24, y: 12 }, after: { x: 0, y: 30 } }] },
+        { byte_start: 3, byte_end: 3011, name: "GS ( k", detail: "QR Code: Print the symbol data in the symbol storage area · Function 181", code_bytes: "1D 28 6B", capped_parameter_bytes: "03 00 31 51 30", total_parameter_bytes: 3005, fixed_parameters: false, paint_lifecycle: "committed", annotation: { label: "example.test", content: "https://example.test" }, effects: [{ type: "paint", bounds: { x: 0, y: 32, width: 42, height: 42 } }] },
       ],
     }],
   },
@@ -52,10 +52,10 @@ describe("JobsPage", () => {
     expect(screen.getByRole("link", { name: "Download raw input" }).getAttribute("href")).toBe("/api/jobs/7/input");
     expect(screen.getByAltText("Rendered receipt sheet 1 of 1").getAttribute("src")).toBe("/api/jobs/7/sheets/1");
 
-    const textButton = screen.getByRole("button", { name: "Text 0..2: Hi" });
-    const lineFeedButton = screen.getByRole("button", { name: "LF 2..3: Print and line feed" });
-    const textOverlay = screen.getByRole("button", { name: "Highlight Text group at bytes 0 to 2" });
-    const lineFeedOverlay = screen.getByRole("button", { name: "Highlight LF group at bytes 2 to 3" });
+    const textButton = screen.getByRole("button", { name: "Text 0..1: Hi" });
+    const lineFeedButton = screen.getByRole("button", { name: "LF 2..2: Print and line feed" });
+    const textOverlay = screen.getByRole("button", { name: "Highlight Text group at bytes 0 to 1" });
+    const lineFeedOverlay = screen.getByRole("button", { name: "Highlight LF group at bytes 2 to 2" });
     expect(lineFeedOverlay.querySelector("text")?.getAttribute("text-anchor")).toBe("middle");
 
     await act(async () => { await Promise.resolve(); });
@@ -90,7 +90,7 @@ describe("JobsPage", () => {
     const open = jest.spyOn(window, "open").mockImplementation(() => null);
     render(<JobsPage />);
 
-    const command = await screen.findByRole("button", { name: "GS ( k 3..3011: QR Code: Print the symbol data in the symbol storage area · Function 181" });
+    const command = await screen.findByRole("button", { name: "GS ( k 3..3010: QR Code: Print the symbol data in the symbol storage area · Function 181" });
     fireEvent.pointerEnter(command);
     const annotation = screen.getByRole("link", { name: "Copy and open QR content: example.test" });
     fireEvent.keyDown(annotation, { key: "Enter" });
@@ -140,8 +140,8 @@ describe("JobsPage", () => {
   test("reveals annotations from commands and commands from annotations", async () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
-    const command = await screen.findByRole("button", { name: "Text 0..2: Hi" });
-    const annotation = screen.getByRole("button", { name: "Highlight Text group at bytes 0 to 2" });
+    const command = await screen.findByRole("button", { name: "Text 0..1: Hi" });
+    const annotation = screen.getByRole("button", { name: "Highlight Text group at bytes 0 to 1" });
     const workspace = screen.getByRole("region", { name: "Rendered receipt sheets" });
     const panel = screen.getByRole("complementary", { name: "Commands in the current print job" });
     const sheetScroll = jest.fn();
@@ -181,7 +181,7 @@ describe("command bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const lineFeed = await screen.findByRole("button", { name: "LF 2..3: Print and line feed" });
+    const lineFeed = await screen.findByRole("button", { name: "LF 2..2: Print and line feed" });
 
     expect(within(lineFeed).getByLabelText("Command bytes").textContent).toBe("0A");
     expect(within(lineFeed).queryByLabelText("Parameter bytes")).toBeNull();
@@ -191,7 +191,7 @@ describe("command bytes", () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    const text = await screen.findByRole("button", { name: "Text 0..2: Hi" });
+    const text = await screen.findByRole("button", { name: "Text 0..1: Hi" });
 
     expect(within(text).queryByLabelText("Command bytes")).toBeNull();
     expect(within(text).getByLabelText("Parameter bytes").textContent).toBe("48 69");
@@ -202,10 +202,38 @@ describe("command bytes", () => {
     render(<JobsPage />);
 
     const qr = await screen.findByRole("button", {
-      name: /^GS \( k 3\.\.3011:/,
+      name: /^GS \( k 3\.\.3010:/,
     });
 
     expect(within(qr).getByLabelText("Command bytes").textContent).toBe("1D 28 6B");
+    expect(within(qr).getByLabelText("Parameter bytes").textContent).toBe(
+      "03 00 31 51 30 … (3005 bytes)",
+    );
+  });
+});
+
+describe("command byte layout", () => {
+  test("keeps fixed-size parameters beside the command name", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const lineFeed = await screen.findByRole("button", { name: "LF 2..2: Print and line feed" });
+    const header = within(lineFeed).getByText("LF").parentElement;
+    if (!header) throw new Error("expected a header row");
+
+    expect(within(header).getByLabelText("Command bytes").textContent).toBe("0A");
+  });
+
+  test("keeps parameters of unknown size on a line of their own", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json(currentJob))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    const qr = await screen.findByRole("button", { name: /^GS \( k 3\.\.3010:/ });
+    const header = within(qr).getByText("GS ( k").parentElement;
+    if (!header) throw new Error("expected a header row");
+
+    expect(within(header).getByLabelText("Command bytes").textContent).toBe("1D 28 6B");
+    expect(within(header).queryByLabelText("Parameter bytes")).toBeNull();
     expect(within(qr).getByLabelText("Parameter bytes").textContent).toBe(
       "03 00 31 51 30 … (3005 bytes)",
     );

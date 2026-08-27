@@ -20,6 +20,9 @@ pub(crate) struct CommandResponse {
     capped_parameter_bytes: String,
     /// How many parameter bytes the command has in total.
     total_parameter_bytes: usize,
+    /// True when the command itself fixes how many parameter bytes follow,
+    /// thus the command list can show them beside the command name.
+    fixed_parameters: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     paint_lifecycle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,6 +59,7 @@ pub(crate) fn command_responses(commands: Vec<CommandTrace>) -> Vec<CommandRespo
                     &parameters[..parameters.len().min(PARAMETER_BYTES_SHOWN)],
                 ),
                 total_parameter_bytes: command.byte_range.len().saturating_sub(code_length),
+                fixed_parameters: fixed_parameters(&command.command),
                 paint_lifecycle: command.paint_lifecycle.map(|lifecycle| match lifecycle {
                     PaintLifecycle::Buffered => "buffered",
                     PaintLifecycle::Committed => "committed",
@@ -65,6 +69,21 @@ pub(crate) fn command_responses(commands: Vec<CommandTrace>) -> Vec<CommandRespo
             }
         })
         .collect()
+}
+
+/// Tells whether the command, and not its data, fixes its parameter count.
+fn fixed_parameters(command: &DecodedCommand) -> bool {
+    !matches!(
+        command,
+        DecodedCommand::SelectBitImageMode { .. }
+            | DecodedCommand::SetHorizontalTabPositions(_)
+            | DecodedCommand::PrintBarcode { .. }
+            | DecodedCommand::StoreRasterGraphics { .. }
+            | DecodedCommand::StoreQrData(_)
+            | DecodedCommand::RasterImage { .. }
+            | DecodedCommand::TextByte(_)
+            | DecodedCommand::Unknown(_)
+    )
 }
 
 fn hexadecimal(bytes: &[u8]) -> String {
@@ -730,6 +749,32 @@ mod tests {
             described(DecodedCommand::SetHorizontalTabPositions(vec![])).1,
             "Set horizontal tab positions · cleared"
         );
+    }
+
+    #[test]
+    fn a_command_says_whether_its_parameters_have_a_fixed_size() {
+        let responses = command_responses(vec![
+            CommandTrace {
+                byte_range: 0..2,
+                bytes: vec![0x1b, b'@'],
+                command: DecodedCommand::Initialize,
+                paint_lifecycle: None,
+                effects: vec![],
+            },
+            CommandTrace {
+                byte_range: 2..10,
+                bytes: vec![0x1d, b'k', 73, 4, b'1', b'2', b'3', b'4'],
+                command: DecodedCommand::PrintBarcode {
+                    system: 73,
+                    data: b"1234".to_vec(),
+                },
+                paint_lifecycle: None,
+                effects: vec![],
+            },
+        ]);
+
+        assert!(responses[0].fixed_parameters);
+        assert!(!responses[1].fixed_parameters);
     }
 
     #[test]

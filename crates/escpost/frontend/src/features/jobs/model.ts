@@ -19,11 +19,15 @@ export const PARAMETER_BYTES_SHOWN = 12;
 export type CommandGroupView = {
   name: string;
   byteStart: number;
+  /** The byte after the command, for grouping and for element identity. */
   byteEnd: number;
+  /** The last byte of the command, which is what a reader wants to see. */
+  byteLast: number;
   detail: string;
   codeBytes: string;
   cappedParameterBytes: string;
   totalParameterBytes: number;
+  fixedParameters: boolean;
   annotation?: JobCommand["annotation"];
   paintLifecycle?: "buffered" | "committed";
   effects: CommandEffect[];
@@ -75,7 +79,9 @@ export function commandGroupView(group: CommandGroup): CommandGroupView {
     name: first.name,
     byteStart: first.byte_start,
     byteEnd: last.byte_end,
+    byteLast: last.byte_end - 1,
     codeBytes: first.code_bytes,
+    fixedParameters: group.commands.length === 1 && first.fixed_parameters,
     cappedParameterBytes: shown.join(" "),
     totalParameterBytes: group.commands.reduce(
       (total, command) => total + command.total_parameter_bytes,

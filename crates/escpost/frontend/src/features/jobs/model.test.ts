@@ -13,6 +13,7 @@ function command(overrides: Partial<JobCommand> & Pick<JobCommand, "byte_start" 
     code_bytes: "",
     capped_parameter_bytes: "",
     total_parameter_bytes: 0,
+    fixed_parameters: true,
     effects: [],
     ...overrides,
   };
@@ -99,6 +100,27 @@ describe("job visualization model", () => {
 
     expect(view.cappedParameterBytes.split(" ")).toHaveLength(PARAMETER_BYTES_SHOWN);
     expect(view.totalParameterBytes).toBe(15);
+  });
+
+  test("names the last byte of a command, not the byte after it", () => {
+    const groups = groupAdjacentCommands([
+      command({ byte_start: 0, byte_end: 3, name: "ESC a" }),
+      command({ byte_start: 3, byte_end: 4, name: "LF" }),
+    ], 1);
+
+    expect(commandGroupView(groups[0]).byteLast).toBe(2);
+    expect(commandGroupView(groups[1]).byteLast).toBe(3);
+  });
+
+  test("treats a grouped run as having no fixed parameter size", () => {
+    const groups = groupAdjacentCommands([
+      command({ byte_start: 0, byte_end: 1, name: "Text", detail: "H", fixed_parameters: false }),
+      command({ byte_start: 1, byte_end: 2, name: "Text", detail: "i", fixed_parameters: false }),
+      command({ byte_start: 2, byte_end: 4, name: "ESC E", fixed_parameters: true }),
+    ], 1);
+
+    expect(commandGroupView(groups[0]).fixedParameters).toBe(false);
+    expect(commandGroupView(groups[1]).fixedParameters).toBe(true);
   });
 
   test("derives line-feed terminals from preceding paint facts", () => {
