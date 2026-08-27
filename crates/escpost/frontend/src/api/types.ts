@@ -142,6 +142,21 @@ export type CommandEffect =
   | { type: "motion"; before: Position; after: Position }
   | { type: "paint"; bounds: Region };
 
+/** The printer state that decides how a text byte reaches the paper. */
+export type TextStyle = {
+  font: "A" | "B";
+  emphasized: boolean;
+  underline_thickness: number;
+  width_magnification: number;
+  height_magnification: number;
+  reversed: boolean;
+  justification: "left" | "center" | "right";
+  code_page: number;
+  encoding?: string;
+  international_character_set: string;
+  right_side_character_spacing_dots: number;
+};
+
 export type JobCommand = {
   byte_start: number;
   byte_end: number;
@@ -155,6 +170,8 @@ export type JobCommand = {
   total_parameter_bytes: number;
   /** True when the command itself fixes how many parameter bytes follow. */
   fixed_parameters: boolean;
+  /** The style after this command, sent only where the command changed it. */
+  style?: TextStyle;
   paint_lifecycle?: "buffered" | "committed";
   annotation?: { label: string; content: string };
   effects: CommandEffect[];

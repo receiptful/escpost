@@ -1,5 +1,6 @@
 import { copyText, webUrl } from "./annotation";
 import { STICKY_HEADER } from "./reveal";
+import type { TextStyle } from "../../api/types";
 import { commandGroupView, type CommandGroup, type CommandGroupView } from "./model";
 
 type Props = {
@@ -17,6 +18,78 @@ type Props = {
   onPreviewEnd: (id: string) => void;
   onPin: (id: string) => void;
 };
+
+/** One style of the toolbar, marked while the printer holds it. */
+function Chip({ label, active, children, joined }: {
+  label: string;
+  active: boolean;
+  children: string;
+  joined?: boolean;
+}) {
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      data-active={String(active)}
+      class={`px-1.5 py-0.5 text-[0.65rem] leading-none ${
+        joined ? "border-y border-r first:rounded-l-sm first:border-l last:rounded-r-sm" : "rounded-sm border"
+      } ${
+        active
+          ? "border-base-content/40 bg-base-content/15 font-bold text-base-content"
+          : "border-base-content/15 text-base-content/35"
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Shows the style a run printed with, the way a word processor shows the
+ * styles of the text under the caret: every style listed, and the ones in
+ * force marked. */
+function TextStyleBar({ style }: { style: TextStyle }) {
+  return (
+    <span aria-label="Text style" class="mt-2 flex flex-wrap items-center gap-1.5 font-mono">
+      <span class="flex">
+        <Chip label="Font A" active={style.font === "A"} joined>A</Chip>
+        <Chip label="Font B" active={style.font === "B"} joined>B</Chip>
+      </span>
+      <Chip label={`Bold ${style.emphasized ? "on" : "off"}`} active={style.emphasized}>B</Chip>
+      <Chip
+        label={style.underline_thickness > 0
+          ? `Underline ${style.underline_thickness} dot`
+          : "Underline off"}
+        active={style.underline_thickness > 0}
+      >
+        U
+      </Chip>
+      <Chip label={`Reverse ${style.reversed ? "on" : "off"}`} active={style.reversed}>R</Chip>
+      <span class="flex">
+        <Chip label="Align left" active={style.justification === "left"} joined>⇤</Chip>
+        <Chip label="Align center" active={style.justification === "center"} joined>≡</Chip>
+        <Chip label="Align right" active={style.justification === "right"} joined>⇥</Chip>
+      </span>
+      <Chip
+        label={`Width ${style.width_magnification}x`}
+        active={style.width_magnification > 1}
+      >
+        {`${style.width_magnification}xw`}
+      </Chip>
+      <Chip
+        label={`Height ${style.height_magnification}x`}
+        active={style.height_magnification > 1}
+      >
+        {`${style.height_magnification}xh`}
+      </Chip>
+      <Chip
+        label={`Code page ${style.encoding ?? style.code_page}, ${style.international_character_set}`}
+        active={style.code_page !== 0}
+      >
+        {style.encoding ?? `page ${style.code_page}`}
+      </Chip>
+    </span>
+  );
+}
 
 /** Tells whether the parameters are short and fixed enough to sit inline. */
 function inlineParameters(view: CommandGroupView): boolean {
@@ -176,6 +249,7 @@ export function CommandPanel(props: Props) {
                     </span>
                   </span>
                 )}
+                {view.style && <TextStyleBar style={view.style} />}
                 {view.paintLifecycle === "buffered" && (
                   <span class="badge badge-warning badge-sm mt-2">Not printed</span>
                 )}

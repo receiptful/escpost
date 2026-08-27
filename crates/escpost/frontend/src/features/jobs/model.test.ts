@@ -268,4 +268,39 @@ describe("job visualization model", () => {
 
     expect(groupJobCommands(job as never).byteCount).toBe(840);
   });
+
+  test("carries the style in force into every group", () => {
+    const style = (emphasized: boolean) => ({
+      font: "A" as const,
+      emphasized,
+      underline_thickness: 0,
+      width_magnification: 1,
+      height_magnification: 1,
+      reversed: false,
+      justification: "left" as const,
+      code_page: 0,
+      international_character_set: "U.S.A.",
+      right_side_character_spacing_dots: 0,
+    });
+    const job = {
+      sheets: [{
+        number: 1,
+        commands: [
+          command({ byte_start: 0, byte_end: 2, name: "ESC @", style: style(false) }),
+          command({ byte_start: 2, byte_end: 3, name: "Text", detail: "A" }),
+          command({ byte_start: 3, byte_end: 6, name: "ESC E", style: style(true) }),
+          command({ byte_start: 6, byte_end: 7, name: "Text", detail: "B" }),
+        ],
+      }],
+    };
+
+    const groups = groupJobCommands(job as never).groups;
+
+    // A command that changes the style shows the style it produced, and every
+    // later command prints with it until another command changes it.
+    expect(groups[0].style?.emphasized).toBe(false);
+    expect(groups[1].style?.emphasized).toBe(false);
+    expect(groups[2].style?.emphasized).toBe(true);
+    expect(groups[3].style?.emphasized).toBe(true);
+  });
 });

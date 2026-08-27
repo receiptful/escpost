@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render, screen, within } from "@testing-library/preact";
 import type { JobCommand } from "../../api/types";
 import { CommandPanel } from "./command-panel";
-import { groupAdjacentCommands } from "./model";
+import { groupAdjacentCommands, groupJobCommands } from "./model";
 
 function character(index: number, detail: string, hex: string): JobCommand {
   return {
@@ -75,5 +75,85 @@ describe("a byte beside the character it printed", () => {
 
     expect(cells[0].className).toBe(cells[2].className);
     expect(cells[1].className).not.toBe(cells[0].className);
+  });
+});
+
+function style(overrides: Partial<import("../../api/types").TextStyle> = {}) {
+  return {
+    font: "A" as const,
+    emphasized: false,
+    underline_thickness: 0,
+    width_magnification: 1,
+    height_magnification: 1,
+    reversed: false,
+    justification: "left" as const,
+    code_page: 0,
+    encoding: "CP437",
+    international_character_set: "U.S.A.",
+    right_side_character_spacing_dots: 0,
+    ...overrides,
+  };
+}
+
+function showStyled(overrides: Parameters<typeof style>[0]) {
+  const job = {
+    sheets: [{
+      number: 1,
+      commands: [
+        { ...character(0, "N", "4E"), style: style(overrides) },
+        character(1, "O", "4F"),
+      ],
+    }],
+  };
+  const grouped = groupJobCommands(job as never);
+  render(
+    <CommandPanel
+      groups={grouped.groups}
+      byteCount={grouped.byteCount}
+      previewedGroupId={null}
+      pinnedGroupId={null}
+      previewedCharacter={null}
+      onPreviewCharacter={() => {}}
+      onPreviewCharacterEnd={() => {}}
+      panelRef={() => {}}
+      register={() => {}}
+      onPreview={() => {}}
+      onPreviewEnd={() => {}}
+      onPin={() => {}}
+    />,
+  );
+  return within(screen.getByRole("button")).getByLabelText("Text style");
+}
+
+describe("the style a run printed with", () => {
+  test("lists every style, and marks the ones in force", () => {
+    const toolbar = showStyled({ emphasized: true, justification: "center" });
+    const chip = (label: string) => within(toolbar).getByLabelText(label);
+
+    expect(chip("Bold on").getAttribute("data-active")).toBe("true");
+    expect(chip("Underline off").getAttribute("data-active")).toBe("false");
+    expect(chip("Reverse off").getAttribute("data-active")).toBe("false");
+  });
+
+  test("marks one of the three alignments, and only one", () => {
+    const toolbar = showStyled({ justification: "center" });
+
+    expect(within(toolbar).getByLabelText("Align left").getAttribute("data-active")).toBe("false");
+    expect(within(toolbar).getByLabelText("Align center").getAttribute("data-active")).toBe("true");
+    expect(within(toolbar).getByLabelText("Align right").getAttribute("data-active")).toBe("false");
+  });
+
+  test("marks one of the two fonts, and only one", () => {
+    const toolbar = showStyled({ font: "B" });
+
+    expect(within(toolbar).getByLabelText("Font A").getAttribute("data-active")).toBe("false");
+    expect(within(toolbar).getByLabelText("Font B").getAttribute("data-active")).toBe("true");
+  });
+
+  test("marks a magnification only while it magnifies", () => {
+    const toolbar = showStyled({ width_magnification: 2, height_magnification: 1 });
+
+    expect(within(toolbar).getByLabelText("Width 2x").getAttribute("data-active")).toBe("true");
+    expect(within(toolbar).getByLabelText("Height 1x").getAttribute("data-active")).toBe("false");
   });
 });
