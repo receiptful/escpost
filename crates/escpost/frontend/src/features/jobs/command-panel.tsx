@@ -171,8 +171,11 @@ function ParameterBytes({ view, active, onPreview, onPreviewEnd }: {
         <span
           key={index}
           data-byte={index}
-          class={`flex w-[2.5ch] flex-col items-center rounded-sm leading-tight ${
-            // A shade on every second byte keeps one cell apart from the next.
+          // The cells of a line touch, thus their lower borders join into one
+          // line under the whole wrapped line. A browser decides where a line
+          // wraps, so nothing else can carry that border. The shade on every
+          // second byte keeps one cell apart from the next in its place.
+          class={`flex w-[3ch] flex-col items-center rounded-sm border-b border-base-content/20 leading-tight ${
             index % 2 === 1 ? "bg-base-content/5" : ""
           } ${pairing && active === index ? "font-bold ring-1 ring-base-content/40" : ""}`}
           onPointerEnter={pairing ? () => onPreview(index) : undefined}
@@ -300,7 +303,7 @@ export function CommandPanel(props: Props) {
                       // A cell stands two lines tall, thus wrapped lines of a
                       // run need more room between them than the bytes need
                       // beside each other.
-                      class="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-2.5 rounded border border-base-content/20 px-1.5 py-1 text-base-content/70"
+                      class="flex min-w-0 flex-wrap items-start gap-x-0 gap-y-2.5 rounded border border-base-content/20 px-1.5 py-1 text-base-content/70"
                     >
                       <ParameterBytes
                         view={view}
