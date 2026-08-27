@@ -267,8 +267,14 @@ describe("App", () => {
   test("lets pages own their width instead of centering the entire application", () => {
     const view = renderAt("/jobs");
     const pageContainer = view.container.querySelector("main > div");
+    const classes = pageContainer?.getAttribute("class") ?? "";
 
-    expect(pageContainer?.getAttribute("class")).toBe("flex w-full flex-col");
+    // The container hands a page the whole width and centres nothing of its
+    // own. It says nothing about how tall a page stands, which the page and
+    // the shell settle between them.
+    expect(classes).toContain("w-full");
+    expect(classes).not.toContain("mx-auto");
+    expect(classes).not.toMatch(/\bmax-w-/);
   });
 
   test("keeps semantic page headings while hiding every repeated visual title", () => {

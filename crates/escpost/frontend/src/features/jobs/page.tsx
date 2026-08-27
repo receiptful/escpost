@@ -100,7 +100,7 @@ export function JobsPage() {
   };
 
   return (
-    <section aria-labelledby="jobs-heading" class="space-y-5">
+    <section aria-labelledby="jobs-heading" class="flex flex-col gap-5 xl:min-h-0 xl:flex-1">
       <h1 id="jobs-heading" class="sr-only">Print jobs</h1>
 
       {!(job && grouped) && (
@@ -112,10 +112,10 @@ export function JobsPage() {
       )}
 
       {job && grouped && (
-        <div class="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div class="grid min-w-0 gap-5 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_24rem]">
           {/* The status covers the sheets alone, thus the bytes beside them
               start at the top of the page. */}
-          <div data-sheet-column class="flex min-w-0 flex-col gap-5">
+          <div data-sheet-column class="flex min-w-0 flex-col gap-5 xl:min-h-0">
           <JobStatus
             resource={resource}
             paperMargin={paperMargin}
@@ -125,7 +125,10 @@ export function JobsPage() {
             ref={(element) => { sheetWorkspace.current = element; }}
             role="region"
             aria-label="Rendered receipt sheets"
-            class="min-w-0 overflow-auto rounded-box border border-base-300 bg-base-200 p-4 xl:max-h-[calc(100vh-8rem)]"
+            // The sheets take what the column has left once the status has
+            // its share, thus no number here stands for the height of another
+            // element.
+            class="min-w-0 overflow-auto rounded-box border border-base-300 bg-base-200 p-4 xl:min-h-0 xl:flex-1"
           >
             <div class="flex flex-wrap items-start justify-start gap-8">
               {grouped.sheets.map((sheet) => (

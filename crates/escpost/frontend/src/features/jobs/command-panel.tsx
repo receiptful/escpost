@@ -206,7 +206,9 @@ export function CommandPanel(props: Props) {
     <aside
       ref={props.panelRef}
       aria-label="ESC/POS bytes in the current print job"
-      class="max-h-[70vh] overflow-auto rounded-box border border-base-300 bg-base-100 xl:sticky xl:top-6 xl:max-h-[calc(100vh-8rem)]"
+      // The panel fills the row of the grid it sits in, thus it ends where
+      // the sheets beside it end.
+      class="flex max-h-[70vh] flex-col overflow-auto rounded-box border border-base-300 bg-base-100 xl:h-full xl:max-h-none xl:min-h-0"
     >
       {/* The rows pass under the header, thus it needs a surface and a shadow
           of its own to stay apart from the row that scrolls behind it. */}
