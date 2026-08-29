@@ -64,20 +64,37 @@ ESCPost should ship one self-contained executable for each supported operating
 system and architecture. One compiled file cannot run unchanged across all
 platforms.
 
+Homebrew distribution exists today through
+[`receiptful/homebrew-tap`](https://github.com/receiptful/homebrew-tap):
+
+```bash
+brew install receiptful/tap/escpost
+```
+
+The formula takes its source from the crates.io release tarball rather than a
+Git tag archive. That tarball carries `frontend/dist/`, so the install compiles
+Rust only and needs no Bun or Node toolchain.
+
+The tap ships **no bottles**. Every install compiles from source on the user's
+machine. Bottles would remove that compile step, and adding them needs release
+CI that builds and tests on each native platform. Only Linux x86-64 has been
+verified end to end so far, which matches the evidence recorded above.
+
 Initial release targets:
 
 | Operating system | Architecture | Distribution |
 |---|---|---|
-| macOS | ARM64 | Homebrew bottle and release archive |
-| macOS | x86-64 | Homebrew bottle and release archive |
-| Linux | x86-64 | Homebrew bottle and release archive |
+| macOS | ARM64 | Homebrew formula (source build); bottle and release archive planned |
+| macOS | x86-64 | Homebrew formula (source build); bottle and release archive planned |
+| Linux | x86-64 | Homebrew formula (source build); bottle and release archive planned |
 | Linux | ARM64 | Release archive after native CI coverage |
 | Windows | x86-64 | Release archive; package-manager support later |
 | Windows | ARM64 | Consider after the x86-64 backend is verified |
 
-Homebrew chooses a bottle matching the operating system and architecture.
-Release CI must build and test each artifact on its native platform instead of
-assuming that successful cross-compilation proves runtime behavior.
+Once bottles exist, Homebrew chooses the one matching the operating system and
+architecture. Release CI must build and test each artifact on its native
+platform instead of assuming that successful cross-compilation proves runtime
+behavior.
 
 The native executable should embed:
 
