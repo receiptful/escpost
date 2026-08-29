@@ -10,6 +10,8 @@ from escpost.cases import Case, CaseError
 REPOSITORY = Path(__file__).parents[2]
 CASE_DIRECTORY = (
     REPOSITORY
+    / "crates"
+    / "escpost-render"
     / "tests"
     / "cases"
     / "graphics"
