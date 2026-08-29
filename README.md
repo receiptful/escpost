@@ -29,14 +29,19 @@ physical USB and network printers from the same CLI.
 
 ## Render and capture ESC/POS data
 
-Install the ESCPost CLI from crates.io with Rust 1.89 or newer:
+Install the ESCPost CLI with Homebrew:
+
+```bash
+brew install receiptful/tap/escpost
+```
+
+Or from crates.io with Rust 1.89 or newer:
 
 ```bash
 cargo install escpost
 ```
 
-Homebrew installation will follow. See [Development](#development) to build
-ESCPost from the source checkout.
+See [Development](#development) to build ESCPost from the source checkout.
 
 Render raw ESC/POS bytes, readable hexadecimal input, or stdin to PNG:
 
