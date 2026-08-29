@@ -59,14 +59,10 @@ escpost serve \
   --profile REFERENCE
 ```
 
-Register that loopback endpoint once, then send any source to it with `print`:
+Send an existing ESC/POS source directly to that virtual printer:
 
 ```bash
-escpost printers add preview \
-  --transport network \
-  --host 127.0.0.1 \
-  --port 9100
-escpost print receipt.hex --printer preview
+escpost print receipt.hex --network 127.0.0.1:9100
 ```
 
 <p align="center">
