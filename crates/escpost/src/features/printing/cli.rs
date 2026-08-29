@@ -108,7 +108,9 @@ fn prepare_request(
 }
 
 fn present(response: &super::Response) {
-    eprintln!("Printer: {}", response.printer_name);
+    if let Some(printer_name) = &response.printer_name {
+        eprintln!("Printer: {printer_name}");
+    }
     match &response.target {
         Target::Usb(target) => {
             eprintln!("Transport: usb");
@@ -260,7 +262,7 @@ out_endpoint = \"0x01\"
         .expect("the selected printer request should be prepared");
 
         assert_eq!(request.bytes, vec![0x1b, 0x40, 0x0a]);
-        assert_eq!(request.printer.printer_name, "counter");
+        assert_eq!(request.printer.printer_name, Some("counter".to_owned()));
         assert_eq!(
             request.printer.target,
             Target::Usb(UsbTarget {
@@ -300,7 +302,7 @@ out_endpoint = \"0x01\"
         .expect("the newly added printer request should be prepared");
 
         assert_eq!(request.bytes, expected);
-        assert_eq!(request.printer.printer_name, "new-printer");
+        assert_eq!(request.printer.printer_name, Some("new-printer".to_owned()));
         assert_eq!(
             request.printer.target,
             Target::Network(NetworkTarget {
