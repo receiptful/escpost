@@ -220,9 +220,9 @@ describe("JobsPage", () => {
       config_path: "/tmp/printers.toml",
     });
 
-    expect(await screen.findByRole("heading", { name: "Waiting for the first job." })).toBeTruthy();
-    const guidance = screen.getByText(/Configure a local ERP.*escpost print file\.hex --network 127\.0\.0\.1:9100/s);
-    expect(guidance.getAttribute("class")).toContain("whitespace-pre-line");
+    const heading = await screen.findByRole("heading", { name: "Waiting for the first job." });
+    expect(heading.parentElement?.querySelector("code")?.textContent)
+      .toBe("escpost print file.hex --network 127.0.0.1:9100");
   });
 
   test("shows --listen guidance when the server has no virtual printer", async () => {

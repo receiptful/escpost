@@ -23,11 +23,6 @@ export function JobsPage() {
   const job = resource.data?.job ?? null;
   const grouped = useMemo(() => job ? groupJobCommands(job) : null, [job]);
   const data = resource.data;
-  const waitingGuidance = status.snapshot?.virtual_printer
-    ? `Configure a local ERP or POS application to send RAW ESC/POS jobs to ${status.snapshot.virtual_printer.address}.\n\nOr send one from the command line:\nescpost print file.hex --network ${status.snapshot.virtual_printer.address}`
-    : status.snapshot
-      ? "Start the server with --listen to accept RAW ESC/POS print jobs."
-      : null;
   const [previewedGroupId, setPreviewedGroupId] = useState<string | null>(null);
   const [pinnedGroupId, setPinnedGroupId] = useState<string | null>(null);
   // The character of the previewed group the pointer rests on, by its place in
@@ -115,7 +110,7 @@ export function JobsPage() {
           resource={resource}
           paperMargin={paperMargin}
           onPaperMarginChange={changePaperMargin}
-          waitingGuidance={waitingGuidance}
+          serverStatus={status}
         />
       )}
 
@@ -128,7 +123,7 @@ export function JobsPage() {
             resource={resource}
             paperMargin={paperMargin}
             onPaperMarginChange={changePaperMargin}
-            waitingGuidance={waitingGuidance}
+            serverStatus={status}
           />
           <div
             ref={(element) => { sheetWorkspace.current = element; }}
@@ -190,14 +185,15 @@ export function JobsPage() {
   );
 }
 
-function JobStatus({ resource, paperMargin, onPaperMarginChange, waitingGuidance }: {
+function JobStatus({ resource, paperMargin, onPaperMarginChange, serverStatus }: {
   resource: ReturnType<typeof useCurrentJob>;
   paperMargin: boolean;
   onPaperMarginChange: (enabled: boolean) => void;
-  waitingGuidance: string | null;
+  serverStatus: ReturnType<typeof useServerStatus>;
 }) {
   const data = resource.data;
   const job = data?.job;
+  const virtualPrinterAddress = serverStatus.snapshot?.virtual_printer?.address ?? null;
   return (
     <div class="space-y-3" aria-live="polite">
       <div role="group" aria-label="Current job status" class="flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 p-4">
@@ -238,7 +234,19 @@ function JobStatus({ resource, paperMargin, onPaperMarginChange, waitingGuidance
           ) : (
             <>
               <h2 class="text-xl font-bold">Waiting for the first job.</h2>
-              {waitingGuidance && <p class="mt-2 whitespace-pre-line text-base-content/65">{waitingGuidance}</p>}
+              {virtualPrinterAddress ? (
+                <p class="mt-2 text-base-content/65">
+                  Configure a local ERP or POS application to send RAW ESC/POS jobs to {virtualPrinterAddress}.
+                  <br /><br />
+                  Or send one from the command line:
+                  <br />
+                  <code>escpost print file.hex --network {virtualPrinterAddress}</code>
+                </p>
+              ) : serverStatus.snapshot ? (
+                <p class="mt-2 text-base-content/65">
+                  Start the server with --listen to accept RAW ESC/POS print jobs.
+                </p>
+              ) : null}
             </>
           )}
         </div>
