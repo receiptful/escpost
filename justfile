@@ -71,7 +71,11 @@ publish-dry-run: prepare-publish
 [doc("Set the version, test, tag, push, and publish to crates.io.")]
 publish version: (_require-release-branch) (_require-clean-worktree) (set-version version) test
     @git --no-pager diff --stat
-    @printf '\nPublish {{version}} to crates.io? Uploads cannot be undone. [y/N] '; \
+    @printf '\nRelease {{version}} will:\n'; \
+     printf '  - commit the version bump and tag it v{{version}}\n'; \
+     printf '  - push the commit and the tag to origin\n'; \
+     printf '  - upload the crates to crates.io, which cannot be undone\n'; \
+     printf '\nProceed? [y/N] '; \
      read -r reply; \
      case "$reply" in \
        [yY]|[yY][eE][sS]) ;; \
