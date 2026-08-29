@@ -543,8 +543,12 @@ fn serve_reports_a_render_error_without_a_sheet() {
     assert_eq!(error, "unsupported data byte 0x1c at byte offset 7");
     assert_eq!(
         remaining_stderr,
-        "Press Ctrl+C to stop.\n\
+        format!(
+            "To render a job through the virtual printer, run:\n\
+`escpost print file.hex --network 127.0.0.1:{raw_port}`\n\
+Press Ctrl+C to stop.\n\
 warning: could not render captured job: unsupported data byte 0x1c at byte offset 7\n"
+        )
     );
 }
 
