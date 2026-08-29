@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#
+# Build the PyO3 render binding and run its Python tests in the repository's
+# development container.
+#
+# Usage:
+#   ./test [unittest arguments...]
+#
+set -euo pipefail
+
+project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_directory"
+
+exec docker compose run --rm test sh -c '
+    set -eu
+    cd /workspace/python
+    virtual_environment=/workspace/python/.venv
+    if [ ! -x "$virtual_environment/bin/python" ]; then
+        python3 -m venv "$virtual_environment"
+    fi
+    export VIRTUAL_ENV="$virtual_environment"
+    export PATH="$virtual_environment/bin:$PATH"
+    maturin develop --quiet --locked
+    exec python -m unittest discover -s tests "$@"
+' binding-tests "$@"

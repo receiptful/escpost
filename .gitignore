@@ -2,7 +2,7 @@
 /target/
 
 # Python bindings and development environments
-/.venv/
+/python/.venv/
 __pycache__/
 *.py[cod]
 *.so

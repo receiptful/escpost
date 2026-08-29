@@ -70,7 +70,7 @@ RUN groupadd --gid "${GROUP_ID}" developer \
         /home/developer/.cargo \
         /home/developer/.config/escpost \
         /home/developer/target \
-        /workspace/.venv \
+        /workspace/python/.venv \
     && chown -R developer:developer /home/developer /workspace
 
 USER developer

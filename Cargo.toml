@@ -2,7 +2,7 @@
 members = [
     "crates/escpost-render",
     "crates/escpost",
-    "crates/escpost-python",
+    "python/rust",
     "crates/escpost-profiles",
 ]
 resolver = "3"

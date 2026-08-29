@@ -90,7 +90,7 @@ from the source workspace and has not yet been published to PyPI.
 |---|---|
 | [`escpost-render`](crates/escpost-render) | Convert ESC/POS data into ordered PNG sheets using a selected printer profile. Results include warnings, device events, and reproducible profile information. |
 | [`escpost-profiles`](crates/escpost-profiles) | Resolve profiles from the embedded catalog, inspect profile capabilities, and read, write, compile, or synthesize canonical profiles. |
-| [`escpost-python`](crates/escpost-python) | Call the Rust preview engine from Python and receive the rendered PNG sheets. |
+| [`escpost-python`](python) | Call the Rust preview engine from Python and receive the rendered PNG sheets. |
 
 The virtual IP printer, browser workbench, file watching, and USB or RAW TCP
 printer management are currently CLI features; they are not yet exposed as
@@ -163,7 +163,7 @@ Additional tasks:
 
 - `just docker-cargo-clean` clears the shared container build cache.
 - `just generate-profile-pack` regenerates the canonical printer-profile pack.
-- `just python-test` builds and exercises the Python binding.
+- `cd python && just test` builds and exercises the Python binding.
 - `just --list` shows every recipe.
 
 ## Documentation

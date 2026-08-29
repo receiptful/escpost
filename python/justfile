@@ -1,0 +1,9 @@
+# Python binding development tasks. Commands execute in the repository's
+# Docker Compose development image.
+
+default:
+    @just --list
+
+# Build the PyO3 extension and run the Python binding tests.
+test *args:
+    ./test {{args}}
