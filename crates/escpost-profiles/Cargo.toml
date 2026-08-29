@@ -13,8 +13,9 @@ categories = ["config", "data-structures"]
 include = [
     "Cargo.toml",
     "./README.md",
-    "./LICENSE",
+    "LICENSE",
     "src/**",
+    "tests/**",
     "profiles/.generated/profiles.json",
     "profiles/NT-5890K/**",
     "profiles/REFERENCE/**",
