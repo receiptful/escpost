@@ -26,7 +26,7 @@ Options:
       --web-listen [<PORT|IP:PORT>]  Start web/API server [defaults: IP 127.0.0.1; port first free 9000–9099]
       --idle-timeout <SECONDS>       Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]
       --scale <N>                    Preview pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 3]
-      --antialias [<ANTIALIAS>]      Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias=false for faithful 1-bit dots [default: true] [possible values: true, false]
+      --no-antialias                 Disable glyph-edge anti-aliasing and render faithful one-bit printer dots
       --no-open                      Do not open the web app in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
       --no-web-app                   Serve the API but not the web application. Needs --web-listen. Use it when no web application is necessary, or when a Vite development server serves the web application and sends each /api request to this server
   -h, --help                         Print help
@@ -161,6 +161,36 @@ fn serve_captures_a_raw_job_and_previews_its_sheets() {
     let png = sheet_png(web_port, 1);
     stop(&mut child);
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[test]
+fn serve_antialiases_by_default_unless_disabled() {
+    let mut default_child = start_serve_on_ephemeral_ports();
+    let (default_raw_port, default_web_port) = read_listen_ports(&mut default_child);
+    wait_until_listening(&mut default_child, default_raw_port);
+    wait_until_listening(&mut default_child, default_web_port);
+    send_raw_job(default_raw_port, b"Default preview\n");
+    let default_metadata = wait_for_first_job(default_web_port);
+    stop(&mut default_child);
+
+    let mut faithful_child = start_serve(&[
+        "--profile",
+        "REFERENCE",
+        "--listen",
+        "127.0.0.1:0",
+        "--web-listen",
+        "127.0.0.1:0",
+        "--no-antialias",
+    ]);
+    let (faithful_raw_port, faithful_web_port) = read_listen_ports(&mut faithful_child);
+    wait_until_listening(&mut faithful_child, faithful_raw_port);
+    wait_until_listening(&mut faithful_child, faithful_web_port);
+    send_raw_job(faithful_raw_port, b"Faithful preview\n");
+    let faithful_metadata = wait_for_first_job(faithful_web_port);
+    stop(&mut faithful_child);
+
+    assert_eq!(default_metadata["job"]["antialias"], true);
+    assert_eq!(faithful_metadata["job"]["antialias"], false);
 }
 
 #[test]

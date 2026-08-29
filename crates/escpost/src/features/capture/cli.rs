@@ -56,10 +56,9 @@ pub(crate) struct ServeArgs {
     #[arg(long, value_name = "N", default_value_t = 3)]
     pub(crate) scale: u32,
 
-    /// Anti-alias glyph edges into a grayscale preview (cosmetic; never what a
-    /// printer emits). Pass --antialias=false for faithful 1-bit dots.
-    #[arg(long, num_args = 0..=1, default_value_t = true, default_missing_value = "true")]
-    pub(crate) antialias: bool,
+    /// Disable glyph-edge anti-aliasing and render faithful one-bit printer dots.
+    #[arg(long)]
+    pub(crate) no_antialias: bool,
 
     /// Do not open the web app in the default browser on startup. Auto-open
     /// is also skipped with --non-interactive, without a terminal, or when the
@@ -90,6 +89,7 @@ fn should_open_browser(
 
 pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(), CliError> {
     let scale = RenderScale::new(arguments.scale).map_err(ApplicationError::from)?;
+    let antialias = !arguments.no_antialias;
     if arguments.listen.is_none() && arguments.web_listen.is_none() {
         return Err(CliError::NoListener);
     }
@@ -137,8 +137,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         ),
         None => "Waiting for the first job. Start the server with --listen to accept RAW ESC/POS print jobs.".to_owned(),
     };
-    let jobs =
-        web::JobStore::awaiting_jobs(arguments.profile.clone(), waiting_hint, arguments.antialias);
+    let jobs = web::JobStore::awaiting_jobs(arguments.profile.clone(), waiting_hint, antialias);
 
     let raw_address = raw.as_ref().map(|(_, address)| *address);
     // Accept jobs while the web server runs. The server owns the foreground and
@@ -150,7 +149,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
             profile,
             idle_timeout,
             scale,
-            arguments.antialias,
+            antialias,
         ))
     });
 

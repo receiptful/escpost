@@ -70,7 +70,7 @@ Options:
     --output-dir <DIRECTORY>
     --sheet <NUMBER>
     --scale <N>
-    --antialias[=true|false]
+    --no-antialias
 ```
 
 Without `--output` or `--output-dir`, `render` writes one PNG to standard
@@ -114,8 +114,9 @@ the directory are preserved.
 ### Preview quality
 
 `--scale <N>` accepts `1`, `2`, or `3` and renders each printer dot at `N × N`
-preview pixels. The default is `1` for `render`. `--antialias` enables grayscale
-glyph edges for display; it does not represent additional dots produced by a
+preview pixels. The default is `1` for `render`. Antialiasing is enabled by
+default; pass `--no-antialias` for faithful one-bit printer dots. Grayscale
+glyph edges are cosmetic and do not represent additional dots produced by a
 physical printer.
 
 ## `escpost print`
@@ -742,7 +743,7 @@ Options:
     --web-listen [<PORT|IP:PORT>]
     --idle-timeout <SECONDS>
     --scale <N>
-    --antialias[=true|false]
+    --no-antialias
     --no-open
     --no-web-app
 ```
@@ -779,8 +780,8 @@ skipped with `--non-interactive`, without a terminal, under CI, or when
 `BROWSER=none`.
 
 `--scale` accepts `1`, `2`, or `3` and defaults to `3` for the browser preview.
-Antialiasing is enabled by default; pass `--antialias=false` for faithful
-one-bit printer dots.
+Antialiasing is enabled by default; pass `--no-antialias` for faithful one-bit
+printer dots.
 
 Port 9100 has no authentication or encryption. Binding either listener to a
 non-loopback address can expose receipt data and should be deliberate.

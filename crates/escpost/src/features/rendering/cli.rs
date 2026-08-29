@@ -42,10 +42,9 @@ pub(crate) struct RenderArgs {
     #[arg(long, value_name = "N", default_value_t = 1)]
     pub(crate) scale: u32,
 
-    /// Anti-alias glyph edges into a grayscale preview (cosmetic; never what a
-    /// printer emits). Pass --antialias for a nicer on-screen render.
-    #[arg(long, num_args = 0..=1, default_value_t = false, default_missing_value = "true")]
-    pub(crate) antialias: bool,
+    /// Disable glyph-edge anti-aliasing and render faithful one-bit printer dots.
+    #[arg(long)]
+    pub(crate) no_antialias: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -82,7 +81,7 @@ pub(crate) fn run(arguments: RenderArgs, non_interactive: bool) -> Result<(), Cl
         bytes: input.bytes,
         profile_id: requested_profile_id,
         scale,
-        antialias: arguments.antialias,
+        antialias: !arguments.no_antialias,
     })?;
     let profile_id = response.profile_id;
     let rendered = response.render;

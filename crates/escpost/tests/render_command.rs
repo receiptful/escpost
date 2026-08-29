@@ -30,7 +30,7 @@ Options:
       --output-dir <OUTPUT_DIR>  Write every rendered sheet and a manifest to this directory
       --sheet <SHEET>            Select one one-based sheet for single-PNG output
       --scale <N>                Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
-      --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
+      --no-antialias             Disable glyph-edge anti-aliasing and render faithful one-bit printer dots
   -h, --help                     Print help
 "
     );
@@ -58,6 +58,37 @@ fn render_writes_a_single_png_to_stdout_by_default() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(&output.stdout[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[test]
+fn render_antialiases_by_default_unless_disabled() {
+    let case_directory =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
+    let source = case_directory
+        .to_str()
+        .expect("the case path should be UTF-8");
+
+    let default_output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["render", source, "--non-interactive"])
+        .output()
+        .expect("the default render should finish");
+    let faithful_output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["render", source, "--no-antialias", "--non-interactive"])
+        .output()
+        .expect("the faithful render should finish");
+
+    assert!(
+        default_output.status.success(),
+        "default render failed:\n{}",
+        String::from_utf8_lossy(&default_output.stderr)
+    );
+    assert!(
+        faithful_output.status.success(),
+        "faithful render failed:\n{}",
+        String::from_utf8_lossy(&faithful_output.stderr)
+    );
+    assert_eq!(default_output.stdout[24], 8, "default PNG bit depth");
+    assert_eq!(faithful_output.stdout[24], 1, "faithful PNG bit depth");
 }
 
 #[test]

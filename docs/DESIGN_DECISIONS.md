@@ -738,9 +738,9 @@ one blit.
 
 The library defaults to `scale = 1`, `antialias = false` (faithful), so
 `render()` and every golden test are unaffected. The CLI exposes `--scale <N>`
-for values 1 through 3 and `--antialias[=<bool>]`: `render` defaults to faithful
-(`1`, off) so its artifacts stay true; `serve` defaults to a `3 ×` grayscale
-preview (nicer out of the box), and either can be overridden within that range.
+for values 1 through 3. Both `render` and `serve` enable antialiasing by default
+for nicer previews and expose `--no-antialias` for faithful one-bit dots;
+`render` defaults to scale `1`, while `serve` defaults to a `3 ×` preview.
 
 ### Consequences
 
