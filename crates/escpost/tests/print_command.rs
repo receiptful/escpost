@@ -17,7 +17,7 @@ fn print_help_contract_is_unchanged() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("print help should be UTF-8"),
         "\
-Send a known ESC/POS byte stream unchanged to a configured printer
+Send a known ESC/POS byte stream unchanged to a printer
 
 Usage: escpost print [OPTIONS] <SOURCE>
 
@@ -25,13 +25,89 @@ Arguments:
   <SOURCE>  Raw ESC/POS file, hexadecimal file, case directory, or - for stdin
 
 Options:
-      --format <FORMAT>    Input representation [default: auto] [possible values: auto, binary, hex]
-      --non-interactive    Never prompt for missing values
-      --printer <PRINTER>  Configured printer name
-      --config <FILE>      Read printer configuration from this exact file
-  -h, --help               Print help
+      --format <FORMAT>                Input representation [default: auto] [possible values: auto, binary, hex]
+      --non-interactive                Never prompt for missing values
+      --printer <PRINTER>              Configured printer name
+      --config <FILE>                  Read printer configuration from this exact file
+      --network <PORT|HOST|HOST:PORT>  Send directly to a RAW TCP endpoint; a bare port uses 127.0.0.1 and a bare host uses port 9100
+  -h, --help                           Print help
 "
     );
+}
+
+#[test]
+fn print_sends_exact_binary_bytes_directly_to_a_network_target() {
+    let directory = temporary_directory("direct-network");
+    let source = directory.join("receipt.bin");
+    let expected = b"\x1b@Direct network printer\n";
+    fs::create_dir_all(&directory).expect("the test directory should be creatable");
+    fs::write(&source, expected).expect("the ESC/POS source should be writable");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("the loopback printer should bind");
+    let port = listener
+        .local_addr()
+        .expect("the listener should have an address")
+        .port();
+    let receiver = thread::spawn(move || {
+        let (mut connection, _) = listener
+            .accept()
+            .expect("the direct printer should receive a connection");
+        let mut bytes = Vec::new();
+        connection
+            .read_to_end(&mut bytes)
+            .expect("the print connection should close cleanly");
+        bytes
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "print",
+            source.to_str().expect("the source path should be UTF-8"),
+            "--network",
+            &format!("127.0.0.1:{port}"),
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(
+        output.status.success(),
+        "direct print failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        receiver.join().expect("the receiver should finish"),
+        expected
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("Printer:"));
+    assert!(stderr.contains("Transport: network"));
+    assert!(stderr.contains(&format!("Network target: 127.0.0.1:{port}")));
+    assert!(stderr.contains(&format!("Bytes sent: {}", expected.len())));
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
+}
+
+#[test]
+fn print_network_conflicts_with_named_printer_configuration() {
+    for (conflicting_flag, conflicting_value) in
+        [("--printer", "preview"), ("--config", "printers.toml")]
+    {
+        let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+            .args([
+                "print",
+                "missing.bin",
+                "--network",
+                "9100",
+                conflicting_flag,
+                conflicting_value,
+            ])
+            .output()
+            .expect("the escpost command should finish");
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("cannot be used with"));
+        assert!(stderr.contains("--network <PORT|HOST|HOST:PORT>"));
+        assert!(stderr.contains(conflicting_flag));
+    }
 }
 
 #[test]

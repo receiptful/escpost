@@ -41,7 +41,7 @@ pub(crate) enum Command {
     /// Render a known ESC/POS byte stream.
     Render(RenderArgs),
 
-    /// Send a known ESC/POS byte stream unchanged to a configured printer.
+    /// Send a known ESC/POS byte stream unchanged to a printer.
     Print(PrintArgs),
 
     /// Capture RAW TCP print jobs and preview them in the web app.
