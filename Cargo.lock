@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "escpost"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "clap",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "escpost-profiles"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "escpost-python"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "escpost-profiles",
  "escpost-render",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "escpost-render"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "encoding_rs",
  "escpost-profiles",

@@ -8,7 +8,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.89"
 license = "Apache-2.0"
@@ -20,8 +20,8 @@ axum = "0.8.9"
 clap = { version = "4.6.4", features = ["derive"] }
 directories = "6.0.0"
 encoding_rs = "0.8.35"
-escpost-profiles = { version = "0.2.0", path = "crates/escpost-profiles" }
-escpost-render = { version = "0.2.0", path = "crates/escpost-render" }
+escpost-profiles = { version = "0.2.1", path = "crates/escpost-profiles" }
+escpost-render = { version = "0.2.1", path = "crates/escpost-render" }
 fontdue = "0.9.3"
 futures-core = "0.3"
 if-addrs = "0.14"
