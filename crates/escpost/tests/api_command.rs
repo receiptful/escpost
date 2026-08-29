@@ -27,7 +27,7 @@ fn info_reports_the_version_platform_and_capabilities() {
         .map(|value| value.as_str().expect("each capability is a string"))
         .collect();
     assert!(capabilities.contains(&"usb"));
-    assert!(capabilities.contains(&"tcp"));
+    assert!(capabilities.contains(&"network"));
 }
 
 #[test]
@@ -147,7 +147,7 @@ port = 9100
         .iter()
         .find(|printer| printer["id"] == "kitchen")
         .expect("the TCP printer should be listed");
-    assert_eq!(kitchen["transport"], "tcp");
+    assert_eq!(kitchen["transport"], "network");
     // "tm-t88" is in no catalog. Reporting it as a real profile is the bug.
     assert_eq!(kitchen["profile"], serde_json::Value::Null);
     assert_eq!(kitchen["device"]["host"], "192.0.2.50");

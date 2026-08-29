@@ -53,7 +53,7 @@ impl From<Printer> for PrinterResponse {
             name: printer.name,
             transport: match printer.transport {
                 Transport::Usb => "usb",
-                Transport::Network => "tcp",
+                Transport::Network => "network",
             },
             profile: canonical_profile(printer.profile.as_deref()),
             status: match printer.availability {
@@ -185,10 +185,11 @@ mod tests {
     }
 
     #[test]
-    fn a_network_printer_is_reported_as_tcp_with_its_endpoint() {
-        // "network" is what escpost calls it internally and what the viewer API
-        // emits; this surface speaks the spec's vocabulary, where the
-        // capability list is ["usb", "tcp"].
+    fn a_network_printer_is_reported_with_its_endpoint() {
+        // "network" throughout: it is what Transport::Network is called, what
+        // `--transport network` accepts, what printers.toml stores, and what
+        // the viewer API already emits. TCP is the connection, not the
+        // transport's name.
         let printer = Printer {
             name: "kitchen".to_owned(),
             transport: Transport::Network,
@@ -203,7 +204,7 @@ mod tests {
         let json =
             serde_json::to_value(PrinterResponse::from(printer)).expect("it should serialize");
 
-        assert_eq!(json["transport"], "tcp");
+        assert_eq!(json["transport"], "network");
         assert_eq!(json["status"], "unavailable");
         assert_eq!(json["device"]["host"], "192.168.1.50");
         assert_eq!(json["device"]["port"], 9100);

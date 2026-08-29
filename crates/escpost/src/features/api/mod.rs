@@ -26,7 +26,7 @@ mod printers;
 
 /// What this build can do, advertised on `/info` so a client can detect a
 /// daemon that predates a feature without a protocol version bump (D3).
-const CAPABILITIES: &[&str] = &["usb", "tcp", "device-identity"];
+const CAPABILITIES: &[&str] = &["usb", "network", "device-identity"];
 
 /// Shared by every handler. Cheap to clone: axum clones it per request.
 #[derive(Clone, Debug, Default)]
