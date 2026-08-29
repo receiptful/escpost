@@ -1,4 +1,5 @@
-import { copyText, webUrl } from "./annotation";
+import { copyText } from "../../app/clipboard";
+import { webUrl } from "./annotation";
 import { STICKY_HEADER } from "./reveal";
 import type preact from "preact";
 import type { StyleDefaults, TextStyle } from "../../api/types";
