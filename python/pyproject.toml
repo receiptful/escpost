@@ -23,15 +23,4 @@ dependencies = []
 manifest-path = "rust/Cargo.toml"
 python-source = "src"
 module-name = "escpost._native"
-include = [
-    { path = "../crates/escpost-profiles/calibration-job.hex", format = "sdist" },
-    { path = "../crates/escpost-profiles/CALIBRATION.md", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/*/profile.toml", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/*/expected-*.png", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/*/verification.toml", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/*/notes.md", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/*/TODO.md", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/.generated/profiles.json", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/.escpos-printer-db/LICENSE.md", format = "sdist" },
-    { path = "../crates/escpost-profiles/profiles/.escpos-printer-db/LICENSE.md", format = "wheel" },
-]
+locked = true

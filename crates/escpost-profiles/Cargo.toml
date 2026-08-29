@@ -10,7 +10,17 @@ description = "Printer profiles and profile tooling for ESC/POS rendering"
 readme = "README.md"
 keywords = ["escpos", "printer", "receipt", "profile"]
 categories = ["config", "data-structures"]
-exclude = ["profiles/.escpos-printer-db/**"]
+include = [
+    "Cargo.toml",
+    "./README.md",
+    "./LICENSE",
+    "src/**",
+    "profiles/.generated/profiles.json",
+    "profiles/NT-5890K/**",
+    "profiles/REFERENCE/**",
+    "calibration-job.hex",
+    "CALIBRATION.md",
+]
 
 [dependencies]
 serde.workspace = true
