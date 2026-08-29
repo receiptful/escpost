@@ -64,6 +64,52 @@ escpost serve --listen --web-listen
   <img src="docs/assets/readme/web-preview.svg" alt="Placeholder for the ESCPost browser workbench" width="100%">
 </p>
 
+## Print from a browser or a local program
+
+`escpost api` is a long-running process that serves a small REST API on
+loopback, for the escpost browser extension and for any local program that
+wants to print.
+
+```bash
+escpost api
+# escpost api: http://127.0.0.1:9180
+```
+
+It binds `127.0.0.1` only, on the first free port from 9180 through 9189, and
+needs no account, no key and no configuration beyond `printers.toml`. It makes
+no outbound network request of any kind.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /info` | version, platform, and the capability list |
+| `GET /printers` | configured printers, their status and device identity |
+| `GET /printers/default` | the first printer that would be listed, or 404 |
+| `POST /print` | print bytes to a named printer |
+
+Print with JSON and base64:
+
+```bash
+curl -X POST http://127.0.0.1:9180/print \
+  -H 'Content-Type: application/json' \
+  -d '{"printer":"counter","data":"G0BIaQo="}'
+```
+
+Or post the bytes directly, which avoids base64 for a program that already
+holds them:
+
+```bash
+curl -X POST 'http://127.0.0.1:9180/print?printer=counter' \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @receipt.bin
+```
+
+Requests carrying an `Origin` header from an ordinary web page are refused. A
+local program sends no `Origin` and is accepted, as is a browser extension.
+Pass `--extension-id <ID>` to accept only one extension.
+
+This is not `escpost serve`, which is a virtual RAW TCP printer with a preview
+viewer for developing receipts. `escpost api` prints to real hardware.
+
 ## Supported ESC/POS features
 
 ESCPost currently implements all commonly used ESC/POS commands, including

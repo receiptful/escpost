@@ -60,6 +60,22 @@ pub(crate) enum CliError {
     #[error("virtual IP printer failed: {0}")]
     ServeRawPrinter(#[source] std::io::Error),
 
+    #[error("could not bind the API to {address}: {source}")]
+    BindApi {
+        address: std::net::SocketAddr,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("no loopback API port from 9180 through 9189 is available")]
+    NoAutomaticApiPort,
+
+    #[error("the API bound {0}, which is not loopback; refusing to serve")]
+    ApiNotLoopback(std::net::SocketAddr),
+
+    #[error("API failed: {0}")]
+    ServeApi(#[source] std::io::Error),
+
     #[error("idle timeout must be a positive number of seconds")]
     InvalidIdleTimeout,
 

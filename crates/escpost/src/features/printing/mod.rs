@@ -118,10 +118,39 @@ pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<Res
 ///
 /// This operation is deliberately presentation-free: callers choose names,
 /// load sources, and render the resulting target facts for their own transport.
+/// The USB path runs on a blocking thread. `nusb` is synchronous from
+/// enumeration through flush, so calling it inline would park a tokio worker
+/// for the whole transfer — invisible to a one-shot CLI print, fatal to a
+/// server that is supposed to answer other requests meanwhile.
 pub(crate) async fn print(request: Request) -> application::Result<Response> {
-    print_with_transport(request, &mut NusbTransport).await
+    let Request { bytes, printer } = request;
+    let ResolvedPrinter {
+        printer_name,
+        target,
+    } = printer;
+    let bytes_sent = bytes.len();
+
+    match &target {
+        Target::Usb(usb) => {
+            let usb = usb.clone();
+            tokio::task::spawn_blocking(move || NusbTransport.send(&usb, &bytes))
+                .await
+                .map_err(|_| ApplicationError::UsbTransferTaskFailed)??;
+        }
+        Target::Network(network) => send_network(network, &bytes).await?,
+    }
+
+    Ok(Response {
+        printer_name,
+        bytes_sent,
+        target,
+    })
 }
 
+/// The injected-transport seam the unit tests drive. `print` no longer routes
+/// through it: the real USB transport now runs on a blocking thread, which a
+/// synchronous test double neither needs nor could be moved onto.
+#[cfg(test)]
 async fn print_with_transport(
     request: Request,
     transport: &mut impl UsbTransport,

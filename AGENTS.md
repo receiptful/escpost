@@ -62,6 +62,9 @@ and persists printer configuration in a Compose-managed named volume:
 
 ```bash
 docker compose run --rm escpost render example-jobs/cafe-order-voucher.hex --output-dir .test-output/out
+
+# Serve the local REST API for the browser extension and local programs
+docker compose run --rm escpost api --listen 127.0.0.1:9180
 ```
 
 ## Golden images

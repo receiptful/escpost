@@ -42,6 +42,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Serve(arguments) => {
             features::capture::cli::run(arguments, cli.non_interactive).await
         }
+        Command::Api(arguments) => features::api::cli::run(arguments, cli.non_interactive).await,
         Command::Printers(arguments) => {
             features::printers::cli::run(arguments, cli.non_interactive).await
         }

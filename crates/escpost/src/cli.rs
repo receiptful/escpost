@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+use crate::features::api::cli::ApiArgs;
 use crate::features::capture::cli::ServeArgs;
 use crate::features::printers::cli::PrintersArgs;
 use crate::features::printing::cli::PrintArgs;
@@ -35,6 +36,9 @@ pub(crate) enum Command {
 
     /// Capture RAW TCP print jobs and preview them in the web app.
     Serve(ServeArgs),
+
+    /// Serve the local REST API for the browser extension and local backends.
+    Api(ApiArgs),
 
     /// List available printers and manage discovery or pairing.
     Printers(PrintersArgs),
