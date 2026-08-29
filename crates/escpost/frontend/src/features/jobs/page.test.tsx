@@ -182,6 +182,21 @@ describe("JobsPage", () => {
     expect(await screen.findByText("Waiting for first job")).toBeTruthy();
     expect(screen.getByText("Send an ESC/POS job to 127.0.0.1:9100")).toBeTruthy();
   });
+
+  test("replaces first-job waiting guidance while receiving", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json({
+      receiving: true,
+      profile: "REFERENCE",
+      error: null,
+      hint: "Send an ESC/POS job to 127.0.0.1:9100",
+      job: null,
+    }))) as unknown as typeof fetch;
+    render(<JobsPage />);
+
+    expect(await screen.findByRole("heading", { name: "Receiving a job…" })).toBeTruthy();
+    expect(screen.queryByText("Waiting for first job")).toBeNull();
+    expect(screen.queryByText("Send an ESC/POS job to 127.0.0.1:9100")).toBeNull();
+  });
 });
 
 describe("command bytes", () => {

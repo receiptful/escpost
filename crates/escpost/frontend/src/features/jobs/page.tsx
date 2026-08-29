@@ -223,8 +223,14 @@ function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
       ))}
       {!resource.loading && data && !job && !data.error && (
         <div class="min-h-56 rounded-box border border-dashed border-base-300 bg-base-100 p-8">
-          <h2 class="text-xl font-bold">Waiting for first job</h2>
-          {data.hint && <p class="mt-2 text-base-content/65">{data.hint}</p>}
+          {data.receiving ? (
+            <h2 class="text-xl font-bold">Receiving a job…</h2>
+          ) : (
+            <>
+              <h2 class="text-xl font-bold">Waiting for first job</h2>
+              {data.hint && <p class="mt-2 text-base-content/65">{data.hint}</p>}
+            </>
+          )}
         </div>
       )}
     </div>
