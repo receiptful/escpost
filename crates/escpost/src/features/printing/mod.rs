@@ -26,10 +26,19 @@ pub(crate) struct ResolveRequest {
     pub(crate) config: Option<PathBuf>,
 }
 
-/// A configured printer resolved to owned connection facts before source I/O.
+/// A configured or direct printer resolved to owned connection facts before source I/O.
 pub(crate) struct ResolvedPrinter {
-    printer_name: String,
+    printer_name: Option<String>,
     target: Target,
+}
+
+impl ResolvedPrinter {
+    pub(crate) fn direct_network(target: NetworkTarget) -> Self {
+        Self {
+            printer_name: None,
+            target: Target::Network(target),
+        }
+    }
 }
 
 /// Send already-loaded ESC/POS wire bytes to an already-resolved printer.
@@ -38,9 +47,9 @@ pub(crate) struct Request {
     pub(crate) printer: ResolvedPrinter,
 }
 
-/// Facts about the target selected from printer configuration.
+/// Facts about the target used for a completed print.
 pub(crate) struct Response {
-    pub(crate) printer_name: String,
+    pub(crate) printer_name: Option<String>,
     pub(crate) bytes_sent: usize,
     pub(crate) target: Target,
 }
@@ -109,7 +118,7 @@ pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<Res
         }),
     };
     Ok(ResolvedPrinter {
-        printer_name: request.printer_name,
+        printer_name: Some(request.printer_name),
         target,
     })
 }
@@ -251,8 +260,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        NetworkTarget, Request, ResolveRequest, Target, UsbTarget, UsbTransport, print,
-        print_with_transport, require_unique_device, resolve_target,
+        NetworkTarget, Request, ResolveRequest, ResolvedPrinter, Target, UsbTarget, UsbTransport,
+        print, print_with_transport, require_unique_device, resolve_target,
     };
     use crate::application::ApplicationError;
 
@@ -291,7 +300,7 @@ out_endpoint = \"0x01\"
         .await
         .expect("printing should succeed");
 
-        assert_eq!(response.printer_name, "counter");
+        assert_eq!(response.printer_name, Some("counter".to_owned()));
         assert_eq!(response.bytes_sent, 5);
         assert_eq!(
             response.target,
@@ -364,7 +373,7 @@ port = {port}
         .await
         .expect("printing should succeed");
 
-        assert_eq!(response.printer_name, "kitchen");
+        assert_eq!(response.printer_name, Some("kitchen".to_owned()));
         assert_eq!(response.bytes_sent, 5);
         assert_eq!(
             response.target,
@@ -378,6 +387,41 @@ port = {port}
             vec![0x1b, b'@', 0x00, 0xff, b'\n']
         );
         fs::remove_dir_all(directory).expect("the test directory should be removable");
+    }
+
+    #[tokio::test]
+    async fn exact_bytes_reach_an_unnamed_network_target_unchanged() {
+        let listener =
+            TcpListener::bind(("127.0.0.1", 0)).expect("the loopback printer should bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener should have an address")
+            .port();
+        let receiver = thread::spawn(move || {
+            let (mut connection, _) = listener
+                .accept()
+                .expect("the printer should receive a connection");
+            let mut bytes = Vec::new();
+            connection
+                .read_to_end(&mut bytes)
+                .expect("the print connection should close cleanly");
+            bytes
+        });
+        let bytes = vec![0x1b, b'@', 0x00, 0xff, b'\n'];
+
+        let response = print(Request {
+            bytes: bytes.clone(),
+            printer: ResolvedPrinter::direct_network(NetworkTarget {
+                host: "127.0.0.1".to_owned(),
+                port,
+            }),
+        })
+        .await
+        .expect("direct network printing should succeed");
+
+        assert_eq!(response.printer_name, None);
+        assert_eq!(response.bytes_sent, bytes.len());
+        assert_eq!(receiver.join().expect("the receiver should finish"), bytes);
     }
 
     #[test]

@@ -69,6 +69,10 @@ pub(crate) fn listener_status(
         addresses.push(("API:", format!("http://{address}/api")));
     }
     lines.extend(aligned_rows(addresses));
+    if let Some((address, _)) = virtual_printer {
+        lines.push("To render a job through the virtual printer, run:".to_owned());
+        lines.push(format!("`escpost print file.hex --network {address}`"));
+    }
     lines.push("Press Ctrl+C to stop.".to_owned());
     lines
 }
@@ -82,6 +86,7 @@ fn aligned_rows(rows: Vec<(&str, String)>) -> impl Iterator<Item = String> {
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::time::Duration;
 
     use super::listener_status;
 
@@ -120,6 +125,29 @@ mod tests {
             listener_status(None, Some((address, None))),
             [
                 "Virtual IP printer: 127.0.0.1:9100 (Idle timeout: disabled)".to_owned(),
+                "To render a job through the virtual printer, run:".to_owned(),
+                "`escpost print file.hex --network 127.0.0.1:9100`".to_owned(),
+                "Press Ctrl+C to stop.".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn combined_status_aligns_only_addresses_and_not_the_print_guidance() {
+        let web_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9000));
+        let printer_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9100));
+
+        assert_eq!(
+            listener_status(
+                Some((web_address, true)),
+                Some((printer_address, Some(Duration::from_secs(20)))),
+            ),
+            [
+                "Virtual IP printer: 127.0.0.1:9100 (Idle timeout: 20s)".to_owned(),
+                "Web app:            http://127.0.0.1:9000/".to_owned(),
+                "API:                http://127.0.0.1:9000/api".to_owned(),
+                "To render a job through the virtual printer, run:".to_owned(),
+                "`escpost print file.hex --network 127.0.0.1:9100`".to_owned(),
                 "Press Ctrl+C to stop.".to_owned(),
             ]
         );

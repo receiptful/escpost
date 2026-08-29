@@ -12,7 +12,13 @@ use crate::error::CliError;
 use crate::features::printers::cli as printers;
 use crate::source;
 
-use super::{Request, ResolveRequest, Target, UsbTarget, print, resolve_target};
+use super::{
+    NetworkTarget, Request, ResolveRequest, ResolvedPrinter, Target, UsbTarget, print,
+    resolve_target,
+};
+
+const DEFAULT_NETWORK_HOST: &str = "127.0.0.1";
+const DEFAULT_NETWORK_PORT: u16 = 9100;
 
 #[derive(Debug, Args)]
 pub(crate) struct PrintArgs {
@@ -30,6 +36,15 @@ pub(crate) struct PrintArgs {
     /// Read printer configuration from this exact file.
     #[arg(long, value_name = "FILE")]
     pub(crate) config: Option<PathBuf>,
+
+    /// Send directly to a RAW TCP endpoint; a bare port uses 127.0.0.1 and a bare host uses port 9100.
+    #[arg(
+        long,
+        value_name = "PORT|HOST|HOST:PORT",
+        value_parser = parse_network_target,
+        conflicts_with_all = ["printer", "config"]
+    )]
+    pub(crate) network: Option<NetworkTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -47,6 +62,83 @@ impl From<InputFormat> for source::InputFormat {
             InputFormat::Binary => Self::Binary,
             InputFormat::Hex => Self::Hex,
         }
+    }
+}
+
+fn invalid_network_target(value: &str) -> String {
+    format!(
+        "invalid network target {value:?}; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT"
+    )
+}
+
+fn parse_network_port(value: &str, original: &str) -> Result<u16, String> {
+    value
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| invalid_network_target(original))
+}
+
+fn parse_network_target(value: &str) -> Result<NetworkTarget, String> {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(invalid_network_target(value));
+    }
+
+    if value.chars().all(|character| character.is_ascii_digit()) {
+        return Ok(NetworkTarget {
+            host: DEFAULT_NETWORK_HOST.to_owned(),
+            port: parse_network_port(value, value)?,
+        });
+    }
+
+    if let Some(remainder) = value.strip_prefix('[') {
+        let Some((host, suffix)) = remainder.split_once(']') else {
+            return Err(invalid_network_target(value));
+        };
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(invalid_network_target(value));
+        }
+        let port = match suffix {
+            "" => DEFAULT_NETWORK_PORT,
+            _ => parse_network_port(
+                suffix
+                    .strip_prefix(':')
+                    .ok_or_else(|| invalid_network_target(value))?,
+                value,
+            )?,
+        };
+        return Ok(NetworkTarget {
+            host: host.to_owned(),
+            port,
+        });
+    }
+
+    if value.contains(['[', ']']) {
+        return Err(invalid_network_target(value));
+    }
+
+    match value.matches(':').count() {
+        0 => Ok(NetworkTarget {
+            host: value.to_owned(),
+            port: DEFAULT_NETWORK_PORT,
+        }),
+        1 => {
+            let Some((host, port)) = value.split_once(':') else {
+                return Err(invalid_network_target(value));
+            };
+            if host.is_empty() || port.is_empty() {
+                return Err(invalid_network_target(value));
+            }
+            Ok(NetworkTarget {
+                host: host.to_owned(),
+                port: parse_network_port(port, value)?,
+            })
+        }
+        _ => Err(invalid_network_target(value)),
     }
 }
 
@@ -93,13 +185,19 @@ fn prepare_request(
         format,
         printer,
         config,
+        network,
     } = arguments;
-    let printer_name =
-        resolve_printer_name(printer, config.as_deref(), can_prompt, selector, adder)?;
-    let printer = resolve_target(ResolveRequest {
-        printer_name,
-        config,
-    })?;
+    let printer = match network {
+        Some(target) => ResolvedPrinter::direct_network(target),
+        None => {
+            let printer_name =
+                resolve_printer_name(printer, config.as_deref(), can_prompt, selector, adder)?;
+            resolve_target(ResolveRequest {
+                printer_name,
+                config,
+            })?
+        }
+    };
     let input = source::load(&source, format.into())?;
     Ok(Request {
         bytes: input.bytes,
@@ -108,7 +206,9 @@ fn prepare_request(
 }
 
 fn present(response: &super::Response) {
-    eprintln!("Printer: {}", response.printer_name);
+    if let Some(printer_name) = &response.printer_name {
+        eprintln!("Printer: {printer_name}");
+    }
     match &response.target {
         Target::Usb(target) => {
             eprintln!("Transport: usb");
@@ -219,13 +319,100 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use clap::Parser;
+
     use super::{
         InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, format_usb_target,
-        prepare_request,
+        parse_network_target, prepare_request,
     };
     use crate::application::ApplicationError;
+    use crate::cli::Cli;
     use crate::error::CliError;
     use crate::features::printing::{NetworkTarget, Target, UsbTarget};
+
+    #[test]
+    fn direct_network_target_accepts_shorthand_and_explicit_endpoints() {
+        for (input, host, port) in [
+            ("9100", "127.0.0.1", 9100),
+            ("printer.local", "printer.local", 9100),
+            ("printer.local:9200", "printer.local", 9200),
+            ("[::1]", "::1", 9100),
+            ("[::1]:9200", "::1", 9200),
+        ] {
+            assert_eq!(
+                parse_network_target(input).expect("the endpoint should parse"),
+                NetworkTarget {
+                    host: host.to_owned(),
+                    port,
+                },
+                "input {input:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn direct_network_target_rejects_ambiguous_or_invalid_endpoints() {
+        for input in [
+            "",
+            "0",
+            "65536",
+            ":9100",
+            "printer.local:",
+            "[::1",
+            "[::1]:0",
+            "::1",
+        ] {
+            let message = parse_network_target(input).expect_err("the endpoint should be rejected");
+            assert!(
+                message.contains(input),
+                "the error should name {input:?}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_network_target_rejects_whitespace_and_control_characters_in_hosts() {
+        for (input, expected) in [
+            (
+                "printer local",
+                "invalid network target \"printer local\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+            (
+                "printer\tlocal",
+                "invalid network target \"printer\\tlocal\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+            (
+                "printer\nlocal",
+                "invalid network target \"printer\\nlocal\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+            (
+                "printer\u{7f}local",
+                "invalid network target \"printer\\u{7f}local\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+        ] {
+            assert_eq!(
+                parse_network_target(input).expect_err("the endpoint should be rejected"),
+                expected,
+                "input {input:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_direct_endpoint_is_rejected_during_cli_parsing_before_source_loading() {
+        let error = Cli::try_parse_from([
+            "escpost",
+            "print",
+            "definitely-missing.hex",
+            "--network",
+            "printer local",
+        ])
+        .expect_err("the malformed endpoint should fail CLI parsing");
+        let message = error.to_string();
+
+        assert!(message.contains("invalid network target \"printer local\""));
+        assert!(!message.contains("ESC/POS input file"));
+    }
 
     #[test]
     fn interactive_selection_prepares_the_chosen_target_and_source_bytes() {
@@ -252,6 +439,7 @@ out_endpoint = \"0x01\"
                 format: InputFormat::Auto,
                 printer: None,
                 config: Some(configuration),
+                network: None,
             },
             true,
             &mut FixedSelector,
@@ -260,7 +448,7 @@ out_endpoint = \"0x01\"
         .expect("the selected printer request should be prepared");
 
         assert_eq!(request.bytes, vec![0x1b, 0x40, 0x0a]);
-        assert_eq!(request.printer.printer_name, "counter");
+        assert_eq!(request.printer.printer_name, Some("counter".to_owned()));
         assert_eq!(
             request.printer.target,
             Target::Usb(UsbTarget {
@@ -292,6 +480,7 @@ out_endpoint = \"0x01\"
                 format: InputFormat::Auto,
                 printer: None,
                 config: Some(configuration),
+                network: None,
             },
             true,
             &mut AddSelector,
@@ -300,7 +489,7 @@ out_endpoint = \"0x01\"
         .expect("the newly added printer request should be prepared");
 
         assert_eq!(request.bytes, expected);
-        assert_eq!(request.printer.printer_name, "new-printer");
+        assert_eq!(request.printer.printer_name, Some("new-printer".to_owned()));
         assert_eq!(
             request.printer.target,
             Target::Network(NetworkTarget {
@@ -332,6 +521,7 @@ port = 9100
                 format: InputFormat::Auto,
                 printer: Some("missing".to_owned()),
                 config: Some(configuration),
+                network: None,
             },
             true,
             &mut UnexpectedSelector,

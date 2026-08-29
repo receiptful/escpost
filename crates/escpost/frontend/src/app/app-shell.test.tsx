@@ -176,7 +176,7 @@ describe("App", () => {
     renderAt("/jobs");
 
     expect(screen.getByRole("heading", { name: "Print jobs" }).getAttribute("class")).toContain("sr-only");
-    expect(await screen.findByText("Waiting for first job")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Waiting for the first job." })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Open current job viewer" })).toBeNull();
     expect(
       within(screen.getByRole("navigation", { name: "Workbench navigation" }))

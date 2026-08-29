@@ -211,6 +211,5 @@ export type CurrentJobResponse = {
   receiving: boolean;
   profile: string;
   error: string | null;
-  hint?: string;
   job: CurrentJob | null;
 };

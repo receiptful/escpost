@@ -35,8 +35,6 @@ struct CurrentJobResponse {
     receiving: bool,
     profile: String,
     error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<String>,
     job: Option<JobResponse>,
 }
 
@@ -137,11 +135,6 @@ fn current_response(state: &JobStoreState) -> CurrentJobResponse {
             .map(|job| job.profile.clone())
             .unwrap_or_else(|| state.session_profile.clone()),
         error: state.error.clone(),
-        hint: if job.is_none() {
-            state.waiting_hint.clone()
-        } else {
-            None
-        },
         job,
     }
 }

@@ -121,7 +121,7 @@ physical printer.
 
 ## `escpost print`
 
-Send the source bytes unchanged to a configured printer:
+Send the source bytes unchanged to a configured printer or direct RAW TCP endpoint:
 
 ```text
 escpost print [OPTIONS] <SOURCE>
@@ -129,22 +129,32 @@ escpost print [OPTIONS] <SOURCE>
 Options:
     --format auto|binary|hex
     --printer <NAME>
+    --network <PORT|HOST|HOST:PORT>
     --config <FILE>
 ```
 
-Example:
+Examples:
 
 ```bash
 escpost print receipt.hex --printer kitchen --non-interactive
+escpost print receipt.hex --network 9100
+escpost print receipt.bin --network printer.local
+escpost print receipt.bin --network printer.local:9200
+escpost print receipt.bin --network '[::1]:9100'
 ```
 
 `--printer` refers to a name registered in `printers.toml`. If it is omitted
 at an interactive terminal, ESCPost offers the available configured printers.
 In non-interactive operation, an unresolved printer is an error.
 
-For a hexadecimal source, ESCPost decodes the text and sends the resulting
-bytes. It does not insert initialization, feed, cut, or other ESC/POS commands.
-USB and RAW TCP connection details come from the selected printer entry.
+`--network` sends directly to a RAW TCP endpoint: a bare port uses
+`127.0.0.1`, a bare host uses port `9100`, and IPv6 addresses need brackets.
+It conflicts with `--printer` and `--config`.
+
+Source bytes are decoded according to `--format` and then sent unchanged.
+ESCPost does not insert initialization, feed, cut, or other ESC/POS commands.
+USB and RAW TCP connection details otherwise come from the selected printer
+entry.
 
 `--config <FILE>` selects an exact printer configuration file for this
 invocation.
@@ -160,15 +170,10 @@ escpost serve \
   --profile REFERENCE
 ```
 
-Register that endpoint once and send sources through the ordinary printing
-path:
+Send sources directly to that endpoint:
 
 ```bash
-escpost printers add preview \
-  --transport network \
-  --host 127.0.0.1 \
-  --port 9100
-escpost print receipt.hex --printer preview
+escpost print receipt.hex --network 127.0.0.1:9100
 ```
 
 `serve` renders the captured bytes with its own profile, scale, and antialias

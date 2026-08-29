@@ -16,7 +16,6 @@ pub(super) struct JobStoreState {
     pub(super) jobs: VecDeque<Arc<RenderedJob>>,
     pub(super) error: Option<String>,
     pub(super) generation: u64,
-    pub(super) waiting_hint: Option<String>,
     pub(super) completion: Option<&'static str>,
     pub(super) receiving: usize,
     /// Profile the server renders with, shown before the first job arrives.
@@ -60,10 +59,9 @@ pub(super) struct TraceWebSheet {
 }
 
 impl JobStore {
-    /// Create a store with no job yet. The web app shows `hint` and the
-    /// `profile` until the first job arrives, which suits a listener that
-    /// renders on demand with a known profile.
-    pub(crate) fn awaiting_jobs(profile: String, hint: String, antialias: bool) -> Self {
+    /// Create a store with no job yet, retaining its profile until a job
+    /// arrives so a listener can render on demand with a known profile.
+    pub(crate) fn awaiting_jobs(profile: String, antialias: bool) -> Self {
         let runtime_status = JobRuntimeStatus {
             receiving: false,
             jobs_processed: 0,
@@ -74,7 +72,6 @@ impl JobStore {
                 jobs: VecDeque::new(),
                 error: None,
                 generation: 0,
-                waiting_hint: Some(hint),
                 completion: None,
                 receiving: 0,
                 session_profile: profile,
@@ -198,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_subscriber_starts_current_and_receives_public_changes() {
-        let store = JobStore::awaiting_jobs("REFERENCE".into(), "Waiting".into(), false);
+        let store = JobStore::awaiting_jobs("REFERENCE".into(), false);
         let mut status = store.subscribe_runtime_status();
 
         assert_eq!(
@@ -226,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_subscribers_are_independent_and_may_disconnect() {
-        let store = JobStore::awaiting_jobs("REFERENCE".into(), "Waiting".into(), false);
+        let store = JobStore::awaiting_jobs("REFERENCE".into(), false);
         let dropped = store.subscribe_runtime_status();
         let mut remaining = store.subscribe_runtime_status();
         drop(dropped);
@@ -243,7 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_capture_does_not_publish_when_receiving_stays_true() {
-        let store = JobStore::awaiting_jobs("REFERENCE".into(), "Waiting".into(), false);
+        let store = JobStore::awaiting_jobs("REFERENCE".into(), false);
         let mut status = store.subscribe_runtime_status();
         let _ = status.borrow_and_update();
 

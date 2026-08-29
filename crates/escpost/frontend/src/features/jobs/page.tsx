@@ -4,6 +4,7 @@ import { groupJobCommands } from "./model";
 import { revealWithin } from "./reveal";
 import { SheetPreview } from "./sheet-preview";
 import { useCurrentJob } from "./use-current-job";
+import { useServerStatus } from "../../app/server-status-data";
 
 const PAPER_MARGIN_KEY = "escpost.paper_margin";
 
@@ -18,6 +19,7 @@ function readPaperMargin() {
 
 export function JobsPage() {
   const resource = useCurrentJob();
+  const status = useServerStatus();
   const job = resource.data?.job ?? null;
   const grouped = useMemo(() => job ? groupJobCommands(job) : null, [job]);
   const data = resource.data;
@@ -108,6 +110,7 @@ export function JobsPage() {
           resource={resource}
           paperMargin={paperMargin}
           onPaperMarginChange={changePaperMargin}
+          serverStatus={status}
         />
       )}
 
@@ -120,6 +123,7 @@ export function JobsPage() {
             resource={resource}
             paperMargin={paperMargin}
             onPaperMarginChange={changePaperMargin}
+            serverStatus={status}
           />
           <div
             ref={(element) => { sheetWorkspace.current = element; }}
@@ -181,13 +185,15 @@ export function JobsPage() {
   );
 }
 
-function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
+function JobStatus({ resource, paperMargin, onPaperMarginChange, serverStatus }: {
   resource: ReturnType<typeof useCurrentJob>;
   paperMargin: boolean;
   onPaperMarginChange: (enabled: boolean) => void;
+  serverStatus: ReturnType<typeof useServerStatus>;
 }) {
   const data = resource.data;
   const job = data?.job;
+  const virtualPrinterAddress = serverStatus.snapshot?.virtual_printer?.address ?? null;
   return (
     <div class="space-y-3" aria-live="polite">
       <div role="group" aria-label="Current job status" class="flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 p-4">
@@ -223,8 +229,26 @@ function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
       ))}
       {!resource.loading && data && !job && !data.error && (
         <div class="min-h-56 rounded-box border border-dashed border-base-300 bg-base-100 p-8">
-          <h2 class="text-xl font-bold">Waiting for first job</h2>
-          {data.hint && <p class="mt-2 text-base-content/65">{data.hint}</p>}
+          {data.receiving ? (
+            <h2 class="text-xl font-bold">Receiving a job…</h2>
+          ) : (
+            <>
+              <h2 class="text-xl font-bold">Waiting for the first job.</h2>
+              {virtualPrinterAddress ? (
+                <p class="mt-2 text-base-content/65">
+                  Configure a local ERP or POS application to send RAW ESC/POS jobs to {virtualPrinterAddress}.
+                  <br /><br />
+                  Or send one from the command line:
+                  <br />
+                  <code>escpost print file.hex --network {virtualPrinterAddress}</code>
+                </p>
+              ) : serverStatus.snapshot ? (
+                <p class="mt-2 text-base-content/65">
+                  Start the server with --listen to accept RAW ESC/POS print jobs.
+                </p>
+              ) : null}
+            </>
+          )}
         </div>
       )}
     </div>

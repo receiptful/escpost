@@ -131,13 +131,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         None => None,
     };
 
-    let waiting_hint = match raw {
-        Some((_, address)) => format!(
-            "Waiting for the first job. Configure a local ERP or POS application to send its RAW ESC/POS print jobs to {address}."
-        ),
-        None => "Waiting for the first job. Start the server with --listen to accept RAW ESC/POS print jobs.".to_owned(),
-    };
-    let jobs = web::JobStore::awaiting_jobs(arguments.profile.clone(), waiting_hint, antialias);
+    let jobs = web::JobStore::awaiting_jobs(arguments.profile.clone(), antialias);
 
     let raw_address = raw.as_ref().map(|(_, address)| *address);
     // Accept jobs while the web server runs. The server owns the foreground and

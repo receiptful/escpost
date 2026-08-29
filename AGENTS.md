@@ -16,6 +16,48 @@ Build the image once (and after changing the `Dockerfile`):
 docker compose build
 ```
 
+### Warm a new worktree from the main checkout
+
+Docker Compose gives each worktree its own named volumes. Before the first
+build in a new worktree, seed those volumes from the main checkout to reuse
+downloaded dependencies, compiled artifacts, and the developer's saved printer
+configuration. Run this from the new worktree while none of its Compose
+services are running:
+
+```bash
+set -eu
+
+main_compose_project=escpost
+worktree_compose_project=$(basename "$PWD")
+
+# Create the destination volumes without starting the services.
+docker compose create
+
+for volume in \
+  cargo-home \
+  cargo-target \
+  python-venv \
+  frontend-node-modules \
+  escpost-config
+do
+  # Inspect first: `docker run -v` would silently create a misspelled volume.
+  docker volume inspect "${main_compose_project}_${volume}" >/dev/null
+  docker volume inspect "${worktree_compose_project}_${volume}" >/dev/null
+
+  docker run --rm \
+    -v "${main_compose_project}_${volume}:/source:ro" \
+    -v "${worktree_compose_project}_${volume}:/destination" \
+    escpost-development \
+    sh -c 'cp -a /source/. /destination/'
+done
+```
+
+The default project name is the checkout directory name. Adjust
+`main_compose_project` or `worktree_compose_project` if Compose was invoked
+with `--project-name` or `COMPOSE_PROJECT_NAME`; `docker volume ls` shows the
+actual names. If the worktree has already run builds, stop its containers
+before copying rather than modifying a volume that Cargo or Bun is using.
+
 ### Common commands
 
 ```bash
