@@ -49,10 +49,6 @@ set-version version:
 generate-profile-pack:
     docker compose run --rm --entrypoint cargo escpost run -q -p escpost-profiles --bin compile-profile-pack -- crates/escpost-profiles/profiles/.escpos-printer-db/dist/capabilities.json crates/escpost-profiles/profiles crates/escpost-profiles/profiles/.generated/profiles.json
 
-# Build and test the Python render binding.
-python-test:
-    scripts/python-binding-test
-
 # Cargo treats ignored packaged `dist/` as dirty; this check makes `--allow-dirty` safe.
 [private]
 prepare-publish:

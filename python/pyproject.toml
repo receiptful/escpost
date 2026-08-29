@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin==1.14.1"]
+build-backend = "maturin"
+
+[project]
+name = "escpost"
+dynamic = ["version"]
+description = "Dot-accurate ESC/POS receipt renderer with a Python binding"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+]
+# The package is a thin render binding over the Rust engine and needs no runtime
+# dependencies. The developer CLI is a separate Rust executable.
+dependencies = []
+
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+python-source = "src"
+module-name = "escpost._native"
