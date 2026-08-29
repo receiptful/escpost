@@ -1,16 +1,6 @@
 # Rust
 /target/
 
-# Python bindings and development environments
-/python/.venv/
-__pycache__/
-*.py[cod]
-*.so
-*.egg-info/
-/.pytest_cache/
-/.mypy_cache/
-/.ruff_cache/
-
 # Distribution artifacts
 /dist/
 /crates/escpost/frontend/dist/
