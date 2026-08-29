@@ -87,6 +87,12 @@ publish version: (_require-release-branch) (_require-clean-worktree) (set-versio
     git push
     git push --tags
     scripts/publish-crates {{version}}
+    @printf '\nReleased {{version}}:\n'; \
+     printf '  - committed the version bump and tagged v{{version}}\n'; \
+     printf '  - pushed the commit and the tag to origin\n'; \
+     printf '  - published the crates to crates.io\n'; \
+     printf '\nNext: run `just release {{version}}` in receiptful/homebrew-tap\n'; \
+     printf 'to point the Homebrew formula at this release.\n'
 
 # Releases are cut from main: the recipe commits, tags, and pushes, so running
 # it elsewhere would tag the wrong history. Being behind the remote is refused
