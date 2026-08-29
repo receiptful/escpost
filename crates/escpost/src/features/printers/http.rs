@@ -93,11 +93,16 @@ async fn list_printer_events(
 ) -> Result<Response, ApiError> {
     let Query(_) = query.map_err(|_| ApiError::invalid_query())?;
     let mut subscription = state.printer_monitor.subscribe();
+    // A browser holds this stream open for as long as it shows the printer
+    // list. The server waits for every open request before it stops, so the
+    // stream also ends when the server starts to stop.
+    let mut shutdown = state.shutdown.clone();
     let (sender, event_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         loop {
             let snapshot = tokio::select! {
                 _ = sender.closed() => break,
+                _ = shutdown.changed() => break,
                 snapshot = subscription.next() => snapshot,
             };
             let Some(snapshot) = snapshot else {
@@ -105,15 +110,17 @@ async fn list_printer_events(
             };
             let response = ListResponse::try_from(snapshot)
                 .expect("a UTC inventory snapshot should always format as RFC 3339");
-            if sender
-                .send(Ok(Event::default()
-                    .data(serde_json::to_string(&response).expect(
-                        "printer inventory snapshots contain only serializable fields",
-                    ))))
-                .await
-                .is_err()
-            {
-                break;
+            let event = Event::default().data(
+                serde_json::to_string(&response)
+                    .expect("printer inventory snapshots contain only serializable fields"),
+            );
+            tokio::select! {
+                sent = sender.send(Ok(event)) => {
+                    if sent.is_err() {
+                        break;
+                    }
+                }
+                _ = shutdown.changed() => break,
             }
         }
     });

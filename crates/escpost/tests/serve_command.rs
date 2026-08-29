@@ -907,13 +907,17 @@ fn http_get_once(port: u16, path: &str) -> std::io::Result<Vec<u8>> {
 }
 
 fn open_status_events(port: u16) -> BufReader<TcpStream> {
+    open_events(port, "/api/status/events")
+}
+
+fn open_events(port: u16, path: &str) -> BufReader<TcpStream> {
     let mut stream =
         TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("the web server should accept HTTP");
     write!(
         stream,
-        "GET /api/status/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
     )
-    .expect("the status event request should be writable");
+    .expect("the event request should be writable");
     BufReader::new(stream)
 }
 
@@ -977,4 +981,56 @@ fn response_header<'a>(response: &'a [u8], requested: &str) -> Option<&'a str> {
 fn stop(child: &mut Child) {
     child.kill().expect("the serve command should be stoppable");
     child.wait().expect("the serve command should be reapable");
+}
+
+/// The web app keeps its event streams open for as long as a browser shows
+/// them. Those streams must not hold the server: Ctrl+C has to stop the command
+/// while a browser is still connected.
+#[test]
+fn serve_stops_on_an_interrupt_while_the_event_streams_are_open() {
+    let mut child = start_serve_on_ephemeral_ports();
+    let (_raw_port, web_port) = read_listen_ports(&mut child);
+    let mut events = open_status_events(web_port);
+    next_status_event(&mut events);
+    let _printers = open_events(web_port, "/api/printers/list/events");
+
+    interrupt(&child);
+
+    let status = wait_for_exit(&mut child, Duration::from_secs(10));
+    let Some(status) = status else {
+        stop(&mut child);
+        panic!("an open status stream held the server open after an interrupt");
+    };
+    assert!(
+        status.success(),
+        "an interrupted server should stop cleanly, got {status}"
+    );
+}
+
+/// Send SIGINT to the child, which is what the terminal does on Ctrl+C. `sh`'s
+/// builtin `kill` sends it, so the test needs no libc binding of its own.
+fn interrupt(child: &Child) {
+    let identifier = child.id();
+    let sent = Command::new("sh")
+        .args(["-c", &format!("kill -INT {identifier}")])
+        .status()
+        .expect("the kill command should run");
+    assert!(sent.success(), "the interrupt should reach the server");
+}
+
+/// Wait up to `patience` for the child to exit. Returns `None` while it runs.
+fn wait_for_exit(child: &mut Child, patience: Duration) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + patience;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .expect("the child status should be readable")
+        {
+            return Some(status);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }

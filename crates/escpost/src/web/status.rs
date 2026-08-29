@@ -100,19 +100,27 @@ pub(super) async fn status(
 pub(super) async fn events(State(state): State<WebState>) -> Response {
     let mut receiver = state.jobs.subscribe_runtime_status();
     let metadata = state.status_metadata.clone();
+    // A browser holds this stream open for as long as it shows the web app. The
+    // server waits for every open request before it stops, so the stream also
+    // ends when the server starts to stop. Without this, Ctrl+C does nothing
+    // while a browser is connected.
+    let mut shutdown = state.shutdown.clone();
     let (sender, event_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         loop {
             let runtime = receiver.borrow_and_update().clone();
-            if sender
-                .send(Ok(status_event(&metadata, &runtime)))
-                .await
-                .is_err()
-            {
-                break;
+            let event = status_event(&metadata, &runtime);
+            tokio::select! {
+                sent = sender.send(Ok(event)) => {
+                    if sent.is_err() {
+                        break;
+                    }
+                }
+                _ = shutdown.changed() => break,
             }
             tokio::select! {
                 _ = sender.closed() => break,
+                _ = shutdown.changed() => break,
                 changed = receiver.changed() => {
                     if changed.is_err() {
                         break;
