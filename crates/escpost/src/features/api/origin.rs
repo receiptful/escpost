@@ -6,16 +6,24 @@ use axum::response::{IntoResponse, Response};
 use super::ApiState;
 use super::error::ApiFailure;
 
-const EXTENSION_SCHEME: &str = "chrome-extension://";
+/// One per browser engine. Chrome and Edge share a scheme, being the same
+/// engine; Firefox and Safari each have their own. A scheme absent from this
+/// list is not a browser we cannot support, it is one whose extension would be
+/// rejected here before anything else could go wrong.
+const EXTENSION_SCHEMES: [&str; 3] = [
+    "chrome-extension://",     // Chrome, Edge, and other Chromium builds
+    "moz-extension://",        // Firefox
+    "safari-web-extension://", // Safari
+];
 
 /// D2. Accept the extension, a local process, or nothing; reject every other
 /// origin.
 ///
-/// This is a negative filter and cannot be anything more: Chrome sends no
+/// This is a negative filter and cannot be anything more: a browser sends no
 /// `Origin` at all on an extension's GET requests, so an absent header has to
 /// be accepted, which means no request can be *proved* to come from the
 /// extension. What the filter does buy is that a remote page cannot reach this
-/// port even if Chrome's own local-network policy is one day relaxed.
+/// port even if a browser's own local-network policy is one day relaxed.
 pub(super) fn origin_allowed(origin: Option<&str>, pinned_extension_id: Option<&str>) -> bool {
     // Absent entirely: curl, a local backend, or an extension GET (L3).
     let Some(origin) = origin else {
@@ -25,7 +33,7 @@ pub(super) fn origin_allowed(origin: Option<&str>, pinned_extension_id: Option<&
     if origin == "null" {
         return true;
     }
-    let Some(id) = origin.strip_prefix(EXTENSION_SCHEME) else {
+    let Some(id) = extension_id(origin) else {
         return false;
     };
     // An origin has no path; a slash here means this is not one.
@@ -41,6 +49,13 @@ pub(super) fn origin_allowed(origin: Option<&str>, pinned_extension_id: Option<&
         // way — while adding exactly that failure mode back.
         None => true,
     }
+}
+
+/// The id an extension origin carries, or None when the origin is not one.
+fn extension_id(origin: &str) -> Option<&str> {
+    EXTENSION_SCHEMES
+        .iter()
+        .find_map(|scheme| origin.strip_prefix(scheme))
 }
 
 pub(super) async fn guard(State(state): State<ApiState>, request: Request, next: Next) -> Response {
@@ -69,6 +84,38 @@ mod tests {
     #[test]
     fn a_null_origin_is_accepted() {
         assert!(origin_allowed(Some("null"), None));
+    }
+
+    #[test]
+    fn every_browser_engine_has_its_own_extension_scheme() {
+        for origin in [
+            "chrome-extension://cnifebiebidolpmlmgcghpopggfcklmc",
+            "moz-extension://a1b2c3d4-0000-4000-8000-000000000000",
+            "safari-web-extension://A1B2C3D4-0000-4000-8000-000000000000",
+        ] {
+            assert!(
+                origin_allowed(Some(origin), None),
+                "{origin} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scheme_that_merely_resembles_an_extension_is_rejected() {
+        assert!(!origin_allowed(Some("web-extension://abc"), None));
+        assert!(!origin_allowed(Some("https://moz-extension.example"), None));
+    }
+
+    #[test]
+    fn pinning_an_id_applies_whatever_the_scheme() {
+        assert!(origin_allowed(
+            Some("moz-extension://the-id"),
+            Some("the-id")
+        ));
+        assert!(!origin_allowed(
+            Some("moz-extension://another-id"),
+            Some("the-id")
+        ));
     }
 
     #[test]
