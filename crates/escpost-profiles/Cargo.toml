@@ -16,9 +16,8 @@ include = [
     "LICENSE",
     "src/**",
     "tests/**",
-    "profiles/.generated/profiles.json",
-    "profiles/NT-5890K/**",
-    "profiles/REFERENCE/**",
+    "profiles/**",
+    "!profiles/.escpos-printer-db/**",
     "calibration-job.hex",
     "CALIBRATION.md",
 ]
