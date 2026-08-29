@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+
+"""Publish the workspace's release crates to crates.io, in dependency order.
+
+`cargo publish` is not idempotent: uploading a version that already exists
+fails, and crates.io offers yank rather than delete. A release that dies partway
+therefore cannot simply be retried, because the crates that did upload are now
+permanent. This publishes only the crates the registry does not already have, so
+a failed release can be resumed by running it again.
+"""
+
+import json
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+
+USER_AGENT = "escpost-release (https://github.com/receiptful/escpost)"
+
+# crates.io serves a crate a moment after the upload returns, and a dependent
+# cannot be published until the registry has the crate it depends on.
+POLL_ATTEMPTS = 30
+POLL_SECONDS = 10
+
+
+def workspace_packages() -> list[dict]:
+    output = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return json.loads(output)["packages"]
+
+
+def release_order(packages: list[dict]) -> list[dict]:
+    """Return the publishable packages, dependencies before dependents."""
+    # `publish = false` serialises as an empty allow-list.
+    publishable = {p["name"]: p for p in packages if p.get("publish") != []}
+
+    ordered: list[dict] = []
+    remaining = dict(publishable)
+    while remaining:
+        ready = [
+            name
+            for name, package in remaining.items()
+            if not any(
+                dependency["name"] in remaining
+                for dependency in package["dependencies"]
+                if dependency["name"] != name
+            )
+        ]
+        if not ready:
+            raise ValueError(f"dependency cycle among {sorted(remaining)}")
+        for name in sorted(ready):
+            ordered.append(remaining.pop(name))
+    return ordered
+
+
+def published(name: str, version: str) -> bool:
+    request = urllib.request.Request(
+        f"https://crates.io/api/v1/crates/{name}/{version}",
+        headers={"User-Agent": USER_AGENT},
+    )
+    try:
+        urllib.request.urlopen(request, timeout=60).read()
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False
+        raise
+    return True
+
+
+def await_availability(name: str, version: str) -> None:
+    for _ in range(POLL_ATTEMPTS):
+        if published(name, version):
+            return
+        time.sleep(POLL_SECONDS)
+    raise ValueError(f"{name} {version} did not appear on crates.io")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(f"usage: {sys.argv[0].split('/')[-1]} VERSION", file=sys.stderr)
+        return 2
+    version = argv[0]
+
+    packages = workspace_packages()
+    ordered = release_order(packages)
+
+    mismatched = [p["name"] for p in ordered if p["version"] != version]
+    if mismatched:
+        raise ValueError(
+            f"{', '.join(mismatched)} are not at {version}; run `just set-version {version}` first"
+        )
+
+    for package in ordered:
+        name = package["name"]
+        if published(name, version):
+            print(f"{name} {version} is already on crates.io, skipping")
+            continue
+        print(f"publishing {name} {version}")
+        subprocess.run(
+            ["cargo", "publish", "-p", name, "--locked", "--allow-dirty"],
+            check=True,
+        )
+        await_availability(name, version)
+
+    print(f"all release crates are on crates.io at {version}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (ValueError, urllib.error.URLError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as error:
+        print(f"error: {' '.join(error.cmd)} failed", file=sys.stderr)
+        sys.exit(error.returncode)

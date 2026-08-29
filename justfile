@@ -61,6 +61,30 @@ prepare-publish:
 publish-dry-run: prepare-publish
     cargo publish --workspace --exclude escpost-python --locked --allow-dirty --dry-run
 
-[doc("Publish every release crate to crates.io in dependency order.")]
-publish: prepare-publish
-    cargo publish --workspace --exclude escpost-python --locked --allow-dirty
+# Set the release version, test it, record it in git, and upload it. The
+# working tree must be clean first, so the only change committed is the version
+# itself. Everything before the prompt is reversible; nothing after it is,
+# because crates.io offers yank rather than delete.
+#
+# Resumable: each step is skipped when it is already done, so a release that
+# fails partway can be rerun without unpicking what already succeeded.
+[doc("Set the version, test, tag, push, and publish to crates.io.")]
+publish version: (_require-clean-worktree) (set-version version) test
+    @git --no-pager diff --stat
+    @printf '\nPublish {{version}} to crates.io? Uploads cannot be undone. [y/N] '; \
+     read -r reply; \
+     case "$reply" in \
+       [yY]|[yY][eE][sS]) ;; \
+       *) echo "Aborted. The version change is left in your working tree."; exit 1 ;; \
+     esac
+    @git diff --quiet || git commit -am "escpost {{version}}"
+    @git rev-parse -q --verify "refs/tags/v{{version}}" > /dev/null \
+      || git tag "v{{version}}"
+    git push
+    git push --tags
+    scripts/publish-crates {{version}}
+
+[private]
+_require-clean-worktree:
+    @test -z "$(git status --porcelain --untracked-files=all)" \
+      || { echo "Refusing to release from a dirty worktree."; git status --short; exit 1; }
