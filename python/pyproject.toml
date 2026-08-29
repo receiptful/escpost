@@ -23,4 +23,3 @@ dependencies = []
 manifest-path = "rust/Cargo.toml"
 python-source = "src"
 module-name = "escpost._native"
-locked = true
