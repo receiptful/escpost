@@ -14,7 +14,7 @@ x-development-service: &development-service
     - python-venv:/workspace/.venv
 
 x-frontend-service: &frontend-service
-  image: oven/bun:1.3.14
+  image: oven/bun:1.4.0
   network_mode: host
   working_dir: /workspace/crates/escpost/frontend
   user: "0:0"
