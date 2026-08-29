@@ -47,8 +47,12 @@ pub(crate) struct RenderArgs {
     #[arg(long)]
     pub(crate) browser: bool,
 
-    /// Exact address for the web app.
-    #[arg(long)]
+    /// Web app listener [default IP: 127.0.0.1].
+    #[arg(
+        long,
+        value_name = "PORT|IP:PORT",
+        value_parser = crate::cli::parse_listener_address
+    )]
     pub(crate) web_listen: Option<SocketAddr>,
 
     /// Rerender a filesystem source whenever it changes.

@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[test]
-fn serve_help_contract_is_unchanged() {
+fn serve_help_contract_documents_listener_port_shorthand() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["serve", "--help"])
         .output()
@@ -20,16 +20,16 @@ Capture RAW TCP print jobs and preview them in the web app
 Usage: escpost serve [OPTIONS]
 
 Options:
-      --non-interactive          Never prompt for missing values
-      --profile <PROFILE>        Printer profile used to render captured jobs [default: REFERENCE]
-      --listen [<ADDRESS>]       Start the virtual IP printer. Without an address, the first free loopback port from 9100 through 9109 is used
-      --web-listen [<ADDRESS>]   Start the web and API server. Without an address, the first free loopback port from 9000 through 9099 is used
-      --idle-timeout <SECONDS>   Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]
-      --scale <N>                Preview pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 3]
-      --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias=false for faithful 1-bit dots [default: true] [possible values: true, false]
-      --no-open                  Do not open the web app in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
-      --no-web-app               Serve the API but not the web application. Needs --web-listen. Use it when no web application is necessary, or when a Vite development server serves the web application and sends each /api request to this server
-  -h, --help                     Print help
+      --non-interactive              Never prompt for missing values
+      --profile <PROFILE>            Printer profile used to render captured jobs [default: REFERENCE]
+      --listen [<PORT|IP:PORT>]      Start virtual IP printer [defaults: IP 127.0.0.1; port first free 9100–9109]
+      --web-listen [<PORT|IP:PORT>]  Start web/API server [defaults: IP 127.0.0.1; port first free 9000–9099]
+      --idle-timeout <SECONDS>       Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]
+      --scale <N>                    Preview pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 3]
+      --antialias [<ANTIALIAS>]      Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias=false for faithful 1-bit dots [default: true] [possible values: true, false]
+      --no-open                      Do not open the web app in the default browser on startup. Auto-open is also skipped with --non-interactive, without a terminal, or when the BROWSER=none or CI environment variables are set
+      --no-web-app                   Serve the API but not the web application. Needs --web-listen. Use it when no web application is necessary, or when a Vite development server serves the web application and sends each /api request to this server
+  -h, --help                         Print help
 "
     );
 }

@@ -1,3 +1,5 @@
+use std::net::{Ipv4Addr, SocketAddr};
+
 use clap::{Parser, Subcommand};
 
 use crate::features::capture::cli::ServeArgs;
@@ -7,6 +9,15 @@ use crate::features::profiles::cli::ProfilesArgs;
 use crate::features::rendering::cli::RenderArgs;
 
 pub(crate) mod web;
+
+pub(crate) fn parse_listener_address(value: &str) -> Result<SocketAddr, String> {
+    if let Ok(port) = value.parse::<u16>() {
+        return Ok(SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
+    }
+    value
+        .parse()
+        .map_err(|_| "expected a port or an IP address with a port".to_owned())
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -41,4 +52,42 @@ pub(crate) enum Command {
 
     /// Browse the embedded catalog of supported printer profiles.
     Profiles(ProfilesArgs),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
+    use clap::Parser;
+
+    use super::{Cli, Command};
+
+    #[test]
+    fn bare_listener_ports_resolve_to_ipv4_loopback() {
+        let expected_raw = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9101));
+        let expected_web = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9001));
+
+        let serve = Cli::try_parse_from([
+            "escpost",
+            "serve",
+            "--listen",
+            "9101",
+            "--web-listen",
+            "9001",
+        ])
+        .expect("serve should accept bare listener ports");
+        let Command::Serve(serve) = serve.command else {
+            panic!("serve arguments should parse as the serve command");
+        };
+        assert_eq!(serve.listen, Some(Some(expected_raw)));
+        assert_eq!(serve.web_listen, Some(Some(expected_web)));
+
+        let render =
+            Cli::try_parse_from(["escpost", "render", "receipt.hex", "--web-listen", "9001"])
+                .expect("render should accept a bare web listener port");
+        let Command::Render(render) = render.command else {
+            panic!("render arguments should parse as the render command");
+        };
+        assert_eq!(render.web_listen, Some(expected_web));
+    }
 }

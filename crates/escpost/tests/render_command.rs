@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-fn render_help_contract_is_unchanged() {
+fn render_help_contract_documents_listener_port_shorthand() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["render", "--help"])
         .output()
@@ -23,19 +23,19 @@ Arguments:
   <SOURCE>  Raw ESC/POS file, hexadecimal file, case directory, or - for stdin
 
 Options:
-      --format <FORMAT>          Input representation [default: auto] [possible values: auto, binary, hex]
-      --non-interactive          Never prompt for missing values
-      --profile <PROFILE>        Printer profile used to interpret the input
-  -o, --output <OUTPUT>          Write one PNG to this path, or use - for stdout
-      --output-dir <OUTPUT_DIR>  Write every rendered sheet and a manifest to this directory
-      --sheet <SHEET>            Select one one-based sheet for single-PNG output
-      --web                      Start the local web app and keep running
-      --browser                  Start the web app and open it in the default browser
-      --web-listen <WEB_LISTEN>  Exact address for the web app
-      --watch                    Rerender a filesystem source whenever it changes
-      --scale <N>                Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
-      --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
-  -h, --help                     Print help
+      --format <FORMAT>            Input representation [default: auto] [possible values: auto, binary, hex]
+      --non-interactive            Never prompt for missing values
+      --profile <PROFILE>          Printer profile used to interpret the input
+  -o, --output <OUTPUT>            Write one PNG to this path, or use - for stdout
+      --output-dir <OUTPUT_DIR>    Write every rendered sheet and a manifest to this directory
+      --sheet <SHEET>              Select one one-based sheet for single-PNG output
+      --web                        Start the local web app and keep running
+      --browser                    Start the web app and open it in the default browser
+      --web-listen <PORT|IP:PORT>  Web app listener [default IP: 127.0.0.1]
+      --watch                      Rerender a filesystem source whenever it changes
+      --scale <N>                  Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
+      --antialias [<ANTIALIAS>]    Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
+  -h, --help                       Print help
 "
     );
 }

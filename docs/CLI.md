@@ -71,7 +71,7 @@ Options:
     --sheet <NUMBER>
     --web
     --browser
-    --web-listen <ADDRESS>
+    --web-listen <PORT|IP:PORT>
     --watch
     --scale <N>
     --antialias[=true|false]
@@ -126,8 +126,9 @@ changes and implies web mode.
 escpost render receipt.hex --profile REFERENCE --web --watch
 ```
 
-Use `--web-listen <IP:PORT>` to request an exact address. Omitting it selects
-the first available loopback port from 9000 through 9099. Port `0` asks the
+Use `--web-listen <PORT>` to bind that port on `127.0.0.1`, or
+`--web-listen <IP:PORT>` to request an exact address. Omitting it selects the
+first available loopback port from 9000 through 9099. Port `0` asks the
 operating system to choose a free port. Binding to a non-loopback address
 exposes the receipt preview to the corresponding network.
 
@@ -734,8 +735,8 @@ escpost serve [OPTIONS]
 
 Options:
     --profile <PROFILE>
-    --listen [<ADDRESS>]
-    --web-listen [<ADDRESS>]
+    --listen [<PORT|IP:PORT>]
+    --web-listen [<PORT|IP:PORT>]
     --idle-timeout <SECONDS>
     --scale <N>
     --antialias[=true|false]
@@ -753,10 +754,11 @@ escpost serve \
 ```
 
 `--listen` starts the virtual IP printer and `--web-listen` starts the web and
-API server. Each flag accepts an address. Without one, the virtual IP printer
-selects the first free loopback port from 9100 through 9109 and the web server
-selects one from 9000 through 9099. A `serve` without either flag is an error,
-because it would start nothing.
+API server. Each flag accepts an exact `IP:PORT` address or a bare port, which
+binds to `127.0.0.1`. Without a value, the virtual IP printer selects the first
+free loopback port from 9100 through 9109 and the web server selects one from
+9000 through 9099. A `serve` without either flag is an error, because it would
+start nothing.
 
 `--no-web-app` needs `--web-listen`. The server then answers the API but not
 the web application, which suits a Vite development server that serves the web

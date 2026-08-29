@@ -29,14 +29,22 @@ pub(crate) struct ServeArgs {
     #[arg(long, default_value = "REFERENCE")]
     pub(crate) profile: String,
 
-    /// Start the virtual IP printer. Without an address, the first free loopback
-    /// port from 9100 through 9109 is used.
-    #[arg(long, value_name = "ADDRESS", num_args = 0..=1)]
+    /// Start virtual IP printer [defaults: IP 127.0.0.1; port first free 9100–9109].
+    #[arg(
+        long,
+        value_name = "PORT|IP:PORT",
+        num_args = 0..=1,
+        value_parser = crate::cli::parse_listener_address
+    )]
     pub(crate) listen: Option<Option<SocketAddr>>,
 
-    /// Start the web and API server. Without an address, the first free loopback port
-    /// from 9000 through 9099 is used.
-    #[arg(long, value_name = "ADDRESS", num_args = 0..=1)]
+    /// Start web/API server [defaults: IP 127.0.0.1; port first free 9000–9099].
+    #[arg(
+        long,
+        value_name = "PORT|IP:PORT",
+        num_args = 0..=1,
+        value_parser = crate::cli::parse_listener_address
+    )]
     pub(crate) web_listen: Option<Option<SocketAddr>>,
 
     /// Complete a held-open connection's job after this many seconds of silence.
