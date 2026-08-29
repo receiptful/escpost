@@ -80,7 +80,11 @@ fn parse_network_port(value: &str, original: &str) -> Result<u16, String> {
 }
 
 fn parse_network_target(value: &str) -> Result<NetworkTarget, String> {
-    if value.is_empty() || value.trim() != value {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
         return Err(invalid_network_target(value));
     }
 
@@ -315,11 +319,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use clap::Parser;
+
     use super::{
         InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, format_usb_target,
         parse_network_target, prepare_request,
     };
     use crate::application::ApplicationError;
+    use crate::cli::Cli;
     use crate::error::CliError;
     use crate::features::printing::{NetworkTarget, Target, UsbTarget};
 
@@ -361,6 +368,50 @@ mod tests {
                 "the error should name {input:?}: {message}"
             );
         }
+    }
+
+    #[test]
+    fn direct_network_target_rejects_whitespace_and_control_characters_in_hosts() {
+        for (input, expected) in [
+            (
+                "printer local",
+                "invalid network target \"printer local\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+            (
+                "printer\tlocal",
+                "invalid network target \"printer\\tlocal\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+            (
+                "printer\nlocal",
+                "invalid network target \"printer\\nlocal\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+            (
+                "printer\u{7f}local",
+                "invalid network target \"printer\\u{7f}local\"; expected PORT, HOST, HOST:PORT, [IPv6], or [IPv6]:PORT",
+            ),
+        ] {
+            assert_eq!(
+                parse_network_target(input).expect_err("the endpoint should be rejected"),
+                expected,
+                "input {input:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_direct_endpoint_is_rejected_during_cli_parsing_before_source_loading() {
+        let error = Cli::try_parse_from([
+            "escpost",
+            "print",
+            "definitely-missing.hex",
+            "--network",
+            "printer local",
+        ])
+        .expect_err("the malformed endpoint should fail CLI parsing");
+        let message = error.to_string();
+
+        assert!(message.contains("invalid network target \"printer local\""));
+        assert!(!message.contains("ESC/POS input file"));
     }
 
     #[test]

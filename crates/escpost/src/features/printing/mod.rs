@@ -26,7 +26,7 @@ pub(crate) struct ResolveRequest {
     pub(crate) config: Option<PathBuf>,
 }
 
-/// A configured printer resolved to owned connection facts before source I/O.
+/// A configured or direct printer resolved to owned connection facts before source I/O.
 pub(crate) struct ResolvedPrinter {
     printer_name: Option<String>,
     target: Target,
@@ -47,7 +47,7 @@ pub(crate) struct Request {
     pub(crate) printer: ResolvedPrinter,
 }
 
-/// Facts about the target selected from printer configuration.
+/// Facts about the target used for a completed print.
 pub(crate) struct Response {
     pub(crate) printer_name: Option<String>,
     pub(crate) bytes_sent: usize,

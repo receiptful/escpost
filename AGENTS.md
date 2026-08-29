@@ -25,6 +25,8 @@ configuration. Run this from the new worktree while none of its Compose
 services are running:
 
 ```bash
+set -eu
+
 main_compose_project=escpost
 worktree_compose_project=$(basename "$PWD")
 
