@@ -137,7 +137,7 @@ fn serve_captures_a_raw_job_and_previews_its_sheets() {
     assert_eq!(waiting["job"], serde_json::Value::Null);
     assert_eq!(waiting["receiving"], false);
     assert_eq!(waiting["profile"], "REFERENCE");
-    assert!(waiting["hint"].as_str().is_some());
+    assert!(waiting.get("hint").is_none());
 
     // A RAW/AppSocket client sends one job and closes the connection, which is
     // the default end-of-job boundary.
@@ -452,15 +452,17 @@ fn serve_viewer_shows_instructions_before_the_first_job() {
     wait_until_listening(&mut child, web_port);
 
     let metadata = render_metadata(web_port);
+    let status = status_metadata(web_port);
     stop(&mut child);
 
     assert!(metadata["job"].is_null(), "no job has been captured yet");
-    let hint = metadata["hint"]
-        .as_str()
-        .expect("an idle viewer should carry a waiting hint");
     assert!(
-        hint.contains(&format!("127.0.0.1:{raw_port}")),
-        "the hint should tell the developer where to send data:\n{hint}"
+        metadata.get("hint").is_none(),
+        "the jobs API keeps presentation-only guidance out of its response"
+    );
+    assert_eq!(
+        status["virtual_printer"]["address"],
+        format!("127.0.0.1:{raw_port}")
     );
     // The profile is known at startup, so it is reported before any job.
     assert_eq!(metadata["profile"], "REFERENCE");

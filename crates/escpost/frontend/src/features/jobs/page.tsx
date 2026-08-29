@@ -4,6 +4,7 @@ import { groupJobCommands } from "./model";
 import { revealWithin } from "./reveal";
 import { SheetPreview } from "./sheet-preview";
 import { useCurrentJob } from "./use-current-job";
+import { useServerStatus } from "../../app/server-status-data";
 
 const PAPER_MARGIN_KEY = "escpost.paper_margin";
 
@@ -18,9 +19,15 @@ function readPaperMargin() {
 
 export function JobsPage() {
   const resource = useCurrentJob();
+  const status = useServerStatus();
   const job = resource.data?.job ?? null;
   const grouped = useMemo(() => job ? groupJobCommands(job) : null, [job]);
   const data = resource.data;
+  const waitingGuidance = status.snapshot?.virtual_printer
+    ? `Configure a local ERP or POS application to send RAW ESC/POS jobs to ${status.snapshot.virtual_printer.address}.\n\nOr send one from the command line:\nescpost print file.hex --network ${status.snapshot.virtual_printer.address}`
+    : status.snapshot
+      ? "Start the server with --listen to accept RAW ESC/POS print jobs."
+      : null;
   const [previewedGroupId, setPreviewedGroupId] = useState<string | null>(null);
   const [pinnedGroupId, setPinnedGroupId] = useState<string | null>(null);
   // The character of the previewed group the pointer rests on, by its place in
@@ -108,6 +115,7 @@ export function JobsPage() {
           resource={resource}
           paperMargin={paperMargin}
           onPaperMarginChange={changePaperMargin}
+          waitingGuidance={waitingGuidance}
         />
       )}
 
@@ -120,6 +128,7 @@ export function JobsPage() {
             resource={resource}
             paperMargin={paperMargin}
             onPaperMarginChange={changePaperMargin}
+            waitingGuidance={waitingGuidance}
           />
           <div
             ref={(element) => { sheetWorkspace.current = element; }}
@@ -181,10 +190,11 @@ export function JobsPage() {
   );
 }
 
-function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
+function JobStatus({ resource, paperMargin, onPaperMarginChange, waitingGuidance }: {
   resource: ReturnType<typeof useCurrentJob>;
   paperMargin: boolean;
   onPaperMarginChange: (enabled: boolean) => void;
+  waitingGuidance: string | null;
 }) {
   const data = resource.data;
   const job = data?.job;
@@ -227,8 +237,8 @@ function JobStatus({ resource, paperMargin, onPaperMarginChange }: {
             <h2 class="text-xl font-bold">Receiving a job…</h2>
           ) : (
             <>
-              <h2 class="text-xl font-bold">Waiting for first job</h2>
-              {data.hint && <p class="mt-2 text-base-content/65">{data.hint}</p>}
+              <h2 class="text-xl font-bold">Waiting for the first job.</h2>
+              {waitingGuidance && <p class="mt-2 whitespace-pre-line text-base-content/65">{waitingGuidance}</p>}
             </>
           )}
         </div>

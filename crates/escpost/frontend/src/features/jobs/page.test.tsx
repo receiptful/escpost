@@ -1,6 +1,43 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import type { ComponentChildren } from "preact";
+import { act, cleanup, fireEvent, render as renderPage, screen, waitFor, within } from "@testing-library/preact";
+import { ServerStatusProvider } from "../../app/server-status-data";
+import type { ServerStatusSnapshot } from "../../api/types";
 import { JobsPage } from "./page";
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>();
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(name: string, handler: (event: Event) => void) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), handler]);
+  }
+
+  close() {}
+
+  emit(name: string, data: unknown) {
+    const event = new MessageEvent(name, { data: JSON.stringify(data) });
+    for (const handler of this.listeners.get(name) ?? []) handler(event);
+  }
+
+  static forUrl(url: string) {
+    return FakeEventSource.instances.find((source) => source.url === url);
+  }
+}
+
+const originalEventSource = globalThis.EventSource;
+
+function render(view: ComponentChildren, status?: ServerStatusSnapshot) {
+  FakeEventSource.instances = [];
+  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  const rendered = renderPage(<ServerStatusProvider>{view}</ServerStatusProvider>);
+  if (status) act(() => FakeEventSource.forUrl("/api/status/events")?.emit("message", status));
+  return rendered;
+}
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -47,6 +84,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   jest.restoreAllMocks();
+  globalThis.EventSource = originalEventSource;
 });
 
 describe("JobsPage", () => {
@@ -169,33 +207,70 @@ describe("JobsPage", () => {
     expect(commandScroll).toHaveBeenCalledWith({ top: 20, left: 0 });
   });
 
-  test("shows waiting guidance when the server has no current job", async () => {
+  test("shows the virtual-printer command when the server has no current job", async () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json({
       receiving: false,
       profile: "REFERENCE",
       error: null,
-      hint: "Send an ESC/POS job to 127.0.0.1:9100",
+      job: null,
+    }))) as unknown as typeof fetch;
+    render(<JobsPage />, {
+      virtual_printer: { state: "ready", address: "127.0.0.1:9100" },
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    });
+
+    expect(await screen.findByRole("heading", { name: "Waiting for the first job." })).toBeTruthy();
+    const guidance = screen.getByText(/Configure a local ERP.*escpost print file\.hex --network 127\.0\.0\.1:9100/s);
+    expect(guidance.getAttribute("class")).toContain("whitespace-pre-line");
+  });
+
+  test("shows --listen guidance when the server has no virtual printer", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json({
+      receiving: false,
+      profile: "REFERENCE",
+      error: null,
+      job: null,
+    }))) as unknown as typeof fetch;
+    render(<JobsPage />, {
+      virtual_printer: null,
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    });
+
+    expect(await screen.findByText("Start the server with --listen to accept RAW ESC/POS print jobs.")).toBeTruthy();
+    expect(screen.queryByText(/--network/)).toBeNull();
+  });
+
+  test("shows only the waiting heading before server status arrives", async () => {
+    globalThis.fetch = jest.fn(() => Promise.resolve(json({
+      receiving: false,
+      profile: "REFERENCE",
+      error: null,
       job: null,
     }))) as unknown as typeof fetch;
     render(<JobsPage />);
 
-    expect(await screen.findByText("Waiting for first job")).toBeTruthy();
-    expect(screen.getByText("Send an ESC/POS job to 127.0.0.1:9100")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Waiting for the first job." })).toBeTruthy();
+    expect(screen.queryByText(/--listen|--network/)).toBeNull();
   });
 
-  test("replaces first-job waiting guidance while receiving", async () => {
+  test("replaces every first-job string while receiving", async () => {
     globalThis.fetch = jest.fn(() => Promise.resolve(json({
       receiving: true,
       profile: "REFERENCE",
       error: null,
-      hint: "Send an ESC/POS job to 127.0.0.1:9100",
       job: null,
     }))) as unknown as typeof fetch;
-    render(<JobsPage />);
+    render(<JobsPage />, {
+      virtual_printer: { state: "ready", address: "127.0.0.1:9100" },
+      jobs_processed: 0,
+      config_path: "/tmp/printers.toml",
+    });
 
     expect(await screen.findByRole("heading", { name: "Receiving a job…" })).toBeTruthy();
-    expect(screen.queryByText("Waiting for first job")).toBeNull();
-    expect(screen.queryByText("Send an ESC/POS job to 127.0.0.1:9100")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Waiting for the first job." })).toBeNull();
+    expect(screen.queryByText(/--network/)).toBeNull();
   });
 });
 
