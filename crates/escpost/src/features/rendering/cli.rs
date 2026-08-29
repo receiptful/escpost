@@ -1,11 +1,10 @@
 //! Terminal adapter for the rendering operation.
 
 use std::io::{self, IsTerminal, Write};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
-use escpost_render::{RenderScale, TracedRenderResult};
+use escpost_render::RenderScale;
 use inquire::Select;
 
 use crate::application::ApplicationError;
@@ -27,7 +26,7 @@ pub(crate) struct RenderArgs {
     #[arg(long)]
     pub(crate) profile: Option<String>,
 
-    /// Write one PNG to this path, or use - for stdout.
+    /// Write one PNG to this path, or - for stdout. Defaults to stdout.
     #[arg(short = 'o', long = "output", conflicts_with = "output_dir")]
     pub(crate) output: Option<PathBuf>,
 
@@ -36,28 +35,8 @@ pub(crate) struct RenderArgs {
     pub(crate) output_dir: Option<PathBuf>,
 
     /// Select one one-based sheet for single-PNG output.
-    #[arg(long, conflicts_with = "output_dir", requires = "output")]
+    #[arg(long, conflicts_with = "output_dir")]
     pub(crate) sheet: Option<usize>,
-
-    /// Start the local web app and keep running.
-    #[arg(long)]
-    pub(crate) web: bool,
-
-    /// Start the web app and open it in the default browser.
-    #[arg(long)]
-    pub(crate) browser: bool,
-
-    /// Web app listener [default IP: 127.0.0.1].
-    #[arg(
-        long,
-        value_name = "PORT|IP:PORT",
-        value_parser = crate::cli::parse_listener_address
-    )]
-    pub(crate) web_listen: Option<SocketAddr>,
-
-    /// Rerender a filesystem source whenever it changes.
-    #[arg(long)]
-    pub(crate) watch: bool,
 
     /// Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution.
     #[arg(long, value_name = "N", default_value_t = 1)]
@@ -87,22 +66,10 @@ impl From<InputFormat> for source::InputFormat {
     }
 }
 
-pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<(), CliError> {
-    let web_enabled =
-        arguments.web || arguments.browser || arguments.web_listen.is_some() || arguments.watch;
-    let binary_stdout = arguments.output.as_deref() == Some(Path::new("-"));
-    if arguments.output.is_none() && arguments.output_dir.is_none() && !web_enabled {
-        return Err(CliError::MissingOutput);
-    }
-    if binary_stdout && web_enabled {
-        return Err(CliError::StdoutWithWeb);
-    }
+pub(crate) fn run(arguments: RenderArgs, non_interactive: bool) -> Result<(), CliError> {
+    let binary_stdout = arguments.output.as_deref() == Some(Path::new("-"))
+        || (arguments.output.is_none() && arguments.output_dir.is_none());
     let scale = RenderScale::new(arguments.scale).map_err(ApplicationError::from)?;
-    if arguments.watch {
-        // Reject stdin before trying to consume it. A developer should get the
-        // invalid-invocation error immediately, even if a producer never closes.
-        crate::watch::source_path(&arguments.source)?;
-    }
 
     let input = source::load(&arguments.source, arguments.format.into())?;
     let can_prompt = !non_interactive
@@ -116,7 +83,6 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
         profile_id: requested_profile_id,
         scale,
         antialias: arguments.antialias,
-        trace: web_enabled,
     })?;
     let profile_id = response.profile_id;
     let rendered = response.render;
@@ -130,43 +96,15 @@ pub(crate) async fn run(arguments: RenderArgs, non_interactive: bool) -> Result<
         eprintln!("warning: {warning}");
     }
 
-    if let Some(output_path) = &arguments.output {
-        if binary_stdout {
-            let png = output::single_png(&rendered, arguments.sheet)?;
-            let mut stdout = io::stdout();
-            write_stdout(png, stdout.is_terminal(), &mut stdout)?;
-        } else {
-            output::write_single(&rendered, output_path, arguments.sheet)?;
-        }
+    if binary_stdout {
+        let png = output::single_png(&rendered, arguments.sheet)?;
+        let mut stdout = io::stdout();
+        write_stdout(png, stdout.is_terminal(), &mut stdout)?;
+    } else if let Some(output_path) = &arguments.output {
+        output::write_single(&rendered, output_path, arguments.sheet)?;
     }
     if let Some(output_directory) = &arguments.output_dir {
         output::write_all(&rendered, output_directory)?;
-    }
-    if web_enabled {
-        let listener = crate::cli::web::bind(arguments.web_listen).await?;
-        let jobs = crate::web::JobStore::with_render(
-            TracedRenderResult {
-                render: rendered,
-                trace: response.trace.expect("web rendering requested a trace"),
-            },
-            arguments.antialias,
-        );
-        if arguments.watch {
-            crate::watch::start(
-                crate::watch::WatchConfig {
-                    source: arguments.source,
-                    format: arguments.format.into(),
-                    profile: profile_id,
-                    output: arguments.output,
-                    output_dir: arguments.output_dir,
-                    sheet: arguments.sheet,
-                    scale,
-                    antialias: arguments.antialias,
-                },
-                jobs.clone(),
-            )?;
-        }
-        crate::cli::web::serve(listener, jobs, None, arguments.browser, true).await?;
     }
     Ok(())
 }

@@ -77,7 +77,6 @@ src/
 ├── discovery.rs
 ├── net.rs
 ├── source.rs
-├── watch.rs
 └── web.rs
 ```
 
@@ -279,24 +278,16 @@ Known ESC/POS source
         ▼
 Profile resolution → escpost_render::render
                            │
-             ┌─────────────┼─────────────┐
-             ▼             ▼             ▼
-        one PNG       sheet directory   in-memory job
-        or stdout     plus manifest     and web app
+                  ┌────────┴────────┐
+                  ▼                 ▼
+          one PNG or stdout   sheet directory
+                              plus manifest
 ```
 
 Single-PNG output never drops later sheets. Directory output publishes its
-manifest only after all current sheets are complete. An explicit file and the
-web app may consume the same render without parsing or rendering twice.
-
-Rendered PNGs live in a shared in-memory job store. The viewer reports ordered
-sheet names and printer-dot dimensions, uses one screen pixel per dot initially,
-and selects crisp or smoothed browser scaling to match the render mode.
-
-Watch mode polls the selected filesystem input and performs each rerender away
-from the asynchronous HTTP task. A successful result atomically replaces the
-visible job. A parse or render failure is reported by the page while the last
-complete sheets remain available.
+manifest only after all current sheets are complete. With no explicit file or
+directory, a single PNG is written to stdout; terminal stdout remains protected
+from binary output.
 
 ### Embedded web applications
 
@@ -434,11 +425,10 @@ production output with `rust-embed`, serves `index.html` without caching, and
 serves content-hashed assets with immutable caching and their detected MIME
 types. The frontend has no server-side JavaScript runtime.
 
-Existing web-enabled commands will host the same Axum router and embedded
-frontend. `render --web`, `render --browser`, and `render --watch` will seed or
-update the render job store. `serve` will make the web workbench available
-without requiring a RAW listener. Every mode will expose the same application
-operations.
+`serve` owns the Axum router, embedded frontend, and in-memory job store.
+Captured RAW jobs seed or replace the current job. `render` has no HTTP or
+workbench mode; developers preview a known source by sending it through
+`print` to a configured virtual-printer endpoint.
 
 Today, `serve` always opens a RAW listener, `--listen` selects its address, and
 `--web-listen` selects the viewer address. That behavior remains until the web

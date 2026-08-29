@@ -42,9 +42,8 @@ As of 2026-07-28, development and physical-printer calibration have been
 performed on Linux x86-64:
 
 - the Rust renderer and profile compiler pass their complete automated suites;
-- the Rust `render` CLI and embedded web app pass their CLI and HTTP
-  integration suites in Docker and have been checked in a headless Chromium
-  browser;
+- the Rust `render` CLI and `serve` workbench pass their CLI and HTTP integration
+  suites in Docker and have been checked in a headless Chromium browser;
 - Rust `printers list` enumerates the connected NT-5890K printer through
   `nusb` without claiming its interface;
 - the Python render binding passes its automated suite;

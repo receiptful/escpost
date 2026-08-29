@@ -92,14 +92,12 @@ and the web app over real loopback sockets. These tests cover:
 
 - binary, hexadecimal, stdin, and case-directory inputs;
 - explicit and metadata-supplied profile resolution;
-- zero, one, and multiple sheets across file, stdout, directory, and web
+- zero, one, and multiple sheets across file, stdout, and directory
   destinations;
 - exact byte-clean PNG stdout and nonzero error results;
 - output replacement and manifest publication;
 - automatic, strict, and operating-system-selected web ports;
 - ordered HTTP metadata, PNG responses, missing routes, and path traversal;
-- simultaneous persisted and web output;
-- successful and failed watched rerenders; and
 - `serve` capturing a RAW TCP job, previewing the most recent one, and showing
   a waiting hint before the first job arrives.
 
@@ -111,8 +109,8 @@ docker compose run --rm test cargo test -p escpost
 
 Browser verification uses the same Docker entry point and a real browser
 against the printed loopback URL. Confirm responsive ordered sheets, their
-labels and dimensions, 1× default scale, integer zoom, and watch refresh before
-removing or materially changing an older preview path.
+labels and dimensions, the configured preview scale, and integer zoom before
+removing or materially changing the workbench path.
 
 ### Frontend tests
 
@@ -415,11 +413,10 @@ escpost print <case-or-input> --printer <local-name>
 decoded input bytes unchanged to the selected physical transport. Both load the
 same immutable source, so the previewed and printed bytes cannot diverge.
 
-Use `escpost render <SOURCE> --web` for visual inspection. Its Rust web server
-holds the rendered sheets in memory, labels them in order, wraps them when
-space permits, and scales only by integer multiples so individual printer dots
-remain inspectable. `--watch` updates the view after successful filesystem
-changes while retaining the last complete render after an error.
+For visual inspection, run `serve` with both listeners and send the source to
+its configured loopback printer with `print`. The workbench holds the rendered
+sheets in memory, labels them in order, wraps them when space permits, and
+scales only by integer multiples so individual printer dots remain inspectable.
 
 The normal read-only inventory is native Rust:
 

@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-fn render_help_contract_documents_listener_port_shorthand() {
+fn render_help_contract_documents_file_and_stdout_outputs() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["render", "--help"])
         .output()
@@ -23,21 +23,41 @@ Arguments:
   <SOURCE>  Raw ESC/POS file, hexadecimal file, case directory, or - for stdin
 
 Options:
-      --format <FORMAT>            Input representation [default: auto] [possible values: auto, binary, hex]
-      --non-interactive            Never prompt for missing values
-      --profile <PROFILE>          Printer profile used to interpret the input
-  -o, --output <OUTPUT>            Write one PNG to this path, or use - for stdout
-      --output-dir <OUTPUT_DIR>    Write every rendered sheet and a manifest to this directory
-      --sheet <SHEET>              Select one one-based sheet for single-PNG output
-      --web                        Start the local web app and keep running
-      --browser                    Start the web app and open it in the default browser
-      --web-listen <PORT|IP:PORT>  Web app listener [default IP: 127.0.0.1]
-      --watch                      Rerender a filesystem source whenever it changes
-      --scale <N>                  Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
-      --antialias [<ANTIALIAS>]    Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
-  -h, --help                       Print help
+      --format <FORMAT>          Input representation [default: auto] [possible values: auto, binary, hex]
+      --non-interactive          Never prompt for missing values
+      --profile <PROFILE>        Printer profile used to interpret the input
+  -o, --output <OUTPUT>          Write one PNG to this path, or - for stdout. Defaults to stdout
+      --output-dir <OUTPUT_DIR>  Write every rendered sheet and a manifest to this directory
+      --sheet <SHEET>            Select one one-based sheet for single-PNG output
+      --scale <N>                Output pixel density: 1 to 3 subpixels per dot. 1 is dot resolution [default: 1]
+      --antialias [<ANTIALIAS>]  Anti-alias glyph edges into a grayscale preview (cosmetic; never what a printer emits). Pass --antialias for a nicer on-screen render [default: false] [possible values: true, false]
+  -h, --help                     Print help
 "
     );
+}
+
+#[test]
+fn render_writes_a_single_png_to_stdout_by_default() {
+    let case_directory =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args([
+            "render",
+            case_directory
+                .to_str()
+                .expect("the case path should be UTF-8"),
+            "--non-interactive",
+        ])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert!(
+        output.status.success(),
+        "render failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(&output.stdout[..8], b"\x89PNG\r\n\x1a\n");
 }
 
 #[test]
@@ -411,31 +431,6 @@ fn multi_sheet_job_cannot_be_concatenated_on_stdout() {
 }
 
 #[test]
-fn stdout_png_cannot_be_combined_with_web_mode() {
-    let input_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            input_path.to_str().expect("the input path should be UTF-8"),
-            "--output",
-            "-",
-            "--web",
-            "--non-interactive",
-        ])
-        .output()
-        .expect("the escpost command should finish");
-
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("PNG stdout cannot be combined with a long-running web app")
-    );
-}
-
-#[test]
 fn output_directory_writes_every_sheet_and_ordered_manifest() {
     let temporary_directory = temporary_directory("all-sheets");
     let output_directory = temporary_directory.join("rendered");
@@ -715,7 +710,7 @@ fn piped_stdin_policy_reports_a_missing_profile_without_an_explicit_flag() {
 }
 
 #[test]
-fn sheet_selection_requires_a_single_png_destination() {
+fn sheet_selection_writes_the_selected_png_to_stdout_by_default() {
     let case_directory =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/multi-sheet");
 
@@ -727,14 +722,17 @@ fn sheet_selection_requires_a_single_png_destination() {
                 .expect("the case path should be UTF-8"),
             "--sheet",
             "2",
-            "--web",
             "--non-interactive",
         ])
         .output()
         .expect("the escpost command should finish");
 
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--output"));
+    assert!(
+        output.status.success(),
+        "render failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(&output.stdout[..8], b"\x89PNG\r\n\x1a\n");
 }
 
 #[test]

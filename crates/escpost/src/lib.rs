@@ -10,7 +10,6 @@ mod net;
 mod output;
 mod profiles;
 mod source;
-mod watch;
 mod web;
 
 use std::process::ExitCode;
@@ -33,9 +32,7 @@ pub async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
-        Command::Render(arguments) => {
-            features::rendering::cli::run(arguments, cli.non_interactive).await
-        }
+        Command::Render(arguments) => features::rendering::cli::run(arguments, cli.non_interactive),
         Command::Print(arguments) => {
             features::printing::cli::run(arguments, cli.non_interactive).await
         }

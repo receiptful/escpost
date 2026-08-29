@@ -24,7 +24,7 @@ physical USB and network printers from the same CLI.
 | **Virtual IP printer** | Redirect an ERP or POS application to ESCPost as a RAW TCP network printer, then capture and inspect its print jobs in your browser, in real time. |
 | **USB and IP printers** | Automatically discover connected USB printers, configure IP network printers, and test and calibrate each printer's profile. |
 | **Printer profiles** | Device-specific geometry, capabilities, defaults, and calibrated behavior. |
-| **PNG and web preview** | Printer-resolution PNG previews, multi-sheet jobs, integer zoom, antialiasing, and file watching. |
+| **PNG and web preview** | Printer-resolution PNG output, multi-sheet jobs, integer zoom, antialiasing, and browser inspection through the virtual printer. |
 | **Cloud printing** | Planned native integration with [Receiptful](https://receiptful.io); today, Receiptful is available separately for thermal-printer delivery, job history, and managed cloud printing. |
 
 ## Render and capture ESC/POS data
@@ -47,22 +47,26 @@ Render raw ESC/POS bytes, readable hexadecimal input, or stdin to PNG:
 
 ```bash
 escpost render receipt.bin \
-  --profile REFERENCE \
-  --output receipt.png \
-  --non-interactive
+  --profile REFERENCE > receipt.png
 ```
 
-Preview receipts and labels in your browser and rerender when the source
-changes:
+To preview jobs in the browser, start the virtual printer and workbench:
 
 ```bash
-escpost render receipt.hex --profile REFERENCE --web --watch
+escpost serve \
+  --listen 127.0.0.1:9100 \
+  --web-listen 127.0.0.1:9000 \
+  --profile REFERENCE
 ```
 
-Or run a virtual printer and point an application at the reported address:
+Register that loopback endpoint once, then send any source to it with `print`:
 
 ```bash
-escpost serve --listen --web-listen
+escpost printers add preview \
+  --transport network \
+  --host 127.0.0.1 \
+  --port 9100
+escpost print receipt.hex --printer preview
 ```
 
 <p align="center">
@@ -97,9 +101,8 @@ from the source workspace and has not yet been published to PyPI.
 | [`escpost-profiles`](crates/escpost-profiles) | Resolve profiles from the embedded catalog, inspect profile capabilities, and read, write, compile, or synthesize canonical profiles. |
 | [`escpost-python`](python) | Call the Rust preview engine from Python and receive the rendered PNG sheets. |
 
-The virtual IP printer, browser workbench, file watching, and USB or RAW TCP
-printer management are currently CLI features; they are not yet exposed as
-reusable library APIs.
+The virtual IP printer, browser workbench, and USB or RAW TCP printer management
+are currently CLI features; they are not yet exposed as reusable library APIs.
 
 ## Development
 

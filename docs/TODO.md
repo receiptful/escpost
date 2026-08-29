@@ -69,10 +69,9 @@ every command. Physical calibration reuses `render` and `print` against
 
 ## Rust CLI foundation and render migration
 
-These tasks implement the first vertical slice of `CLI.md`. They come before
-the virtual printer because `render --web` proves the executable, renderer
-integration, web server, embedded assets, and packaging model with a known
-input.
+These tasks implemented the first vertical slice of `CLI.md`. The render
+command established the executable and renderer integration before the virtual
+printer became the sole owner of the web server and embedded workbench.
 
 ### Command foundation
 
@@ -105,7 +104,8 @@ input.
 ### PNG destinations
 
 - [x] Add `escpost render <SOURCE>`. (`CLI-R01`)
-- [x] Support `-o <PNG>`, `-o -`, and `--output-dir <DIRECTORY>`.
+- [x] Default single-PNG output to stdout and support `-o <PNG>`, `-o -`, and
+      `--output-dir <DIRECTORY>`.
       (`CLI-R02`)
 - [x] Require exactly one sheet for a single-PNG destination unless
       `--sheet <NUMBER>` selects one. (`CLI-R03`)
@@ -116,20 +116,17 @@ input.
       render before replacing an existing file, and preserve unrelated or
       stale files. (`CLI-R08`)
 
-### Rust web output
+### Rust workbench output
 
-- [x] Add `--web`, `--browser`, `--web-listen`, and filesystem `--watch`.
-      (`CLI-W01`, `CLI-W02`, `CLI-W08`)
+- [x] Keep the web server and browser workbench under `serve`; `render` owns
+      only PNG output and `print` submits known sources to the virtual printer.
 - [x] Host the current HTML interface from the Rust executable and keep the
       initial asset embedded in the binary. (`CLI-W07`, `CLI-W10`)
 - [x] Search and retain the first bindable loopback port from 9000 through
       9099 when no address is specified. (`CLI-W03`, `CLI-W04`)
 - [x] Bind explicit nonzero addresses strictly, support explicit port zero,
       and make non-loopback exposure visible. (`CLI-W05`, `CLI-W06`)
-- [x] Keep jobs and PNGs in memory unless a file destination was explicitly
-      selected. (`CLI-W09`)
-- [x] Permit file output together with web output, but reject stdout PNG output
-      with a long-running web mode. (`CLI-R06`, `CLI-R07`)
+- [x] Keep captured jobs and PNGs in the virtual printer's in-memory job store.
 - [x] Add HTTP and CLI integration coverage for `CLI-T01` through `CLI-T06`.
 - [x] Verify feature parity in Docker and a real browser, then remove the
       Python `http.server` preview service and its manifest-polling workflow.
@@ -533,18 +530,17 @@ would target.
 
 ## Implementation order
 
-### Phase 1: Rust render command and web output
+### Phase 1: Rust render command and embedded-server foundation
 
 - [x] Complete the Rust CLI foundation and render-migration checklist above.
-- [x] Verify file, directory, stdout, and web destinations end to end.
+- [x] Verify file, directory, and stdout destinations end to end.
 - [x] Remove the Python preview service only after the Rust web path passes its
       automated and browser checks.
 
 ### Phase 2: virtual printer
 
 - [x] Add the RAW TCP listener and connection-close job framing.
-- [x] Feed completed network jobs into the web job store shared with
-      `render --web`.
+- [x] Feed completed network jobs into the workbench's web job store.
 - [x] Show live ordered sheets, with a waiting hint before the first job.
 - [x] Offer the captured job's raw input as a download.
 - [x] Add container health and transport-fragmentation tests.

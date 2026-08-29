@@ -69,22 +69,17 @@ Options:
     -o, --output <OUTPUT>
     --output-dir <DIRECTORY>
     --sheet <NUMBER>
-    --web
-    --browser
-    --web-listen <PORT|IP:PORT>
-    --watch
     --scale <N>
     --antialias[=true|false]
 ```
 
-At least one output is required. In an interactive terminal, ESCPost can
-prompt for one; with `--non-interactive`, it reports an error when none is
-given.
+Without `--output` or `--output-dir`, `render` writes one PNG to standard
+output. It never starts a server or sends bytes to a printer.
 
 ### One PNG
 
-`-o receipt.png` writes one PNG file. `-o -` writes only PNG bytes to standard
-output:
+`-o receipt.png` writes one PNG file. Omitting `--output`, or spelling it as
+`-o -`, writes only PNG bytes to standard output:
 
 ```bash
 escpost render receipt.bin \
@@ -93,13 +88,13 @@ escpost render receipt.bin \
   --non-interactive
 
 generate-receipt | \
-  escpost render - --format binary --profile REFERENCE -o - >receipt.png
+  escpost render - --format binary --profile REFERENCE >receipt.png
 ```
 
 If a job produces several sheets, use `--sheet <NUMBER>` to select a one-based
-sheet. Without a selection, single-file output fails rather than discarding
-later sheets. `--sheet` requires `--output` and cannot be combined with
-`--output-dir`.
+sheet. Without a selection, single-PNG output fails rather than discarding
+later sheets. `--sheet` selects either the explicit file or default standard
+output and cannot be combined with `--output-dir`.
 
 ### All sheets
 
@@ -115,25 +110,6 @@ escpost render receipt.hex \
 Sheets use ordered names such as `sheet-001.png` and `sheet-002.png`. The
 manifest is the authoritative list for the current render. Unrelated files in
 the directory are preserved.
-
-### Browser preview and watching
-
-`--web` starts the local viewer and prints its URL. `--browser` also opens that
-URL in the default browser. `--watch` rerenders a filesystem source after it
-changes and implies web mode.
-
-```bash
-escpost render receipt.hex --profile REFERENCE --web --watch
-```
-
-Use `--web-listen <PORT>` to bind that port on `127.0.0.1`, or
-`--web-listen <IP:PORT>` to request an exact address. Omitting it selects the
-first available loopback port from 9000 through 9099. Port `0` asks the
-operating system to choose a free port. Binding to a non-loopback address
-exposes the receipt preview to the corresponding network.
-
-The Docker wrapper cannot open a browser on the host. Use `--web` through the
-wrapper and open the printed URL manually.
 
 ### Preview quality
 
@@ -171,6 +147,33 @@ USB and RAW TCP connection details come from the selected printer entry.
 
 `--config <FILE>` selects an exact printer configuration file for this
 invocation.
+
+### Preview through the virtual printer
+
+The browser workbench belongs to `serve`. Start it with stable loopback ports:
+
+```bash
+escpost serve \
+  --listen 127.0.0.1:9100 \
+  --web-listen 127.0.0.1:9000 \
+  --profile REFERENCE
+```
+
+Register that endpoint once and send sources through the ordinary printing
+path:
+
+```bash
+escpost printers add preview \
+  --transport network \
+  --host 127.0.0.1 \
+  --port 9100
+escpost print receipt.hex --printer preview
+```
+
+`serve` renders the captured bytes with its own profile, scale, and antialias
+settings. The profile stored with the configured network target does not
+override those server settings. Closing `print`'s RAW TCP connection completes
+the job and updates the workbench.
 
 ## `escpost printers`
 

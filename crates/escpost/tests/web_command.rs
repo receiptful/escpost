@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
-fn web_mode_serves_the_spa_at_the_root() {
+fn workbench_serves_the_spa_at_the_root() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
 
@@ -27,7 +27,7 @@ fn web_mode_serves_the_spa_at_the_root() {
 }
 
 #[test]
-fn web_mode_serves_hashed_spa_assets_with_immutable_caching() {
+fn workbench_serves_hashed_spa_assets_with_immutable_caching() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
 
@@ -71,7 +71,7 @@ fn web_mode_serves_hashed_spa_assets_with_immutable_caching() {
 }
 
 #[test]
-fn web_mode_rejects_missing_spa_assets_and_asset_traversal() {
+fn workbench_rejects_missing_spa_assets_and_asset_traversal() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
 
@@ -654,7 +654,7 @@ fn health_endpoint_reports_ok() {
 }
 
 #[test]
-fn api_status_has_no_virtual_printer_for_render_web_mode() {
+fn api_status_reports_the_virtual_printer_that_captured_the_job() {
     let port = unused_loopback_port();
     let mut child = start_case_web("single-sheet", port);
 
@@ -673,8 +673,13 @@ fn api_status_has_no_virtual_printer_for_render_web_mode() {
         response_header(&response, "content-type"),
         Some(value) if value.starts_with("application/json")
     ));
-    assert_eq!(status["virtual_printer"], serde_json::Value::Null);
-    assert_eq!(status["jobs_processed"], 0);
+    assert_eq!(status["virtual_printer"]["state"], "ready");
+    assert!(
+        status["virtual_printer"]["address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("127.0.0.1:"))
+    );
+    assert_eq!(status["jobs_processed"], 1);
 }
 
 #[test]
@@ -744,7 +749,7 @@ fn printer_inventory_stream_starts_with_an_unnamed_complete_snapshot() {
 }
 
 #[test]
-fn web_mode_exposes_ordered_sheet_metadata_and_png_bytes() {
+fn captured_job_exposes_ordered_sheet_metadata_and_png_bytes() {
     let port = unused_loopback_port();
     let case = "multi-sheet";
     let mut child = start_case_web(case, port);
@@ -769,7 +774,7 @@ fn web_mode_exposes_ordered_sheet_metadata_and_png_bytes() {
 }
 
 #[test]
-fn web_mode_exposes_experimental_command_traces() {
+fn captured_job_exposes_experimental_command_traces() {
     let temporary_directory = temporary_directory("command-trace");
     let input_path = temporary_directory.join("receipt.bin");
     let qr_content = b"https://example.test";
@@ -788,7 +793,7 @@ fn web_mode_exposes_experimental_command_traces() {
     input.extend_from_slice(&[0x1d, b'(', b'k', 3, 0, 49, 81, 48]);
     fs::write(&input_path, input).expect("the traced input should be writable");
     let port = unused_loopback_port();
-    let mut child = start_file_web(&input_path, port, false);
+    let mut child = start_file_web(&input_path, port);
 
     wait_until_listening(&mut child, port);
     let metadata = current_job(port);
@@ -839,6 +844,10 @@ fn web_mode_exposes_experimental_command_traces() {
 #[test]
 fn current_job_api_exposes_ungrouped_trace_facts_and_stable_resources() {
     let port = unused_loopback_port();
+    let expected_input = decode_hex_file(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cases/single-sheet/input.hex"),
+    );
     let mut child = start_case_web("single-sheet", port);
 
     wait_until_listening(&mut child, port);
@@ -849,7 +858,12 @@ fn current_job_api_exposes_ungrouped_trace_facts_and_stable_resources() {
         .as_str()
         .expect("a rendered sheet should have an image URL")
         .to_owned();
+    let input_url = current["job"]["input_url"]
+        .as_str()
+        .expect("a captured job should have an input URL")
+        .to_owned();
     let image = http_get_bytes(port, &image_url);
+    let input = http_get_bytes(port, &input_url);
     let missing = http_get_bytes(port, "/api/jobs/999/sheets/1");
     let invalid_query = http_get_bytes(port, "/api/jobs/current?generation=1");
     stop(&mut child);
@@ -863,13 +877,19 @@ fn current_job_api_exposes_ungrouped_trace_facts_and_stable_resources() {
     assert_eq!(current["profile"], "REFERENCE");
     assert!(current["error"].is_null());
     assert_eq!(current["job"]["id"], "1");
-    assert!(current["job"].get("input_url").is_none());
+    assert_eq!(current["job"]["completion"], "closed");
     assert_eq!(current["job"]["sheets"][0]["number"], 1);
     assert!(current["job"]["sheets"][0]["commands"].is_array());
     assert_eq!(response_status(&image), "HTTP/1.1 200 OK");
     assert_eq!(response_header(&image, "content-type"), Some("image/png"));
     assert_eq!(response_header(&image, "cache-control"), Some("no-store"));
     assert_eq!(&response_body(&image)[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(response_status(&input), "HTTP/1.1 200 OK");
+    assert_eq!(
+        response_header(&input, "content-type"),
+        Some("application/octet-stream")
+    );
+    assert_eq!(response_body(&input), expected_input);
 
     assert_eq!(response_status(&missing), "HTTP/1.1 404 Not Found");
     assert_eq!(response_header(&missing, "cache-control"), Some("no-store"));
@@ -884,12 +904,12 @@ fn current_job_api_exposes_ungrouped_trace_facts_and_stable_resources() {
 }
 
 #[test]
-fn web_mode_lists_buffered_text_without_fabricating_a_sheet_image() {
+fn captured_job_lists_buffered_text_without_fabricating_a_sheet_image() {
     let temporary_directory = temporary_directory("buffered-command-trace");
     let input_path = temporary_directory.join("receipt.bin");
     fs::write(&input_path, b"A").expect("the buffered input should be writable");
     let port = unused_loopback_port();
-    let mut child = start_file_web(&input_path, port, false);
+    let mut child = start_file_web(&input_path, port);
 
     wait_until_listening(&mut child, port);
     let metadata = current_job(port);
@@ -914,66 +934,6 @@ fn web_mode_lists_buffered_text_without_fabricating_a_sheet_image() {
 }
 
 #[test]
-fn empty_job_web_mode_exposes_an_ordered_empty_sheet_list() {
-    let temporary_directory = temporary_directory("empty-job");
-    let input_path = temporary_directory.join("empty.bin");
-    fs::write(&input_path, []).expect("the empty input should be writable");
-    let port = unused_loopback_port();
-    let mut child = start_file_web(&input_path, port, false);
-
-    wait_until_listening(&mut child, port);
-    let metadata = current_job(port);
-    stop(&mut child);
-
-    assert_eq!(metadata["profile"], "REFERENCE");
-    assert_eq!(
-        metadata["job"]["sheets"]
-            .as_array()
-            .expect("sheets should be an array")
-            .len(),
-        0
-    );
-    fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");
-}
-
-#[test]
-fn web_mode_can_publish_the_same_complete_render_to_a_file() {
-    let temporary_directory = temporary_directory("file-and-web");
-    let input_path = temporary_directory.join("receipt.bin");
-    let output_path = temporary_directory.join("receipt.png");
-    fs::write(&input_path, b"Two destinations\n").expect("the input should be writable");
-    let port = unused_loopback_port();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            input_path.to_str().expect("the input path should be UTF-8"),
-            "--profile",
-            "REFERENCE",
-            "--output",
-            output_path
-                .to_str()
-                .expect("the output path should be UTF-8"),
-            "--web-listen",
-            &format!("127.0.0.1:{port}"),
-            "--non-interactive",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start");
-
-    wait_until_listening(&mut child, port);
-    let served_png = sheet_png(port, 1);
-    stop(&mut child);
-
-    assert_eq!(
-        fs::read(&output_path).expect("the persisted PNG should exist"),
-        served_png
-    );
-    fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");
-}
-
-#[test]
 fn explicit_occupied_web_port_fails_instead_of_falling_back() {
     let occupied =
         TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a port should be reservable");
@@ -981,15 +941,9 @@ fn explicit_occupied_web_port_fails_instead_of_falling_back() {
         .local_addr()
         .expect("the listener should have an address")
         .port();
-    let case_directory =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
-
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args([
-            "render",
-            case_directory
-                .to_str()
-                .expect("the case path should be UTF-8"),
+            "serve",
             "--web-listen",
             &format!("127.0.0.1:{port}"),
             "--non-interactive",
@@ -1003,7 +957,12 @@ fn explicit_occupied_web_port_fails_instead_of_falling_back() {
 
 #[test]
 fn explicit_port_zero_reports_the_operating_system_selected_port() {
-    let mut child = start_case_web("single-sheet", 0);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
+        .args(["serve", "--web-listen", "127.0.0.1:0", "--non-interactive"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost serve command should start");
     let mut stderr = BufReader::new(
         child
             .stderr
@@ -1035,174 +994,12 @@ fn explicit_port_zero_reports_the_operating_system_selected_port() {
 }
 
 #[test]
-fn watch_mode_replaces_the_render_after_the_source_changes() {
-    let temporary_directory = temporary_directory("watch");
-    let input_path = temporary_directory.join("receipt.bin");
-    fs::write(&input_path, b"Before\n").expect("the initial input should be writable");
-    let port = unused_loopback_port();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            input_path.to_str().expect("the input path should be UTF-8"),
-            "--profile",
-            "REFERENCE",
-            "--watch",
-            "--web-listen",
-            &format!("127.0.0.1:{port}"),
-            "--non-interactive",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start");
-
-    wait_until_listening(&mut child, port);
-    let current_before = http_get_bytes(port, "/api/jobs/current");
-    let current_before: serde_json::Value = serde_json::from_slice(response_body(&current_before))
-        .expect("the current job should be JSON");
-    let previous_job_id = current_before["job"]["id"]
-        .as_str()
-        .expect("the current job should have an id")
-        .to_owned();
-    let previous_image_url = current_before["job"]["sheets"][0]["image_url"]
-        .as_str()
-        .expect("the current job should have an image URL")
-        .to_owned();
-    let before = sheet_png(port, 1);
-    fs::write(&input_path, b"After\n").expect("the changed input should be writable");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let (after, current_after) = loop {
-        let candidate = sheet_png(port, 1);
-        let current_response = http_get_bytes(port, "/api/jobs/current");
-        let current: serde_json::Value = serde_json::from_slice(response_body(&current_response))
-            .expect("the current job should remain JSON");
-        if candidate != before && current["job"]["id"] != previous_job_id {
-            break (candidate, current);
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the watched rendering did not change"
-        );
-        thread::sleep(Duration::from_millis(50));
-    };
-    let replaced_resource = http_get_bytes(port, &previous_image_url);
-    let current_image_url = current_after["job"]["sheets"][0]["image_url"]
-        .as_str()
-        .expect("the replacement job should have an image URL");
-    let current_image = http_get_bytes(port, current_image_url);
-    stop(&mut child);
-
-    assert_eq!(&after[..8], b"\x89PNG\r\n\x1a\n");
-    assert_ne!(current_after["job"]["id"], previous_job_id);
-    assert_eq!(
-        response_status(&replaced_resource),
-        "HTTP/1.1 404 Not Found"
-    );
-    let replaced_resource: serde_json::Value =
-        serde_json::from_slice(response_body(&replaced_resource))
-            .expect("a replaced job resource should return JSON");
-    assert_eq!(replaced_resource["error"]["code"], "job_not_found");
-    assert_eq!(&response_body(&current_image)[..8], b"\x89PNG\r\n\x1a\n");
-    fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");
-}
-
-#[test]
-fn watch_error_keeps_the_last_complete_render_available() {
-    let temporary_directory = temporary_directory("watch-error");
-    let input_path = temporary_directory.join("receipt.bin");
-    fs::write(&input_path, b"Complete\n").expect("the initial input should be writable");
-    let port = unused_loopback_port();
-    let mut child = start_file_web(&input_path, port, true);
-
-    wait_until_listening(&mut child, port);
-    let previous_png = sheet_png(port, 1);
-    fs::write(&input_path, b"\x1b").expect("the invalid input should be writable");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let error = loop {
-        let metadata = current_job(port);
-        if let Some(error) = metadata["error"].as_str() {
-            break error.to_owned();
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the watched render error did not become visible"
-        );
-        thread::sleep(Duration::from_millis(50));
-    };
-    let still_available = sheet_png(port, 1);
-    stop(&mut child);
-
-    assert!(error.contains("truncated ESC command"));
-    assert_eq!(still_available, previous_png);
-    fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");
-}
-
-#[test]
-fn watch_mode_rejects_stdin_as_a_mutable_source() {
-    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            "-",
-            "--format",
-            "binary",
-            "--profile",
-            "REFERENCE",
-            "--watch",
-            "--non-interactive",
-        ])
-        .stdin(Stdio::null())
-        .output()
-        .expect("the escpost command should finish");
-
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("watch mode requires a filesystem source")
-    );
-}
-
-#[test]
-fn browser_mode_starts_the_same_web_viewer() {
-    let port = unused_loopback_port();
-    let case_directory =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            case_directory
-                .to_str()
-                .expect("the case path should be UTF-8"),
-            "--browser",
-            "--web-listen",
-            &format!("127.0.0.1:{port}"),
-            "--non-interactive",
-        ])
-        // webbrowser honors BROWSER on Linux. A harmless executable verifies
-        // the launch path without opening a GUI during automated tests.
-        .env("BROWSER", "/bin/true")
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start");
-
-    wait_until_listening(&mut child, port);
-    let response = http_get(port, "/");
-    stop(&mut child);
-
-    assert!(response.contains("<title>ESCPost workbench</title>"));
-}
-
-#[test]
 fn non_loopback_listener_prints_a_receipt_exposure_warning() {
     let port = unused_loopback_port();
-    let case_directory =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
     let mut child = WebChild::new(
         Command::new(env!("CARGO_BIN_EXE_escpost"))
             .args([
-                "render",
-                case_directory
-                    .to_str()
-                    .expect("the case path should be UTF-8"),
+                "serve",
                 "--web-listen",
                 &format!("0.0.0.0:{port}"),
                 "--non-interactive",
@@ -1233,15 +1030,10 @@ fn failed_warning_wait_releases_the_child_listener_and_stderr_reader() {
     let reaped_for_child = Arc::clone(&reaped);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let case_directory =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cases/single-sheet");
         let mut child = WebChild::new(
             Command::new(env!("CARGO_BIN_EXE_escpost"))
                 .args([
-                    "render",
-                    case_directory
-                        .to_str()
-                        .expect("the case path should be UTF-8"),
+                    "serve",
                     "--web-listen",
                     &format!("0.0.0.0:{port}"),
                     "--non-interactive",
@@ -1281,64 +1073,102 @@ fn start_case_web(case: &str, port: u16) -> Child {
     let case_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/cases")
         .join(case);
-    Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            case_directory
-                .to_str()
-                .expect("the case path should be UTF-8"),
-            "--web",
-            "--web-listen",
-            &format!("127.0.0.1:{port}"),
-            "--non-interactive",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start")
+    let input = decode_hex_file(&case_directory.join("input.hex"));
+    start_web_with_job(&input, port, None)
 }
 
 fn start_case_web_with_config_directory(case: &str, port: u16, config_directory: &Path) -> Child {
     let case_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/cases")
         .join(case);
-    Command::new(env!("CARGO_BIN_EXE_escpost"))
-        .args([
-            "render",
-            case_directory
-                .to_str()
-                .expect("the case path should be UTF-8"),
-            "--web",
-            "--web-listen",
-            &format!("127.0.0.1:{port}"),
-            "--non-interactive",
-        ])
-        .env("ESCPOST_CONFIG_DIR", config_directory)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the escpost command should start")
+    let input = decode_hex_file(&case_directory.join("input.hex"));
+    start_web_with_job(&input, port, Some(config_directory))
 }
 
-fn start_file_web(input_path: &Path, port: u16, watch: bool) -> Child {
+fn start_file_web(input_path: &Path, port: u16) -> Child {
+    let input = fs::read(input_path).expect("the RAW input should be readable");
+    start_web_with_job(&input, port, None)
+}
+
+fn start_web_with_job(input: &[u8], web_port: u16, config_directory: Option<&Path>) -> Child {
+    let raw_port = unused_loopback_port();
     let mut command = Command::new(env!("CARGO_BIN_EXE_escpost"));
     command.args([
-        "render",
-        input_path.to_str().expect("the input path should be UTF-8"),
+        "--non-interactive",
+        "serve",
         "--profile",
         "REFERENCE",
+        "--listen",
+        &format!("127.0.0.1:{raw_port}"),
         "--web-listen",
-        &format!("127.0.0.1:{port}"),
-        "--non-interactive",
+        &format!("127.0.0.1:{web_port}"),
+        "--idle-timeout",
+        "0",
     ]);
-    if watch {
-        command.arg("--watch");
+    if let Some(directory) = config_directory {
+        command.env("ESCPOST_CONFIG_DIR", directory);
     }
-    command
+    let mut child = command
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the escpost command should start")
+        .expect("the escpost serve command should start");
+    wait_until_listening(&mut child, web_port);
+    send_raw_job(raw_port, input);
+    wait_for_current_job(&mut child, web_port);
+    child
+}
+
+fn decode_hex_file(path: &Path) -> Vec<u8> {
+    fs::read_to_string(path)
+        .expect("the hexadecimal fixture should be readable")
+        .split_whitespace()
+        .map(|byte| u8::from_str_radix(byte, 16).expect("the fixture should contain hex bytes"))
+        .collect()
+}
+
+fn send_raw_job(port: u16, bytes: &[u8]) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
+            Ok(mut stream) => {
+                stream
+                    .write_all(bytes)
+                    .expect("the RAW job should be writable");
+                return;
+            }
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the virtual printer did not accept the job: {error}"
+                );
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+}
+
+fn wait_for_current_job(child: &mut Child, web_port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = http_get_bytes(web_port, "/api/jobs/current");
+        let metadata: serde_json::Value = serde_json::from_slice(response_body(&response))
+            .expect("the current job should be JSON");
+        if !metadata["job"].is_null() && metadata["receiving"] == false {
+            return;
+        }
+        if let Some(status) = child
+            .try_wait()
+            .expect("the web command status should be readable")
+        {
+            panic!("the web command exited before publishing the job: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the captured job did not become visible"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 /// An ephemeral port no other test in this process has been handed.

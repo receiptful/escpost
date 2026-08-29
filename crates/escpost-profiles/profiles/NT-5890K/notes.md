@@ -28,16 +28,17 @@ font. Compare:
 - QR dimensions and placement; and
 - the first Function B marker gap and the vertically adjacent final markers.
 
-Render the exact stream with:
+Preview the exact stream by starting the virtual printer with this profile and
+sending the calibration source to its registered loopback target:
 
 ```bash
-./escpost render crates/escpost-profiles/calibration-job.hex \
+./escpost serve --listen 127.0.0.1:9100 --web-listen 127.0.0.1:9000 \
   --profile NT-5890K \
-  --web \
   --non-interactive
+./escpost print crates/escpost-profiles/calibration-job.hex --printer preview
 ```
 
-Open the printed loopback URL to inspect it with integer nearest-neighbor zoom.
+Open the workbench URL to inspect it with integer nearest-neighbor zoom.
 
 The initial physical comparison showed that this firmware paints `ESC *`
 8-dot source rows adjacently and adds a faint trailing line. The typed profile

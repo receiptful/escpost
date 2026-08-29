@@ -278,11 +278,10 @@ stable public contract.
 
 ## Web workbench
 
-When the CLI web mode is active, it uses the traced renderer and exposes every
-successfully parsed command through `/api/jobs/current`. Five command types have
-specialized presentation; the rest use their protocol family and opcode with a
-default “annotations not yet modeled” description. Non-web CLI rendering
-continues to call the ordinary renderer.
+The virtual printer uses the traced renderer and exposes every successfully
+parsed command and its renderer annotation through `/api/jobs/current`. The
+`render` command calls the ordinary renderer because its output is PNG rather
+than workbench inspection.
 
 The workbench shows a command list beside the authoritative PNG receipt. Each
 receipt image has an SVG overlay in the same printer-dot coordinate system.

@@ -35,6 +35,53 @@ Options:
 }
 
 #[test]
+fn serve_aligns_present_addresses_and_appends_the_idle_timeout() {
+    let mut child = start_serve_on_ephemeral_ports();
+    let mut stderr = BufReader::new(
+        child
+            .stderr
+            .take()
+            .expect("the serve command stderr should be piped"),
+    );
+    let mut lines = Vec::new();
+    loop {
+        let mut line = String::new();
+        let read = stderr
+            .read_line(&mut line)
+            .expect("serve status should be readable");
+        assert!(read != 0, "serve exited before reporting its status");
+        let line = line.trim_end().to_owned();
+        let complete = line == "Press Ctrl+C to stop.";
+        lines.push(line);
+        if complete {
+            break;
+        }
+    }
+    stop(&mut child);
+
+    let virtual_printer = lines
+        .iter()
+        .find(|line| line.starts_with("Virtual IP printer:"))
+        .expect("the virtual printer address should be reported");
+    let web_app = lines
+        .iter()
+        .find(|line| line.starts_with("Web app:"))
+        .expect("the web app address should be reported");
+    let api = lines
+        .iter()
+        .find(|line| line.starts_with("API:"))
+        .expect("the API address should be reported");
+    let address_column = virtual_printer
+        .find("127.0.0.1:")
+        .expect("the virtual printer should report a loopback address");
+
+    assert_eq!(web_app.find("http://"), Some(address_column));
+    assert_eq!(api.find("http://"), Some(address_column));
+    assert!(virtual_printer.ends_with(" (Idle timeout: 20s)"));
+    assert!(!lines.iter().any(|line| line.starts_with("Idle timeout:")));
+}
+
+#[test]
 fn serve_rejects_an_unsupported_scale_before_opening_listeners() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["serve", "--scale", "0", "--non-interactive"])
@@ -585,9 +632,8 @@ fn web_listen_alone_starts_no_virtual_printer() {
             .read_line(&mut line)
             .expect("the serve status should be readable");
         assert!(read != 0, "serve exited before reporting its API address");
-        if let Some(port) = line
-            .trim()
-            .strip_prefix("API: http://127.0.0.1:")
+        if let Some(port) = status_value(&line, "API:")
+            .strip_prefix("http://127.0.0.1:")
             .and_then(|value| value.strip_suffix("/api"))
             .and_then(|value| value.parse::<u16>().ok())
         {
@@ -662,16 +708,15 @@ fn read_listen_ports_from(stderr: &mut impl BufRead) -> (u16, u16) {
             .read_line(&mut line)
             .expect("serve status should be readable");
         assert!(read != 0, "serve exited before reporting its listen ports");
-        if let Some(port) = line
-            .trim()
-            .strip_prefix("Virtual IP printer: 127.0.0.1:")
+        if let Some(port) = status_value(&line, "Virtual IP printer:")
+            .strip_prefix("127.0.0.1:")
+            .and_then(|value| value.split_once(' ').map(|(port, _)| port))
             .and_then(|value| value.parse::<u16>().ok())
         {
             raw = Some(port);
         }
-        if let Some(port) = line
-            .trim()
-            .strip_prefix("API: http://127.0.0.1:")
+        if let Some(port) = status_value(&line, "API:")
+            .strip_prefix("http://127.0.0.1:")
             .and_then(|value| value.strip_suffix("/api"))
             .and_then(|value| value.parse::<u16>().ok())
         {
@@ -680,6 +725,13 @@ fn read_listen_ports_from(stderr: &mut impl BufRead) -> (u16, u16) {
     }
 
     (raw.unwrap(), web.unwrap())
+}
+
+fn status_value<'a>(line: &'a str, label: &str) -> &'a str {
+    line.trim()
+        .strip_prefix(label)
+        .map(str::trim_start)
+        .unwrap_or("")
 }
 
 fn send_raw_job(port: u16, bytes: &[u8]) {

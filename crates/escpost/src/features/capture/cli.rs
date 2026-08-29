@@ -126,11 +126,6 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
                     "warning: the virtual IP printer accepts receipt data beyond loopback on {address}"
                 );
             }
-            eprintln!("Virtual IP printer: {address}");
-            match idle_timeout {
-                Some(timeout) => eprintln!("Idle timeout: {timeout:?}"),
-                None => eprintln!("Idle timeout: disabled (jobs end when the connection closes)"),
-            }
             Some((listener, address))
         }
         None => None,
@@ -175,6 +170,7 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
                 listener,
                 jobs,
                 raw_address,
+                idle_timeout,
                 open_browser,
                 !arguments.no_web_app,
             )
@@ -182,7 +178,11 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
         }
         // Without a web server the virtual IP printer owns the foreground.
         None => {
-            eprintln!("Press Ctrl+C to stop.");
+            for line in
+                cli_web::listener_status(None, raw_address.map(|address| (address, idle_timeout)))
+            {
+                eprintln!("{line}");
+            }
             let _ = tokio::signal::ctrl_c().await;
             Ok(())
         }

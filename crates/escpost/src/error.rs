@@ -22,19 +22,11 @@ pub(crate) enum CliError {
     )]
     InteractiveFindUnavailable,
 
-    #[error(
-        "an output destination is required; pass --output <PNG>, --output-dir <DIRECTORY>, or --web"
-    )]
-    MissingOutput,
-
     #[error("could not write PNG output to stdout: {0}")]
     WriteStdout(#[source] std::io::Error),
 
     #[error("refusing to write binary PNG data to an interactive terminal")]
     BinaryOutputToTerminal,
-
-    #[error("PNG stdout cannot be combined with a long-running web app")]
-    StdoutWithWeb,
 
     #[error("could not bind web app to {address}: {source}")]
     BindWeb {
@@ -68,9 +60,6 @@ pub(crate) enum CliError {
 
     #[error("--no-web-app needs --web-listen")]
     NoWebAppWithoutWebListener,
-
-    #[error("watch mode requires a filesystem source, not stdin")]
-    WatchStdin,
 
     #[error("--discover is only valid for network printers")]
     DiscoverForUsbPrinter,

@@ -240,12 +240,6 @@ pub(crate) enum ApplicationError {
 
     #[error("the operating system did not provide a user configuration directory")]
     NoUserConfigDirectory,
-
-    #[error("could not inspect watched source {path}: {source}")]
-    InspectWatchedSource {
-        path: PathBuf,
-        source: std::io::Error,
-    },
 }
 
 impl ApplicationError {

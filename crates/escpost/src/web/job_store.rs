@@ -60,30 +60,6 @@ pub(super) struct TraceWebSheet {
 }
 
 impl JobStore {
-    pub(crate) fn with_render(rendered: TracedRenderResult, antialias: bool) -> Self {
-        let runtime_status = JobRuntimeStatus {
-            receiving: false,
-            jobs_processed: 0,
-        };
-        let (runtime_status, _) = watch::channel(runtime_status);
-        Self {
-            state: Arc::new(RwLock::new(JobStoreState {
-                jobs: VecDeque::from([Arc::new(RenderedJob::from(rendered))]),
-                error: None,
-                generation: 1,
-                waiting_hint: None,
-                completion: None,
-                receiving: 0,
-                session_profile: String::new(),
-                antialias,
-                completed_at: Some(epoch_millis()),
-                raw_input: None,
-                jobs_processed: 0,
-            })),
-            runtime_status,
-        }
-    }
-
     /// Create a store with no job yet. The web app shows `hint` and the
     /// `profile` until the first job arrives, which suits a listener that
     /// renders on demand with a known profile.
@@ -147,12 +123,6 @@ impl JobStore {
         let mut state = self.state.write().await;
         state.receiving = state.receiving.saturating_sub(1);
         self.publish_runtime_status(&state);
-    }
-
-    /// Replace the preview with a render that has no capture semantics, such as
-    /// `render --web`. Its source is a file, so nothing is offered for download.
-    pub(crate) async fn replace_render(&self, rendered: TracedRenderResult) {
-        self.store_render(rendered, None, None, false).await;
     }
 
     /// Replace the preview with a captured job, recording how it ended so the

@@ -81,13 +81,5 @@ mod tests {
         };
         assert_eq!(serve.listen, Some(Some(expected_raw)));
         assert_eq!(serve.web_listen, Some(Some(expected_web)));
-
-        let render =
-            Cli::try_parse_from(["escpost", "render", "receipt.hex", "--web-listen", "9001"])
-                .expect("render should accept a bare web listener port");
-        let Command::Render(render) = render.command else {
-            panic!("render arguments should parse as the render command");
-        };
-        assert_eq!(render.web_listen, Some(expected_web));
     }
 }
