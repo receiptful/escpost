@@ -69,9 +69,13 @@ publish-dry-run: prepare-publish
 # Resumable: each step is skipped when it is already done, so a release that
 # fails partway can be rerun without unpicking what already succeeded.
 [doc("Set the version, test, tag, push, and publish to crates.io.")]
-publish version: (_require-clean-worktree) (set-version version) test
+publish version: (_require-release-branch) (_require-clean-worktree) (set-version version) test
     @git --no-pager diff --stat
-    @printf '\nPublish {{version}} to crates.io? Uploads cannot be undone. [y/N] '; \
+    @printf '\nRelease {{version}} will:\n'; \
+     printf '  - commit the version bump and tag it v{{version}}\n'; \
+     printf '  - push the commit and the tag to origin\n'; \
+     printf '  - upload the crates to crates.io, which cannot be undone\n'; \
+     printf '\nProceed? [y/N] '; \
      read -r reply; \
      case "$reply" in \
        [yY]|[yY][eE][sS]) ;; \
@@ -83,6 +87,27 @@ publish version: (_require-clean-worktree) (set-version version) test
     git push
     git push --tags
     scripts/publish-crates {{version}}
+    @printf '\nReleased {{version}}:\n'; \
+     printf '  - committed the version bump and tagged v{{version}}\n'; \
+     printf '  - pushed the commit and the tag to origin\n'; \
+     printf '  - published the crates to crates.io\n'; \
+     printf '\nNext: run `just release {{version}}` in receiptful/homebrew-tap\n'; \
+     printf 'to point the Homebrew formula at this release.\n'
+
+# Releases are cut from main: the recipe commits, tags, and pushes, so running
+# it elsewhere would tag the wrong history. Being behind the remote is refused
+# too, because the push after the commit would be rejected, leaving a version
+# commit and tag stranded locally.
+[private]
+_require-release-branch:
+    @branch="$(git branch --show-current)"; \
+      test "$branch" = "main" \
+        || { echo "Refusing to release from '$branch'; releases are cut from main."; exit 1; }
+    @git fetch --quiet origin
+    @behind="$(git rev-list --count HEAD..origin/main)"; \
+      test "$behind" = "0" \
+        || { echo "Refusing to release: main is $behind commit(s) behind origin/main."; \
+             echo "Run 'git pull --rebase' first."; exit 1; }
 
 [private]
 _require-clean-worktree:
