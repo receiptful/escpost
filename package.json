@@ -1,0 +1,20 @@
+{
+  "name": "escpost-packages",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "extension"
+  ],
+  "scripts": {
+    "build": "bun run --cwd packages/browser build && bun run --cwd extension build",
+    "test": "bun run build && vitest run packages extension",
+    "typecheck": "tsc --build --force"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.1.24",
+    "happy-dom": "20.0.0",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vitest": "3.2.4"
+  }
+}

@@ -1,0 +1,272 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>escpost manual test page</title>
+
+<!--
+  Captured at the very top of the document, before any other page script runs.
+  If the MAIN-world content scripts were injected at document_start as W1 requires,
+  both of these are already true here. This is the only place the ordering is
+  observable, and happy-dom cannot test it.
+-->
+<script>
+  window.__escpostProbe = {
+    wsPatchedBeforePageScripts: typeof WebSocket === "function" && WebSocket.CLOSED === 3 && WebSocket.name !== "WebSocket",
+    wsName: typeof WebSocket === "function" ? WebSocket.name : null,
+    qzPresent: typeof window.qz !== "undefined",
+    qzVersion: typeof window.qz !== "undefined" ? window.qz.version : null,
+    // The MAIN world must NOT be able to reach extension APIs: that is the whole
+    // point of the ISOLATED relay holding the only chrome.runtime handle.
+    chromeRuntimeReachable: typeof chrome !== "undefined" && typeof chrome.runtime?.sendMessage === "function",
+  };
+</script>
+
+<style>
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 2rem; max-width: 60rem; }
+  h1 { font-size: 1.2rem; margin-bottom: .4rem; }
+  .lede { color: #555; max-width: 46rem; margin: 0 0 1.4rem; }
+  #summary { font-weight: bold; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+  td.verdict { width: 4rem; font-weight: bold; }
+  .pass { color: #0a7d32; }
+  .fail { color: #b3261e; }
+  .skip { color: #8a8a8a; }
+  td.detail { color: #555; word-break: break-word; }
+  pre { background: #f4f4f4; padding: 0.5rem; white-space: pre-wrap; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    td { border-bottom-color: #333; }
+    td.detail { color: #aaa; }
+    pre { background: #1c1c1c; }
+    .lede { color: #aaa; }
+    .pass { color: #4ade80; } .fail { color: #f87171; } .skip { color: #999; }
+  }
+</style>
+
+<h1>escpost manual test page</h1>
+<p class="lede">A stand-in for a merchant site. It exercises the extension the way a real page
+does, through the injected <code>qz</code> API, and reports which leg of the chain works.
+Not shipped: nothing here is bundled into the extension.</p>
+<button id="run">Re-run checks</button>
+<button id="list">List printers</button>
+<button id="print">Print</button>
+<button id="print-html">Print HTML</button>
+
+<div id="summary">running…</div>
+<table id="results"></table>
+<pre id="out"></pre>
+
+<script>
+  // Drive the real chain through the injected window.qz shim:
+  // page (MAIN) -> postMessage -> relay (ISOLATED) -> service worker -> daemon.
+  // Ask the client, do not keep a second copy of the answer. The checks below
+  // connect on load, so a local flag goes stale immediately and the second
+  // connect is rejected with "An open connection with QZ Tray already exists",
+  // which is what qz-tray.js says too.
+  async function ensureConnected() {
+    if (!qz.websocket.isActive()) await qz.websocket.connect();
+  }
+  /**
+   * The HTML path, which the qz surface refuses on purpose: HTML has to be
+   * rendered server side, so it is metered and needs an account.
+   *
+   * This speaks the page-to-extension protocol directly rather than importing
+   * the SDK, because the page is served as a plain file. It is the same
+   * message the SDK sends.
+   */
+  let nextId = 1;
+  function askExtension(op, payload, timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      const timer = setTimeout(() => reject(new Error("The extension did not answer in time.")), timeoutMs);
+      const onMessage = (event) => {
+        const m = event.data;
+        if (event.source !== window || m?.source !== "escpost-ext" || m.id !== id) return;
+        clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+        m.ok ? resolve(m.data) : reject(Object.assign(new Error(m.error.message), { code: m.error.code }));
+      };
+      window.addEventListener("message", onMessage);
+      window.postMessage({ source: "escpost-page", id, protocol: 1, op, payload }, "*");
+    });
+  }
+
+  window.escpostTest = {
+    async list() { await ensureConnected(); return await qz.printers.find(); },
+    async print() {
+      await ensureConnected();
+      const target = (await qz.printers.getDefault()) ?? "TM-T20";
+      return await qz.print(qz.configs.create(target), ["\x1b@Hello escpost\n\n\n"]);
+    },
+    async printHtml() {
+      const printers = await askExtension("printers.list", undefined);
+      const target = printers[0]?.id ?? "TM-T20";
+      return askExtension("print", {
+        printer: target,
+        html: "<h1>escpost</h1><p>HTML receipt, rendered server side.</p><p>Total 6.50</p>",
+      });
+    },
+    probe() { return window.__escpostProbe; },
+  };
+</script>
+
+<script type="module">
+  const out = document.querySelector("#out");
+  const show = (label, value) => { out.textContent += label + ": " + JSON.stringify(value, null, 2) + "\n"; };
+
+  document.querySelector("#list").onclick = async () => {
+    try { show("printers", await window.escpostTest.list()); }
+    catch (error) { show("error", { code: error.code, message: error.message }); }
+  };
+  document.querySelector("#print-html").onclick = async () => {
+    show("html", "rendering…");
+    try { show("html", await window.escpostTest.printHtml()); }
+    catch (error) { show("error", { code: error.code, message: error.message }); }
+  };
+
+  document.querySelector("#print").onclick = async () => {
+    try {
+      await window.escpostTest.print();
+      // qz.print resolves with no value, here and in the real client, so there
+      // is nothing to display but the fact that it went.
+      show("print", "sent");
+    } catch (error) { show("error", { code: error.code, message: error.message }); }
+  };
+
+  /**
+   * The self-driving suite, ported from the spike's drive.js.
+   *
+   * Ordered so a failure names the leg that broke rather than the symptom:
+   * injection (P) before the QZ surface (B) before anything that reaches the
+   * daemon (D). A check that cannot run because an earlier one failed is
+   * reported SKIP, not FAIL — a missing printer is not a broken shim.
+   */
+  const LOG = "[escpost]";
+  const table = document.querySelector("#results");
+  const summary = document.querySelector("#summary");
+
+  function record(id, verdict, detail) {
+    const row = table.insertRow();
+    row.insertCell().textContent = id;
+    const cell = row.insertCell();
+    cell.className = "verdict " + verdict.toLowerCase();
+    cell.textContent = verdict;
+    const detailCell = row.insertCell();
+    detailCell.className = "detail";
+    detailCell.textContent = detail ?? "";
+    console[verdict === "FAIL" ? "error" : "log"](LOG, verdict, id, detail ?? "");
+    return verdict === "PASS";
+  }
+
+  /** A check returns a detail string on success and throws on failure. */
+  async function check(id, fn) {
+    try {
+      return record(id, "PASS", await fn());
+    } catch (error) {
+      return record(id, "FAIL", error?.message ?? String(error));
+    }
+  }
+
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+
+  async function run() {
+    table.replaceChildren();
+    summary.textContent = "running…";
+    let printers = [];
+
+    // Start from a known state. B2 tests connecting, so a connection left open
+    // by the buttons or by a previous run would fail it for the wrong reason.
+    if (typeof window.qz !== "undefined" && qz.websocket.isActive()) {
+      await qz.websocket.disconnect();
+    }
+
+    const probe = window.__escpostProbe;
+
+    await check("P1 MAIN world ran at document_start", () => {
+      assert(probe.wsPatchedBeforePageScripts, "WebSocket was not patched before page scripts (W1)");
+      return "WebSocket is " + probe.wsName;
+    });
+
+    await check("P2 qz global injected", () => {
+      assert(probe.qzPresent, "window.qz is absent — is the extension loaded and this site granted?");
+      return "version " + probe.qzVersion;
+    });
+
+    // Inverted on purpose: reaching chrome.runtime from the page would mean the
+    // ISOLATED relay is not the only holder of that handle.
+    await check("P3 chrome.runtime unreachable from the page", () => {
+      assert(!probe.chromeRuntimeReachable, "the MAIN world can reach chrome.runtime");
+      return "isolated";
+    });
+
+    const haveQz = typeof window.qz !== "undefined";
+
+    if (!haveQz) {
+      for (const id of ["B1", "B2", "B3", "D1", "D2", "D3"]) record(id + " (qz surface)", "SKIP", "window.qz absent");
+    } else {
+      await check("B1 qz.security accepts no-op promises", () => {
+        qz.security.setCertificatePromise((resolve) => resolve("no-cert-needed"));
+        qz.security.setSignaturePromise(() => (resolve) => resolve(""));
+        return "no certificate, no signing";
+      });
+
+      await check("B2 qz.websocket.connect", async () => {
+        await qz.websocket.connect();
+        assert(qz.websocket.isActive(), "connect resolved but isActive() is false");
+        return JSON.stringify(qz.websocket.getConnectionInfo());
+      });
+
+      await check("B3 qz.api.getVersion reports 2.2.4", async () => {
+        const version = await qz.api.getVersion();
+        assert(version === "2.2.4", "reported " + version + ", which re-enables qz-tray.js payload rewrites");
+        return version;
+      });
+
+      await check("D1 printers.find reaches the daemon", async () => {
+        printers = await qz.printers.find();
+        const list = Array.isArray(printers) ? printers : [printers];
+        printers = list;
+        assert(list.length > 0, "no printers configured — run `escpost printers add`");
+        return list.join(", ");
+      });
+
+      if (printers.length === 0) {
+        record("D2 raw ESC/POS print", "SKIP", "no printer to print to");
+        record("D3 HTML job refused", "SKIP", "no printer to print to");
+      } else {
+        const target = (await qz.printers.getDefault().catch(() => null)) ?? printers[0];
+
+        await check("D2 raw ESC/POS print", async () => {
+          const config = qz.configs.create(target);
+          await qz.print(config, ["\x1b@\x1b!\x30 escpost\n\x1b!\x00self-test OK\n\n\n\x1dV\x00"]);
+          return "printed to " + target;
+        });
+
+        // The shim must refuse HTML rather than send markup to a thermal head.
+        await check("D3 HTML job refused with a pointer to @escpost/browser", async () => {
+          const config = qz.configs.create(target);
+          try {
+            await qz.print(config, [{ type: "pixel", format: "html", flavor: "plain", data: "<b>x</b>" }]);
+          } catch (error) {
+            assert(/@escpost\/browser/.test(error.message ?? ""), "refused, but not with the expected message: " + error.message);
+            return "refused as designed";
+          }
+          throw new Error("HTML was accepted; it should have been refused");
+        });
+      }
+    }
+
+    const rows = [...table.rows];
+    const failed = rows.filter((row) => row.cells[1].textContent === "FAIL").length;
+    const passed = rows.filter((row) => row.cells[1].textContent === "PASS").length;
+    const skipped = rows.filter((row) => row.cells[1].textContent === "SKIP").length;
+    summary.textContent = `${passed} passed · ${failed} failed · ${skipped} skipped`;
+    summary.className = failed === 0 ? "pass" : "fail";
+    console.log(LOG, "=== done ===", summary.textContent);
+  }
+
+  document.querySelector("#run").onclick = run;
+  run();
+</script>

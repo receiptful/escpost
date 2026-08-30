@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "escpost \u2014 print receipts from the web",
+  "version": "0.1.0",
+  "description": "Print raw ESC/POS receipts to a local thermal printer. Replaces QZ Tray: no certificate, no per-print dialog.",
+  "minimum_chrome_version": "111",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:9000/*",
+    "https://api.receiptful.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "escpost",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "settings.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://api.receiptful.io/v1/extension/auth/verify*"
+      ],
+      "js": [
+        "auth-bridge.js"
+      ],
+      "run_at": "document_end",
+      "world": "ISOLATED"
+    }
+  ]
+}

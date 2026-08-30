@@ -188,6 +188,15 @@ ESCPost code and documentation are licensed under the
 [Apache License 2.0](LICENSE). Bundled third-party assets retain their own
 licenses and attribution.
 
+`extension/vendor/qz-tray.js` is the QZ Tray Connector by QZ Industries, LLC,
+under LGPL-2.1-only. It is kept unmodified, used by the extension's
+compatibility tests and its local development pages, and excluded from every
+build artifact, so no LGPL code is distributed with the extension or the npm
+package. See [extension/vendor/README.md](extension/vendor/README.md). The
+extension's QZ compatible surface is an independent implementation, written
+against the API that QZ Tray's own licensing places in the public domain.
+ESCPost is not affiliated with or endorsed by QZ Industries.
+
 ESC/POS is a registered trademark of Seiko Epson Corporation. ESCPost is an
 independent open-source project and is not affiliated with or endorsed by
 Epson.

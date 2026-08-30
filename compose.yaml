@@ -40,6 +40,77 @@ services:
         condition: service_healthy
     command: ["sh", "-c", "bun install --frozen-lockfile && bun run dev"]
 
+  # Registers the virtual printer the dev pages print to. Idempotent, because
+  # `up` runs it on every start and `printers add` refuses a name it knows.
+  #
+  # It calls the built binary rather than `escpost`, which is on no PATH: the
+  # escpost service puts it there through its own entrypoint, and this service
+  # is not that one.
+  printer-init:
+    <<: *development-service
+    environment:
+      ESCPOST_CONFIG_DIR: /home/developer/.config/escpost
+    volumes:
+      - .:/workspace
+      - escpost-config:/home/developer/.config/escpost
+      - cargo-home:/home/developer/.cargo
+      - cargo-target:/home/developer/target
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        cargo build --quiet --locked --package escpost
+        escpost="$${CARGO_TARGET_DIR}/debug/escpost"
+        if "$$escpost" printers list | grep -q TM-T20; then
+          echo "TM-T20 is already configured"
+          exit 0
+        fi
+        "$$escpost" printers add TM-T20 \
+          --transport network --host 127.0.0.1 --port 9100 \
+          --profile REFERENCE --non-interactive
+
+  # The pages under extension/dev, served from extension/ so the qz-tray page
+  # can reach vendor/. A merchant site stands here.
+  pages:
+    image: python:3.13-alpine
+    network_mode: host
+    working_dir: /workspace/extension
+    volumes:
+      - .:/workspace
+    command: ["python", "-m", "http.server", "8081", "--bind", "127.0.0.1"]
+    depends_on:
+      extension-build:
+        condition: service_completed_successfully
+
+  # The extension and the npm package, built without bun on the host. The
+  # workspace root is the working directory because they are one bun workspace:
+  # the extension imports the package by relative path rather than by version.
+  extension-build:
+    image: oven/bun:1.4.0
+    network_mode: host
+    working_dir: /workspace
+    user: "0:0"
+    entrypoint: /workspace/scripts/extension-entrypoint
+    volumes:
+      - .:/workspace
+      - workspace-node-modules:/workspace/node_modules
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
+
+  # Same image and the same volume, for running the suites.
+  extension-test:
+    image: oven/bun:1.4.0
+    network_mode: host
+    working_dir: /workspace
+    user: "0:0"
+    profiles:
+      - tools
+    entrypoint: /workspace/scripts/extension-entrypoint
+    volumes:
+      - .:/workspace
+      - workspace-node-modules:/workspace/node_modules
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run typecheck && bun run test"]
+
   test:
     <<: *development-service
     profiles:
@@ -174,6 +245,7 @@ networks:
         - subnet: 172.31.42.0/24
 
 volumes:
+  workspace-node-modules:
   escpost-config:
   cargo-home:
   cargo-target:

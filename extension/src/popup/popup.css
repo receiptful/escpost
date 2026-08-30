@@ -1,0 +1,131 @@
+body {
+  width: 320px;
+  padding: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.pop {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* The masthead reads as the wordmark does: ESC in ink, post in teal, set
+   tight. It is the only place the brand appears, so it carries no other
+   decoration. */
+.pop-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 13px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
+}
+.pop-mark {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  color: var(--ink);
+}
+.pop-mark b { font-weight: 800; color: var(--accent); }
+
+.pop-sec { padding: 12px 13px; display: flex; flex-direction: column; gap: 8px; }
+.pop-sec + .pop-sec { border-top: 1px solid var(--rule); }
+.pop-sec:empty { display: none; }
+
+/* Eyebrow: small, widely tracked, never shouting. */
+.pop-lab {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* A receipt line. The leader between label and value does the work. */
+.pop-row { display: flex; align-items: baseline; }
+.pop-row .k { color: var(--ink); white-space: nowrap; }
+.pop-row .v {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pop-note { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; margin: 0; }
+.pop-detail {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Something to type. Mono, because it is literal. */
+.pop-cmd {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink);
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 8px 9px;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.pop-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.pop-btn:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+.pop-btn.ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+.pop-btn.ghost:hover { background: var(--surface-2); border-color: var(--ink-faint); }
+
+/* The one tear edge. The footer is the stub you keep, so the perforation goes
+   here and nowhere else, because a receipt has one. */
+.pop-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 13px;
+  background: var(--surface-2);
+  border-top: var(--perf);
+}
+.pop-foot-act {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.pop-foot-act:hover { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-btn { transition: none; }
+}

@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>escpost</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  /* Palette and type come from theme.css so this page follows the scheme like
+     the popup and the settings page do. Layout only below. */
+  body { font: 15px/1.6 var(--sans); margin: 0; }
+
+  .sheet {
+    max-width: 34em;
+    margin: 4em auto;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+  }
+
+  /* The lockup: the mark from the logo, then the wordmark set the way the logo
+     sets it. The wordmark is type rather than an image so it stays crisp and
+     follows the colour scheme. */
+  .lockup {
+    display: flex;
+    align-items: center;
+    gap: .7em;
+    padding: 1.6em 1.9em;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+  }
+  .lockup img { width: 40px; height: 40px; }
+  .lockup span { font-size: 24px; font-weight: 800; letter-spacing: -.04em; color: var(--ink); }
+  .lockup b { color: var(--accent); }
+
+  .body { padding: 1.9em; }
+  h1 { font-size: 21px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 .4em; }
+  #body { color: var(--ink-muted); margin: 0; }
+
+  .group h2 {
+    font-size: 10px; font-weight: 650; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 2em 0 .7em;
+  }
+  ul { padding-left: 1.1em; margin: 0; color: var(--ink-muted); }
+  li { margin: .45em 0; }
+  li::marker { color: var(--accent); }
+
+  #status { margin-bottom: .9em; }
+  .cmd {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    background: var(--ground); border: 1px solid var(--rule); border-radius: var(--radius);
+    padding: .6em .8em; margin-top: 1em;
+  }
+  .act { margin: 1.2em 0 0; }
+  .result { font-size: 13.5px; color: var(--ink-muted); margin: .8em 0 0; }
+
+  form { display: flex; gap: .5em; margin: 2em 0 .6em; }
+  input {
+    flex: 1; padding: .6em .75em; border: 1px solid var(--rule-strong); border-radius: var(--radius);
+    font: inherit; background: var(--ground); color: var(--ink);
+  }
+  input:focus-visible { border-color: var(--accent); }
+  button {
+    padding: .6em 1.15em; border: 1px solid var(--accent); border-radius: var(--radius);
+    background: var(--accent); color: #fff; font: inherit; font-weight: 650; cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+  button:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+  #skip {
+    background: none; border: 0; color: var(--ink-faint); padding: 0; font-weight: 400;
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+  #skip:hover { background: none; color: var(--ink-muted); }
+  #warning {
+    background: var(--warn-soft); border-left: 2px solid var(--warn-fill);
+    border-radius: 0 var(--radius) var(--radius) 0; padding: .9em 1.1em; color: var(--ink); font-size: 13.5px;
+  }
+  [hidden] { display: none; }
+  @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+<div class="sheet">
+  <div class="lockup">
+    <img src="icons/icon-128.png" alt="" width="40" height="40">
+    <span>esc<b>post</b></span>
+  </div>
+  <div class="body">
+    <span id="status" class="pill mute" hidden></span>
+    <h1 id="heading"></h1>
+    <p id="body"></p>
+    <div id="command" class="cmd" hidden></div>
+    <p class="act"><button id="action" type="button" hidden></button></p>
+    <p id="result" class="result" hidden></p>
+    <div class="group"><h2>Working now</h2><ul id="works-now"></ul></div>
+    <div class="group"><h2>An email adds</h2><ul id="unlocks"></ul></div>
+    <form id="signup" hidden><input id="email" type="email" required placeholder="you@yourshop.com"><button type="submit">Send link</button></form>
+    <p id="warning" hidden></p>
+    <p><button id="skip" hidden type="button">Skip for now</button></p>
+  </div>
+</div>
+<script type="module" src="welcome.js"></script>

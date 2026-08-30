@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# The workspace's node_modules is a named volume, so it belongs to root until
+# something says otherwise. Mirrors scripts/frontend-entrypoint.
+
+set -eu
+
+modules=/workspace/node_modules
+chown bun:bun "$modules"
+
+exec runuser -u bun -- "$@"
