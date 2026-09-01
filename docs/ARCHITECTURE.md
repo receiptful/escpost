@@ -465,6 +465,18 @@ escpost render              POST /api/render
 escpost print               POST /api/print
 ```
 
+Raw browser printing is the deliberately narrow `POST /api/print` endpoint.
+Its required `printer` query parameter is the exact name from the printer
+configuration, and its body is the ESC/POS byte stream unchanged, with
+`Content-Type: application/octet-stream`. It is served by `escpost serve
+--web-listen <ADDRESS>`; `--no-web-app` keeps that API listener while omitting
+the embedded web application.
+
+The endpoint uses a negative origin filter: requests bearing an ordinary
+browser origin are rejected, while browser-extension origins and local program
+calls are allowed. The filter is not authentication; it prevents ordinary web
+pages from sending print requests.
+
 Names and parameter concepts will transfer between CLI and HTTP. HTTP will
 accept typed query parameters, JSON, or a route-specific binary upload; it will
 never accept argument arrays or shell strings. Responses will contain structured
@@ -504,18 +516,12 @@ embedded assets; set `ESCPOST_WATCH=0` for a production-like Compose run.
 
 Automatic listeners will continue to bind to loopback. Explicit `--web-listen`
 addresses will remain supported; non-loopback bindings will retain the exposure
-warning. State-changing API requests will reject untrusted browser origins and
-require a randomly generated per-process capability, independent of their
-route-specific content type. The embedded frontend will obtain the capability
-from a non-cacheable same-origin bootstrap response and return it in a custom
-request header. The server will expose no permissive CORS policy. Non-browser
-clients may use the same bootstrap and header contract.
-
-The capability protects against cross-origin browser requests; it is not
-remote-user authentication. Authentication, TLS, and remote exposure will
-belong to an operator's reverse proxy. A reverse proxy preserves the bootstrap
-contract under its authenticated origin rather than supplying or replacing the
-process capability.
+warning. `POST /api/print` uses no permissive CORS policy. Its negative origin
+filter rejects ordinary browser origins, permits browser-extension origins
+(subject to any configured `--extension-id`), and permits calls without an
+`Origin` header from local programs. This filter is not remote-user
+authentication. Authentication, TLS, and remote exposure belong to an
+operator's reverse proxy.
 
 The HTTP host will enforce limits before accepting untrusted work: request and
 RAW input bytes, discovery address count, simultaneous connections, queued or
