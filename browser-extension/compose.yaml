@@ -18,5 +18,17 @@ services:
     profiles: [browser-extension-tools]
     command: ["sh", "-c", "bun install --frozen-lockfile && bun run typecheck && bun run test"]
 
+  browser-extension-pages:
+    image: python:3.13-alpine
+    network_mode: host
+    profiles: [browser-extension-tools]
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace:ro
+    depends_on:
+      browser-extension-build:
+        condition: service_completed_successfully
+    command: ["python", "-m", "http.server", "8081", "--bind", "127.0.0.1"]
+
 volumes:
   browser-extension-node-modules:
