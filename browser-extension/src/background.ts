@@ -1,4 +1,5 @@
 import { DaemonClient } from "./daemon";
+import { installInventoryStreams } from "./inventory-stream";
 import { handleRequest, type RequestDependencies } from "./messages";
 import { isRelayRequest, type WorkerReply } from "./protocol";
 import { installGrantRegistration } from "./registration";
@@ -33,6 +34,8 @@ export function installBackground(
 }
 
 if (typeof chrome !== "undefined") {
-  installBackground(chrome.runtime);
+  const daemon = new DaemonClient();
+  installBackground(chrome.runtime, { permissions: chrome.permissions, daemon });
+  installInventoryStreams(chrome.runtime, { permissions: chrome.permissions, daemon });
   installGrantRegistration({ permissions: chrome.permissions, scripting: chrome.scripting });
 }

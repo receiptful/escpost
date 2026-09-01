@@ -220,24 +220,27 @@ async function readInventoryEvents(
   try {
     while (!signal.aborted) {
       const next = await reader.read();
+      if (signal.aborted) break;
       if (next.done) break;
       buffer += decoder.decode(next.value, { stream: true });
-      buffer = consumeEvents(buffer, callbacks);
+      buffer = consumeEvents(buffer, callbacks, signal);
     }
-    if (!signal.aborted) consumeEvents(`${buffer}${decoder.decode()}`, callbacks);
+    if (!signal.aborted) consumeEvents(`${buffer}${decoder.decode()}`, callbacks, signal);
   } finally {
     signal.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
 }
 
-function consumeEvents(input: string, callbacks: InventoryStreamCallbacks): string {
+function consumeEvents(input: string, callbacks: InventoryStreamCallbacks, signal: AbortSignal): string {
   let rest = input;
   for (;;) {
+    if (signal.aborted) return rest;
     const delimiter = /\r?\n\r?\n/.exec(rest);
     if (delimiter === null || delimiter.index === undefined) return rest;
-    emitEvent(rest.slice(0, delimiter.index), callbacks);
+    const block = rest.slice(0, delimiter.index);
     rest = rest.slice(delimiter.index + delimiter[0].length);
+    emitEvent(block, callbacks);
   }
 }
 

@@ -198,6 +198,70 @@ test("does not report a null stream body when abort wins as fetch resolves", asy
   expect(errors).toEqual([]);
 });
 
+test("does not emit a chunk that resolves after the stream is aborted", async () => {
+  // Break caught: omitting the abort gate immediately after reader.read()
+  // forwards a queued snapshot after the owning subscription is cancelled.
+  const controller = new AbortController();
+  let read = false;
+  const body = {
+    getReader() {
+      return {
+        async read() {
+          if (read) return { done: true, value: undefined };
+          read = true;
+          controller.abort();
+          return {
+            done: false,
+            value: new TextEncoder().encode(`data: ${JSON.stringify(inventory)}\n\n`),
+          };
+        },
+        async cancel() {},
+        releaseLock() {},
+      };
+    },
+  };
+  const snapshots: unknown[] = [];
+  const errors: Error[] = [];
+  const daemon = new DaemonClient(
+    new DaemonPortStore(new MemoryStorageArea()),
+    async () => ({ ok: true, body }) as unknown as Response,
+  );
+
+  await daemon.openInventoryStream({
+    onSnapshot: (snapshot) => snapshots.push(snapshot),
+    onError: (error) => errors.push(error),
+  }, controller.signal);
+
+  expect(snapshots).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("stops buffered SSE callbacks immediately when a snapshot aborts the stream", async () => {
+  // Break caught: parsing every complete event in a buffered chunk after the
+  // first callback cancels emits a later snapshot or failure to a dead owner.
+  const controller = new AbortController();
+  const body = stream([
+    `data: ${JSON.stringify(inventory)}\n\ndata: {"printers":[]}\n\n`,
+  ]);
+  const snapshots: unknown[] = [];
+  const errors: Error[] = [];
+  const daemon = new DaemonClient(
+    new DaemonPortStore(new MemoryStorageArea()),
+    async () => new Response(body),
+  );
+
+  await daemon.openInventoryStream({
+    onSnapshot: (snapshot) => {
+      snapshots.push(snapshot);
+      controller.abort();
+    },
+    onError: (error) => errors.push(error),
+  }, controller.signal);
+
+  expect(snapshots).toEqual([inventory]);
+  expect(errors).toEqual([]);
+});
+
 test("reports invalid SSE snapshots and cancels the reader when aborted", async () => {
   // Break caught: forwarding malformed stream data or leaving a reader open
   // after callers cancel leaks a live daemon connection into later views.
