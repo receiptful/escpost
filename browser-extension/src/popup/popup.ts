@@ -87,7 +87,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
     render({ origin: site.origin, grant: "present", relay: status.relay, daemon: status.daemon, error: status.error }, snapshot);
   };
 
-  const reconcile = async (snapshot: ActionSnapshot, error: string) => {
+  const reconcile = async (snapshot: ActionSnapshot, error: string | null) => {
     let granted: boolean;
     try {
       granted = await deps.permissions.contains({ origins: [snapshot.pattern] });
@@ -117,7 +117,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
       await reconcile(snapshot, "Could not update site access.");
       return;
     }
-    await reconcile(snapshot, "Could not refresh site access.");
+    await reconcile(snapshot, null);
   };
 
   const onPrimaryAction = () => {

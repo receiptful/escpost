@@ -98,6 +98,38 @@ test("synchronizes registrations after a completed revoke and refreshes the view
   expect(syncRegistrations).toHaveBeenCalledOnce();
 });
 
+test("renders successful grant and revoke reconciliation without an error alert", async () => {
+  // Break caught: retaining a failure message after a successful exact
+  // permission mutation falsely tells users that access is broken.
+  let granted = false;
+  const grantedSite = fixture({
+    permissions: {
+      contains: vi.fn(async () => granted),
+      request: vi.fn(async () => { granted = true; return true; }),
+      remove: vi.fn(async () => true),
+    },
+  });
+  await settle();
+  grantedSite.button().click();
+  await settle();
+  expect(grantedSite.button().textContent).toBe("Remove access");
+  expect(document.querySelector<HTMLParagraphElement>("#popup-error")?.hidden).toBe(true);
+
+  granted = true;
+  const revokedSite = fixture({
+    permissions: {
+      contains: vi.fn(async () => granted),
+      request: vi.fn(async () => true),
+      remove: vi.fn(async () => { granted = false; return true; }),
+    },
+  });
+  await settle();
+  revokedSite.button().click();
+  await settle();
+  expect(revokedSite.button().textContent).toBe("Allow this site");
+  expect(document.querySelector<HTMLParagraphElement>("#popup-error")?.hidden).toBe(true);
+});
+
 test("reports tab, permission, and relay failures as view state without rejections", async () => {
   // Break caught: a rejected browser API promise escapes the popup and leaves
   // users with neither a status nor a recovery instruction.
