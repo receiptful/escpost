@@ -9,6 +9,23 @@ class MemoryStorageArea {
   async remove(key: string): Promise<void> { delete this.values[key]; }
 }
 
+class PausedInvalidationStorageArea extends MemoryStorageArea {
+  private releaseRemove: () => void = () => undefined;
+  private readonly removeMayContinue = new Promise<void>((resolve) => { this.releaseRemove = resolve; });
+  private resolveRemoveStarted: () => void = () => undefined;
+  readonly removeStarted = new Promise<void>((resolve) => { this.resolveRemoveStarted = resolve; });
+
+  override async remove(key: string): Promise<void> {
+    this.resolveRemoveStarted();
+    await this.removeMayContinue;
+    await super.remove(key);
+  }
+
+  continueInvalidation(): void {
+    this.releaseRemove();
+  }
+}
+
 const inventory = {
   updated_at: "2026-09-01T10:30:00Z", warning: null,
   printers: [{
@@ -141,6 +158,43 @@ test("passes the inventory signal to a pending fetch and stops without rediscove
 
   expect(receivedSignal).toBe(controller.signal);
   expect(calls).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test("does not rediscover after aborting during a pending stream cache invalidation", async () => {
+  // Break caught: cancellation during storage cleanup reaches the retry path
+  // and opens discovery requests after the stream owner has gone away.
+  const storage = new PausedInvalidationStorageArea();
+  const ports = new DaemonPortStore(storage);
+  const calls: string[] = [];
+  const errors: Error[] = [];
+  const controller = new AbortController();
+  const daemon = new DaemonClient(ports, async (input) => {
+    calls.push(String(input));
+    throw new TypeError("connection reset");
+  });
+
+  const opened = daemon.openInventoryStream({ onSnapshot: () => undefined, onError: (error) => errors.push(error) }, controller.signal);
+  await storage.removeStarted;
+  controller.abort();
+  storage.continueInvalidation();
+  await opened;
+
+  expect(calls).toEqual(["http://127.0.0.1:9000/api/printers/list/events"]);
+  expect(errors).toEqual([]);
+});
+
+test("does not report a null stream body when abort wins as fetch resolves", async () => {
+  // Break caught: the null-body error callback fires after stream cancellation
+  // even though no reader should be opened for an aborted subscription.
+  const controller = new AbortController();
+  const errors: Error[] = [];
+  const daemon = new DaemonClient(new DaemonPortStore(new MemoryStorageArea()), async () => {
+    controller.abort();
+    return new Response();
+  });
+
+  await daemon.openInventoryStream({ onSnapshot: () => undefined, onError: (error) => errors.push(error) }, controller.signal);
   expect(errors).toEqual([]);
 });
 

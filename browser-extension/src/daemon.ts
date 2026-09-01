@@ -109,6 +109,7 @@ export class DaemonClient {
       callbacks.onError(error instanceof Error ? error : new DaemonError("The daemon is unavailable."));
       return;
     }
+    if (signal.aborted) return;
     if (response.body === null) {
       callbacks.onError(new DaemonError("The daemon closed the inventory stream."));
       return;
@@ -118,17 +119,20 @@ export class DaemonClient {
 
   private async get(path: string, signal?: AbortSignal): Promise<Response> {
     let baseUrl = await this.baseUrl(signal);
+    throwIfAborted(signal);
     try {
       return await this.getAt(baseUrl, path, signal);
     } catch (error) {
-      if (signal?.aborted) throw error;
+      throwIfAborted(signal);
       if (!isTransportError(error)) throw error;
       await this.ports.invalidate(baseUrl);
+      throwIfAborted(signal);
       baseUrl = await this.baseUrl(signal);
+      throwIfAborted(signal);
       try {
         return await this.getAt(baseUrl, path, signal);
       } catch (retryError) {
-        if (signal?.aborted) throw retryError;
+        throwIfAborted(signal);
         if (isTransportError(retryError)) await this.ports.invalidate(baseUrl);
         throw unavailable(retryError);
       }
@@ -137,12 +141,15 @@ export class DaemonClient {
 
   private async getAt(baseUrl: string, path: string, signal?: AbortSignal): Promise<Response> {
     const response = await this.fetcher(`${baseUrl}${path}`, signal === undefined ? undefined : { signal });
+    throwIfAborted(signal);
     if (!response.ok) throw new DaemonError("The daemon rejected the request.");
     return response;
   }
 
   private async baseUrl(signal?: AbortSignal): Promise<string> {
-    return (await this.ports.read()) ?? await this.discoverOrThrow(signal);
+    const cached = await this.ports.read();
+    throwIfAborted(signal);
+    return cached ?? await this.discoverOrThrow(signal);
   }
 
   private async discoverOrThrow(signal?: AbortSignal): Promise<string> {
@@ -155,12 +162,16 @@ export class DaemonClient {
     for (const port of DAEMON_PORTS) {
       const baseUrl = `http://${DAEMON_HOST}:${port}`;
       try {
-        if (!(await this.fetcher(`${baseUrl}/health`, signal === undefined ? undefined : { signal })).ok) continue;
+        const response = await this.fetcher(`${baseUrl}/health`, signal === undefined ? undefined : { signal });
+        throwIfAborted(signal);
+        if (!response.ok) continue;
       } catch (error) {
-        if (signal?.aborted) throw error;
+        throwIfAborted(signal);
         continue;
       }
+      throwIfAborted(signal);
       await this.ports.remember(baseUrl);
+      throwIfAborted(signal);
       return baseUrl;
     }
     return null;
@@ -169,6 +180,11 @@ export class DaemonClient {
 
 function unavailable(error: unknown): DaemonError {
   return error instanceof DaemonError ? error : new DaemonError("The local daemon is unavailable.");
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
 }
 
 function isTransportError(error: unknown): boolean {
