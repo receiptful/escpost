@@ -1,5 +1,8 @@
 import { extensionProtocolVersion, isPageRequest, type ErrorCode, type PageRequest, type WorkerReply } from "./protocol";
-import { originPattern } from "./registration";
+import { isDaemonOrigin, originPattern } from "./registration";
+
+const maximumRawJobBytes = 8 * 1024 * 1024;
+const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 type OneShotDaemon = {
   health(): Promise<unknown>;
@@ -18,7 +21,7 @@ export async function handleRequest(
   deps: RequestDependencies,
 ): Promise<WorkerReply> {
   const pattern = originPattern(senderOrigin);
-  if (pattern === null || !await granted(pattern, deps)) {
+  if (pattern === null || isDaemonOrigin(senderOrigin ?? "") || !await granted(pattern, deps)) {
     return failure("ORIGIN_NOT_GRANTED", "This page origin is not granted access to ESCPost.");
   }
   if (!isPageRequest(request) || request.protocol !== extensionProtocolVersion) {
@@ -76,12 +79,20 @@ function isListPayload(value: unknown): value is { transport?: "usb" | "network"
 }
 
 function decodeRawPrint(value: unknown): { printer: string; bytes: Uint8Array } | null {
-  if (!isRecord(value) || typeof value.printer !== "string" || value.printer.length === 0 || typeof value.dataBase64 !== "string") {
+  if (!isRecord(value)
+    || Object.keys(value).length !== 2
+    || !Object.hasOwn(value, "printer")
+    || !Object.hasOwn(value, "dataBase64")
+    || typeof value.printer !== "string"
+    || value.printer.length === 0
+    || typeof value.dataBase64 !== "string") {
     return null;
   }
-  if (!isPaddedBase64(value.dataBase64)) return null;
+  const decodedLength = decodedBase64Length(value.dataBase64);
+  if (decodedLength === null || decodedLength > maximumRawJobBytes) return null;
   try {
     const binary = atob(value.dataBase64);
+    if (binary.length !== decodedLength || binary.length > maximumRawJobBytes) return null;
     return { printer: value.printer, bytes: Uint8Array.from(binary, (character) => character.charCodeAt(0)) };
   } catch {
     return null;
@@ -89,7 +100,22 @@ function decodeRawPrint(value: unknown): { printer: string; bytes: Uint8Array } 
 }
 
 function isPaddedBase64(value: string): boolean {
-  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const contentLength = value.length - padding;
+  if ((padding === 2 && contentLength % 4 !== 2) || (padding === 1 && contentLength % 4 !== 3)) return false;
+  for (let index = 0; index < contentLength; index += 1) {
+    if (base64Alphabet.indexOf(value[index]) === -1) return false;
+  }
+  if (padding === 2) return (base64Alphabet.indexOf(value[contentLength - 1]) & 0x0f) === 0;
+  if (padding === 1) return (base64Alphabet.indexOf(value[contentLength - 1]) & 0x03) === 0;
+  return true;
+}
+
+function decodedBase64Length(value: string): number | null {
+  if (!isPaddedBase64(value)) return null;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
 }
 
 function protocolFailure(): WorkerReply {

@@ -20,6 +20,7 @@ export type WorkerReply =
 export type PageReply = WorkerReply & { source: "escpost-extension"; id: number };
 
 export type ErrorCode =
+  | "EXTENSION_UNAVAILABLE"
   | "ORIGIN_NOT_GRANTED"
   | "DAEMON_UNAVAILABLE"
   | "PRINT_FAILED"

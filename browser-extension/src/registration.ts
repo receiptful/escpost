@@ -26,10 +26,15 @@ export type RegistrationDependencies = {
   };
 };
 
-export async function registerGrantedRelay(deps: RegistrationDependencies): Promise<void> {
+export async function registerGrantedRelay(
+  deps: RegistrationDependencies,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
   const grants = await deps.permissions.getAll();
+  if (!isCurrent()) return;
   const matches = (grants.origins ?? []).filter(isExplicitWebGrant);
   const existing = await deps.scripting.getRegisteredContentScripts({ ids: [relayId] });
+  if (!isCurrent()) return;
 
   if (matches.length === 0) {
     if (existing.length > 0) await deps.scripting.unregisterContentScripts({ ids: [relayId] });
@@ -51,9 +56,25 @@ export async function registerGrantedRelay(deps: RegistrationDependencies): Prom
 }
 
 export function installGrantRegistration(deps: RegistrationDependencies): void {
-  void registerGrantedRelay(deps);
-  deps.permissions.onAdded?.addListener(() => { void registerGrantedRelay(deps); });
-  deps.permissions.onRemoved?.addListener(() => { void registerGrantedRelay(deps); });
+  let revision = 0;
+  let refreshing = false;
+  const refresh = () => {
+    revision += 1;
+    if (!refreshing) void drain();
+  };
+  const drain = async () => {
+    refreshing = true;
+    let observed: number;
+    do {
+      observed = revision;
+      await registerGrantedRelay(deps, () => revision === observed);
+    } while (observed !== revision);
+    refreshing = false;
+  };
+
+  refresh();
+  deps.permissions.onAdded?.addListener(refresh);
+  deps.permissions.onRemoved?.addListener(refresh);
 }
 
 export function originPattern(origin: string | undefined): string | null {
@@ -67,12 +88,21 @@ export function originPattern(origin: string | undefined): string | null {
   }
 }
 
+export function isDaemonOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" && url.hostname === DAEMON_HOST && DAEMON_PORTS.some((port) => port === Number(url.port));
+  } catch {
+    return false;
+  }
+}
+
 function isExplicitWebGrant(pattern: string): boolean {
   const origin = originPattern(pattern);
   if (origin !== pattern) return false;
   try {
     const url = new URL(pattern);
-    return !(url.hostname === DAEMON_HOST && DAEMON_PORTS.some((port) => port === Number(url.port)));
+    return !url.hostname.includes("*") && !isDaemonOrigin(pattern);
   } catch {
     return false;
   }

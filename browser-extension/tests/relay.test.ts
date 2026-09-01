@@ -14,7 +14,11 @@ function page(origin = "https://shop.example") {
   return {
     window,
     postMessage,
-    emit: (data: unknown, source: unknown = window) => listener?.({ data, source } as MessageEvent),
+    emit: (data: unknown, eventOrigin = origin, source: unknown = window) => {
+      const event = new MessageEvent("message", { data, origin: eventOrigin });
+      Object.defineProperty(event, "source", { value: source });
+      listener?.(event);
+    },
   };
 }
 
@@ -46,7 +50,7 @@ test("ignores a spoofed window event and malformed page request", async () => {
   const sendMessage = vi.fn();
   installRelay(fixture.window, { sendMessage });
 
-  fixture.emit({ source: "escpost-page", protocol: 1, id: 1, op: "daemon.health", payload: null }, {});
+  fixture.emit({ source: "escpost-page", protocol: 1, id: 1, op: "daemon.health", payload: null }, "https://shop.example", {});
   fixture.emit({ source: "escpost-page", protocol: 1, op: "daemon.health", payload: null });
   fixture.emit({ source: "another-library", protocol: 1, id: 2, op: "daemon.health", payload: null });
   await Promise.resolve();
@@ -66,6 +70,68 @@ test("returns a typed failure for a same-window request missing its payload", as
   expect(sendMessage).not.toHaveBeenCalled();
   expect(fixture.postMessage).toHaveBeenCalledWith(
     { source: "escpost-extension", id: 6, ok: false, error: expect.objectContaining({ code: "PROTOCOL_MISMATCH" }) },
+    "https://shop.example",
+  );
+});
+
+test("rejects a foreign MessageEvent origin and a mismatched protocol before worker forwarding", async () => {
+  // Break caught: checking only event.source lets a same-window script relay a
+  // message whose browser origin differs from the document that received it.
+  const fixture = page();
+  const sendMessage = vi.fn();
+  installRelay(fixture.window, { sendMessage });
+
+  fixture.emit({ source: "escpost-page", protocol: 1, id: 7, op: "daemon.health", payload: null }, "https://evil.example");
+  fixture.emit({ source: "escpost-page", protocol: 2, id: 8, op: "daemon.health", payload: null });
+
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(fixture.postMessage).toHaveBeenCalledWith(
+    { source: "escpost-extension", id: 8, ok: false, error: expect.objectContaining({ code: "PROTOCOL_MISMATCH" }) },
+    "https://shop.example",
+  );
+});
+
+test("suppresses a worker reply after the page navigates to another origin", async () => {
+  // Break caught: replying to the current origin after navigation hands an old
+  // request result to a different document at the same window reference.
+  const fixture = page();
+  let resolve: ((reply: unknown) => void) | undefined;
+  const sendMessage = vi.fn(() => new Promise<unknown>((next) => { resolve = next; }));
+  installRelay(fixture.window, { sendMessage });
+
+  fixture.emit({ source: "escpost-page", protocol: 1, id: 9, op: "daemon.health", payload: null });
+  fixture.window.location.origin = "https://after-navigation.example";
+  resolve?.({ ok: true, data: true });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(fixture.postMessage).not.toHaveBeenCalled();
+});
+
+test("settles rejected runtime delivery and malformed worker replies exactly once", async () => {
+  // Break caught: swallowing a runtime rejection or malformed worker result
+  // makes the SDK wait for a timeout instead of receiving a typed failure.
+  const rejected = page();
+  installRelay(rejected.window, { sendMessage: vi.fn(async () => { throw new Error("worker asleep"); }) });
+  rejected.emit({ source: "escpost-page", protocol: 1, id: 10, op: "daemon.health", payload: null });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(rejected.postMessage).toHaveBeenCalledTimes(1);
+  expect(rejected.postMessage).toHaveBeenCalledWith(
+    { source: "escpost-extension", id: 10, ok: false, error: expect.objectContaining({ code: "EXTENSION_UNAVAILABLE" }) },
+    "https://shop.example",
+  );
+
+  const malformed = page();
+  installRelay(malformed.window, { sendMessage: vi.fn(async () => ({ ok: false, error: null })) });
+  malformed.emit({ source: "escpost-page", protocol: 1, id: 11, op: "daemon.health", payload: null });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(malformed.postMessage).toHaveBeenCalledTimes(1);
+  expect(malformed.postMessage).toHaveBeenCalledWith(
+    { source: "escpost-extension", id: 11, ok: false, error: expect.objectContaining({ code: "PROTOCOL_MISMATCH" }) },
     "https://shop.example",
   );
 });

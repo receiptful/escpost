@@ -1,4 +1,4 @@
-import { isPageRequest, type PageReply, type PageRequest, type WorkerReply } from "./protocol";
+import { extensionProtocolVersion, isPageRequest, type PageReply, type PageRequest, type WorkerReply } from "./protocol";
 
 type RelayWindow = {
   location: { origin: string };
@@ -13,30 +13,43 @@ export function installRelay(
   runtime: Runtime = chrome.runtime,
 ): void {
   page.addEventListener("message", (event) => {
-    if (event.source !== page || !isReplyablePageMessage(event.data)) return;
-    if (!isPageRequest(event.data)) {
-      page.postMessage(protocolFailure(event.data.id), page.location.origin);
+    const origin = currentOrigin(page);
+    if (origin === null || event.source !== page || event.origin !== origin || !isReplyablePageMessage(event.data)) return;
+    if (!isPageRequest(event.data) || event.data.protocol !== extensionProtocolVersion) {
+      page.postMessage(protocolFailure(event.data.id), origin);
       return;
     }
-    void forward(event.data, page, runtime);
+    void forward(event.data, page, runtime, origin);
   });
 }
 
-async function forward(request: PageRequest, page: RelayWindow, runtime: Runtime): Promise<void> {
+async function forward(request: PageRequest, page: RelayWindow, runtime: Runtime, origin: string): Promise<void> {
+  const respond = guardedResponse(page, request.id, origin);
   try {
     const reply = await runtime.sendMessage({ source: "escpost-relay", request });
-    if (!isWorkerReply(reply)) return;
-    page.postMessage({ source: "escpost-extension", id: request.id, ...reply }, page.location.origin);
+    respond(isWorkerReply(reply) ? reply : protocolFailureReply());
   } catch {
-    // The page SDK owns its extension-unavailable timeout when Chrome cannot
-    // deliver a one-shot worker message.
+    respond(failure("EXTENSION_UNAVAILABLE", "The extension worker could not receive the page request."));
+  }
+}
+
+function currentOrigin(page: RelayWindow): string | null {
+  try {
+    const url = new URL(page.location.origin);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.origin === page.location.origin ? url.origin : null;
+  } catch {
+    return null;
   }
 }
 
 function isWorkerReply(value: unknown): value is WorkerReply {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const reply = value as { ok?: unknown; data?: unknown; error?: unknown };
-  return reply.ok === true || (reply.ok === false && typeof reply.error === "object" && reply.error !== null);
+  return reply.ok === true || (reply.ok === false
+    && typeof reply.error === "object"
+    && reply.error !== null
+    && typeof (reply.error as { code?: unknown }).code === "string"
+    && typeof (reply.error as { message?: unknown }).message === "string");
 }
 
 function isReplyablePageMessage(value: unknown): value is { source: "escpost-page"; id: number } {
@@ -46,11 +59,23 @@ function isReplyablePageMessage(value: unknown): value is { source: "escpost-pag
 }
 
 function protocolFailure(id: number): PageReply {
-  return {
-    source: "escpost-extension",
-    id,
-    ok: false,
-    error: { code: "PROTOCOL_MISMATCH", message: "The page request does not match the ESCPost protocol." },
+  return { source: "escpost-extension", id, ...protocolFailureReply() };
+}
+
+function protocolFailureReply(): WorkerReply {
+  return failure("PROTOCOL_MISMATCH", "The page request does not match the ESCPost protocol.");
+}
+
+function failure(code: "EXTENSION_UNAVAILABLE" | "PROTOCOL_MISMATCH", message: string): WorkerReply {
+  return { ok: false, error: { code, message } };
+}
+
+function guardedResponse(page: RelayWindow, id: number, origin: string): (reply: WorkerReply) => void {
+  let responded = false;
+  return (reply) => {
+    if (responded || currentOrigin(page) !== origin) return;
+    responded = true;
+    page.postMessage({ source: "escpost-extension", id, ...reply }, origin);
   };
 }
 
