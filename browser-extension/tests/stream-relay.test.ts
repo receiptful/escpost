@@ -21,6 +21,38 @@ class ControlledRuntimePort {
   drop(): void { this.disconnectListener?.(); }
 }
 
+class RejectingRuntimePort extends ControlledRuntimePort {
+  override postMessage(): void { throw new Error("port post failed"); }
+}
+
+class ControlledTasks {
+  private readonly queued: Array<{ callback: () => void; cancelled: boolean }> = [];
+
+  readonly schedule = (callback: () => void): (() => void) => {
+    const task = { callback, cancelled: false };
+    this.queued.push(task);
+    return () => { task.cancelled = true; };
+  };
+
+  get pendingCount(): number {
+    return this.queued.filter((task) => !task.cancelled).length;
+  }
+
+  enqueue(callback: () => void): void {
+    this.queued.push({ callback, cancelled: false });
+  }
+
+  runNext(): void {
+    for (;;) {
+      const task = this.queued.shift();
+      if (task === undefined) throw new Error("Expected a pending task.");
+      if (task.cancelled) continue;
+      task.callback();
+      return;
+    }
+  }
+}
+
 function page(origin = "https://shop.example") {
   let listener: WindowListener | undefined;
   const postMessage = vi.fn();
@@ -54,11 +86,6 @@ function unsubscribe(subscriptionId: number) {
   return { source: "escpost-page", kind: "unsubscribe", subscriptionId };
 }
 
-async function flush(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
 test("multiplexes page subscription ids over one runtime port and closes it after final unsubscribe", () => {
   // Break caught: opening a runtime port per id or retaining the final port
   // violates the content-document ownership and leaks worker/SSE resources.
@@ -90,21 +117,24 @@ test("multiplexes page subscription ids over one runtime port and closes it afte
   expect(port.disconnect).toHaveBeenCalledOnce();
 });
 
-test("reconnects a lost runtime port and reissues every still-active id", async () => {
+test("reconnects a lost runtime port and reissues every still-active id", () => {
   // Break caught: treating MV3 worker suspension as cancellation leaves live
   // SDK callbacks permanently detached from the replacement worker port.
   const fixture = page();
   const first = new ControlledRuntimePort();
   const second = new ControlledRuntimePort();
   const ports = [first, second];
+  const tasks = new ControlledTasks();
   const runtime = { sendMessage: vi.fn(), connect: vi.fn(() => ports.shift() ?? second) };
-  installRelay(fixture.window, runtime);
+  installRelay(fixture.window, runtime, tasks);
   fixture.emit(subscribe(17));
   fixture.emit(subscribe(18));
 
   first.drop();
   expect(runtime.connect).toHaveBeenCalledTimes(1);
-  await flush();
+  expect(tasks.pendingCount).toBe(1);
+  expect(fixture.postMessage).toHaveBeenCalledTimes(2);
+  tasks.runNext();
 
   expect(runtime.connect).toHaveBeenCalledTimes(2);
   expect(second.posted).toEqual([
@@ -113,19 +143,133 @@ test("reconnects a lost runtime port and reissues every still-active id", async 
   ]);
 });
 
-test("does not reconnect when the final id is removed before the reconnect microtask", async () => {
+test("does not reconnect when the final id is removed before the recovery task", () => {
   // Break caught: a queued reconnect racing final unsubscribe can recreate a
   // port after the content document has released all stream ownership.
   const fixture = page();
   const first = new ControlledRuntimePort();
+  const tasks = new ControlledTasks();
   const runtime = { sendMessage: vi.fn(), connect: vi.fn(() => first) };
-  installRelay(fixture.window, runtime);
+  installRelay(fixture.window, runtime, tasks);
   fixture.emit(subscribe(17));
 
   first.drop();
+  expect(tasks.pendingCount).toBe(1);
   fixture.emit(unsubscribe(17));
-  await flush();
 
+  expect(tasks.pendingCount).toBe(0);
+  expect(runtime.connect).toHaveBeenCalledTimes(1);
+});
+
+test("does not reconnect old subscriptions after navigation wins the queued reconnect race", () => {
+  // Break caught: checking only that an owner origin exists in the queued task
+  // reissues old-document ids after the window has navigated to a new origin.
+  const fixture = page();
+  const first = new ControlledRuntimePort();
+  const second = new ControlledRuntimePort();
+  const ports = [first, second];
+  const tasks = new ControlledTasks();
+  const runtime = { sendMessage: vi.fn(), connect: vi.fn(() => ports.shift() ?? second) };
+  installRelay(fixture.window, runtime, tasks);
+  fixture.emit(subscribe(17));
+
+  first.drop();
+  expect(tasks.pendingCount).toBe(1);
+  fixture.window.location.origin = "https://after-navigation.example";
+  tasks.runNext();
+
+  expect(runtime.connect).toHaveBeenCalledTimes(1);
+  expect(tasks.pendingCount).toBe(0);
+  expect(second.posted).toEqual([]);
+  expect(fixture.postMessage).toHaveBeenCalledTimes(1);
+  expect(fixture.postMessage).toHaveBeenCalledWith({
+    source: "escpost-extension",
+    kind: "failure",
+    subscriptionId: 17,
+    error: { code: "EXTENSION_UNAVAILABLE", message: "The extension worker stream disconnected." },
+  }, "https://shop.example");
+});
+
+test("yields between thrown connects and eventually reissues every retained id once", () => {
+  // Break caught: treating a thrown runtime.connect as terminal stalls active
+  // ids, while retrying inline or in microtasks prevents unrelated tasks running.
+  const fixture = page();
+  const tasks = new ControlledTasks();
+  const recovered = new ControlledRuntimePort();
+  let attempts = 0;
+  const runtime = {
+    sendMessage: vi.fn(),
+    connect: vi.fn(() => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("worker unavailable");
+      return recovered;
+    }),
+  };
+  installRelay(fixture.window, runtime, tasks);
+  fixture.emit(subscribe(17));
+  fixture.emit(subscribe(18));
+
+  expect(runtime.connect).toHaveBeenCalledTimes(1);
+  expect(tasks.pendingCount).toBe(1);
+  expect(fixture.postMessage).toHaveBeenCalledTimes(1);
+  let unrelatedTaskRan = false;
+  tasks.enqueue(() => { unrelatedTaskRan = true; });
+
+  tasks.runNext();
+  expect(runtime.connect).toHaveBeenCalledTimes(2);
+  expect(tasks.pendingCount).toBe(2);
+  expect(fixture.postMessage).toHaveBeenCalledTimes(3);
+  tasks.runNext();
+  expect(unrelatedTaskRan).toBe(true);
+  expect(runtime.connect).toHaveBeenCalledTimes(2);
+  expect(tasks.pendingCount).toBe(1);
+
+  tasks.runNext();
+  expect(runtime.connect).toHaveBeenCalledTimes(3);
+  expect(tasks.pendingCount).toBe(0);
+  expect(recovered.posted).toEqual([
+    { kind: "subscribe", subscriptionId: 17, protocol: 1 },
+    { kind: "subscribe", subscriptionId: 18, protocol: 1 },
+  ]);
+});
+
+test("contains repeated synchronous port-post failures behind one recovery task", () => {
+  // Break caught: each failed reissue scheduling an immediate microtask can
+  // create a reconnect storm that starves the document event loop.
+  const fixture = page();
+  const tasks = new ControlledTasks();
+  const recovered = new ControlledRuntimePort();
+  const ports = [new RejectingRuntimePort(), new RejectingRuntimePort(), recovered];
+  const runtime = { sendMessage: vi.fn(), connect: vi.fn(() => ports.shift() ?? recovered) };
+  installRelay(fixture.window, runtime, tasks);
+  fixture.emit(subscribe(17));
+
+  expect(runtime.connect).toHaveBeenCalledTimes(1);
+  expect(tasks.pendingCount).toBe(1);
+  expect(fixture.postMessage).toHaveBeenCalledTimes(1);
+  tasks.runNext();
+  expect(runtime.connect).toHaveBeenCalledTimes(2);
+  expect(tasks.pendingCount).toBe(1);
+  expect(fixture.postMessage).toHaveBeenCalledTimes(2);
+  tasks.runNext();
+
+  expect(runtime.connect).toHaveBeenCalledTimes(3);
+  expect(tasks.pendingCount).toBe(0);
+  expect(recovered.posted).toEqual([{ kind: "subscribe", subscriptionId: 17, protocol: 1 }]);
+});
+
+test("final unsubscribe cancels recovery after a thrown connect", () => {
+  // Break caught: a failed connect retry surviving the final unsubscribe can
+  // recreate runtime traffic after the page releases stream ownership.
+  const fixture = page();
+  const tasks = new ControlledTasks();
+  const runtime = { sendMessage: vi.fn(), connect: vi.fn(() => { throw new Error("worker unavailable"); }) };
+  installRelay(fixture.window, runtime, tasks);
+  fixture.emit(subscribe(17));
+
+  expect(tasks.pendingCount).toBe(1);
+  fixture.emit(unsubscribe(17));
+  expect(tasks.pendingCount).toBe(0);
   expect(runtime.connect).toHaveBeenCalledTimes(1);
 });
 

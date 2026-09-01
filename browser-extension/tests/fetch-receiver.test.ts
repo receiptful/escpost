@@ -236,6 +236,50 @@ test("does not emit a chunk that resolves after the stream is aborted", async ()
   expect(errors).toEqual([]);
 });
 
+test("absorbs a rejected reader cancellation without emitting callbacks", async () => {
+  // Break caught: discarding reader.cancel() from the abort listener leaks its
+  // rejected promise as an unhandled rejection after unsubscribe/disconnect.
+  let resolveRead: (result: ReadableStreamReadResult<Uint8Array>) => void = () => undefined;
+  let observedRead: () => void = () => undefined;
+  const readStarted = new Promise<void>((resolve) => { observedRead = resolve; });
+  const pendingRead = new Promise<ReadableStreamReadResult<Uint8Array>>((resolve) => { resolveRead = resolve; });
+  const cancellationFailure = new Error("reader cancellation failed");
+  const body = {
+    getReader() {
+      return {
+        read() {
+          observedRead();
+          return pendingRead;
+        },
+        async cancel() { throw cancellationFailure; },
+        releaseLock() {},
+      };
+    },
+  };
+  const snapshots: unknown[] = [];
+  const errors: Error[] = [];
+  const daemon = new DaemonClient(
+    new DaemonPortStore(new MemoryStorageArea()),
+    async () => ({ ok: true, body }) as unknown as Response,
+  );
+  const controller = new AbortController();
+  const opened = daemon.openInventoryStream({
+    onSnapshot: (snapshot) => snapshots.push(snapshot),
+    onError: (error) => errors.push(error),
+  }, controller.signal);
+  await readStarted;
+
+  controller.abort();
+  resolveRead({
+    done: false,
+    value: new TextEncoder().encode(`data: ${JSON.stringify(inventory)}\n\n`),
+  });
+  await opened;
+
+  expect(snapshots).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test("stops buffered SSE callbacks immediately when a snapshot aborts the stream", async () => {
   // Break caught: parsing every complete event in a buffered chunk after the
   // first callback cancels emits a later snapshot or failure to a dead owner.

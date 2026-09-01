@@ -215,7 +215,7 @@ async function readInventoryEvents(
   }
   const decoder = new TextDecoder();
   let buffer = "";
-  const cancel = () => { void reader.cancel(); };
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
   signal.addEventListener("abort", cancel, { once: true });
   try {
     while (!signal.aborted) {

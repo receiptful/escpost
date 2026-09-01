@@ -18,6 +18,17 @@ type Runtime = {
   connect?(details: { name: string }): RuntimePort;
 };
 
+type RelayTasks = {
+  schedule(callback: () => void): () => void;
+};
+
+const defaultRelayTasks: RelayTasks = {
+  schedule(callback) {
+    const timer = setTimeout(callback, 0);
+    return () => clearTimeout(timer);
+  },
+};
+
 type PageStreamMessage =
   | { source: "escpost-extension"; kind: "snapshot"; subscriptionId: number; data: unknown }
   | { source: "escpost-extension"; kind: "failure"; subscriptionId: number; error: { code: string; message: string } };
@@ -25,8 +36,9 @@ type PageStreamMessage =
 export function installRelay(
   page: RelayWindow = window as unknown as RelayWindow,
   runtime: Runtime = chrome.runtime,
+  tasks: RelayTasks = defaultRelayTasks,
 ): void {
-  const streams = createStreamRelay(page, runtime);
+  const streams = createStreamRelay(page, runtime, tasks);
   page.addEventListener("message", (event) => {
     const origin = currentOrigin(page);
     if (origin === null || event.source !== page || event.origin !== origin) return;
@@ -51,11 +63,17 @@ export function installRelay(
   });
 }
 
-function createStreamRelay(page: RelayWindow, runtime: Runtime) {
+function createStreamRelay(page: RelayWindow, runtime: Runtime, tasks: RelayTasks) {
   const subscriptions = new Set<number>();
   let port: RuntimePort | undefined;
   let ownerOrigin: string | undefined;
-  let reconnectQueued = false;
+  let cancelReconnect: (() => void) | undefined;
+
+  const cancelScheduledReconnect = () => {
+    const cancel = cancelReconnect;
+    cancelReconnect = undefined;
+    cancel?.();
+  };
 
   const closePort = () => {
     const ownedPort = port;
@@ -71,6 +89,7 @@ function createStreamRelay(page: RelayWindow, runtime: Runtime) {
   const closeDocument = () => {
     subscriptions.clear();
     ownerOrigin = undefined;
+    cancelScheduledReconnect();
     closePort();
   };
 
@@ -80,19 +99,31 @@ function createStreamRelay(page: RelayWindow, runtime: Runtime) {
     page.postMessage({ source: "escpost-extension", kind: "failure", subscriptionId, error: { code, message } }, origin);
   };
 
-  const queueReconnect = () => {
-    if (reconnectQueued || subscriptions.size === 0 || ownerOrigin === undefined) return;
-    reconnectQueued = true;
-    queueMicrotask(() => {
-      reconnectQueued = false;
-      if (port === undefined && subscriptions.size > 0 && ownerOrigin !== undefined) openPort();
+  const fanFailure = (message: string) => {
+    for (const subscriptionId of subscriptions) {
+      postFailure(subscriptionId, "EXTENSION_UNAVAILABLE", message);
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (cancelReconnect !== undefined || subscriptions.size === 0 || ownerOrigin === undefined) return;
+    cancelReconnect = tasks.schedule(() => {
+      cancelReconnect = undefined;
+      const origin = ownerOrigin;
+      if (origin === undefined) return;
+      if (currentOrigin(page) !== origin) {
+        closeDocument();
+        return;
+      }
+      if (port === undefined && subscriptions.size > 0) openPort();
     });
   };
 
-  const losePort = (lostPort: RuntimePort) => {
+  const losePort = (lostPort: RuntimePort, message: string) => {
     if (port !== lostPort) return;
     port = undefined;
-    queueReconnect();
+    fanFailure(message);
+    scheduleReconnect();
   };
 
   const postToPort = (ownedPort: RuntimePort, message: unknown): boolean => {
@@ -101,7 +132,7 @@ function createStreamRelay(page: RelayWindow, runtime: Runtime) {
       ownedPort.postMessage(message);
       return true;
     } catch {
-      losePort(ownedPort);
+      losePort(ownedPort, "The extension worker stream could not receive the subscription.");
       return false;
     }
   };
@@ -123,25 +154,23 @@ function createStreamRelay(page: RelayWindow, runtime: Runtime) {
   };
 
   function openPort(): void {
-    if (port !== undefined || subscriptions.size === 0) return;
+    if (port !== undefined || subscriptions.size === 0 || cancelReconnect !== undefined) return;
     if (runtime.connect === undefined) {
-      for (const subscriptionId of subscriptions) {
-        postFailure(subscriptionId, "EXTENSION_UNAVAILABLE", "The extension worker stream is unavailable.");
-      }
+      fanFailure("The extension worker stream is unavailable.");
+      scheduleReconnect();
       return;
     }
     let opened: RuntimePort;
     try {
       opened = runtime.connect({ name: "escpost-printers" });
     } catch {
-      for (const subscriptionId of subscriptions) {
-        postFailure(subscriptionId, "EXTENSION_UNAVAILABLE", "The extension worker stream is unavailable.");
-      }
+      fanFailure("The extension worker stream is unavailable.");
+      scheduleReconnect();
       return;
     }
     port = opened;
     opened.onMessage.addListener((message) => receive(opened, message));
-    opened.onDisconnect.addListener(() => losePort(opened));
+    opened.onDisconnect.addListener(() => losePort(opened, "The extension worker stream disconnected."));
     for (const subscriptionId of subscriptions) {
       if (!postToPort(opened, { kind: "subscribe", subscriptionId, protocol: extensionProtocolVersion })) return;
     }
@@ -155,7 +184,7 @@ function createStreamRelay(page: RelayWindow, runtime: Runtime) {
       subscriptions.add(subscriptionId);
       const ownedPort = port;
       if (ownedPort === undefined) {
-        openPort();
+        if (cancelReconnect === undefined) openPort();
       } else {
         postToPort(ownedPort, { kind: "subscribe", subscriptionId, protocol: extensionProtocolVersion });
       }
@@ -166,6 +195,7 @@ function createStreamRelay(page: RelayWindow, runtime: Runtime) {
       if (ownedPort !== undefined) postToPort(ownedPort, { kind: "unsubscribe", subscriptionId });
       if (subscriptions.size === 0) {
         ownerOrigin = undefined;
+        cancelScheduledReconnect();
         closePort();
       }
     },
