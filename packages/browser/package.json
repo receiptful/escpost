@@ -12,6 +12,6 @@
     }
   },
   "scripts": {
-    "build": "vite build && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/types.ts && mv dist/types.d.ts dist/index.d.ts"
+    "build": "vite build && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/index.ts"
   }
 }
