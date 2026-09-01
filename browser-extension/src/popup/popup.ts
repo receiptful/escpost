@@ -2,20 +2,25 @@ import "./popup.css";
 import { registerGrantedRelay, type RegistrationDependencies } from "../registration";
 import { renderPopup } from "../ui/dom";
 import { currentSiteOrigin, type SiteOrigin } from "../ui/origins";
-import { probeRelayStatus, type RelayProbeScripting } from "../ui/status";
+import { probeRelayStatus, type RelayProbeTabs } from "../ui/status";
 import { buildPopupView, type PopupModelInput, type PopupView } from "./model";
 
 type Tab = { id?: number; url?: string };
+type ActionKind = "grant" | "revoke";
+type ActionSnapshot = SiteOrigin & { tabId: number; action: ActionKind; revision: number };
+type TabEvents = {
+  onActivated?: { addListener(listener: (activeInfo: { tabId: number }) => void): void };
+  onUpdated?: { addListener(listener: (tabId: number, changeInfo: { url?: string }) => void): void };
+};
 
 export type PopupDependencies = {
   document: Document;
-  tabs: { query(details: { active: boolean; currentWindow: boolean }): Promise<Tab[]> };
+  tabs: RelayProbeTabs & { query(details: { active: boolean; currentWindow: boolean }): Promise<Tab[]> } & TabEvents;
   permissions: {
     contains(details: { origins: string[] }): Promise<boolean>;
     request(details: { origins: string[] }): Promise<boolean>;
     remove(details: { origins: string[] }): Promise<boolean>;
   };
-  scripting: RelayProbeScripting;
   syncRegistrations(): Promise<void>;
 };
 
@@ -23,82 +28,125 @@ export type PopupController = { refresh(): Promise<void> };
 
 export function installPopup(deps: PopupDependencies): PopupController {
   const main = deps.document.querySelector("main") ?? deps.document.body;
-  let currentSite: SiteOrigin | null = null;
+  let revision = 0;
+  let currentAction: ActionSnapshot | null = null;
   let currentView: PopupView | null = null;
+  let pendingTabId: number | undefined;
 
-  const render = (input: PopupModelInput) => {
-    currentView = buildPopupView(input);
+  const isCurrent = (snapshot: Pick<ActionSnapshot, "revision">) => snapshot.revision === revision;
+
+  const render = (input: PopupModelInput, snapshot?: Omit<ActionSnapshot, "action">) => {
+    const view = buildPopupView(input);
+    currentView = view;
+    currentAction = view.primaryAction === null || snapshot === undefined
+      ? null
+      : { ...snapshot, action: view.primaryAction.kind };
+    renderPopup(main, view, onPrimaryAction);
+  };
+
+  const suppressAction = () => {
+    currentAction = null;
+    if (currentView === null || currentView.primaryAction === null) return;
+    currentView = { ...currentView, primaryAction: null };
     renderPopup(main, currentView, onPrimaryAction);
   };
 
   const refresh = async (): Promise<void> => {
+    const thisRevision = ++revision;
+    pendingTabId = undefined;
+    suppressAction();
     let tab: Tab;
     try {
       [tab] = await deps.tabs.query({ active: true, currentWindow: true });
     } catch {
-      currentSite = null;
-      render({ origin: null, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not read the active tab." });
+      if (thisRevision === revision) render({ origin: null, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not read the active tab." });
       return;
     }
-    currentSite = currentSiteOrigin(tab?.url);
-    if (currentSite === null) {
-      render({ origin: null, grant: "unknown", relay: "unknown", daemon: "unknown" });
+    if (thisRevision !== revision) return;
+    const site = currentSiteOrigin(tab?.url);
+    if (site === null || tab?.id === undefined) {
+      render({ origin: site?.origin ?? null, grant: "unknown", relay: "unknown", daemon: "unknown", error: site === null ? null : "Could not read the active tab." });
       return;
     }
+    pendingTabId = tab.id;
+    const snapshot: Omit<ActionSnapshot, "action"> = { ...site, tabId: tab.id, revision: thisRevision };
     let granted: boolean;
     try {
-      granted = await deps.permissions.contains({ origins: [currentSite.pattern] });
+      granted = await deps.permissions.contains({ origins: [site.pattern] });
     } catch {
-      render({ origin: currentSite.origin, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not verify site access." });
+      if (isCurrent(snapshot)) render({ origin: site.origin, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not verify site access." });
       return;
     }
+    if (!isCurrent(snapshot)) return;
     if (!granted) {
-      render({ origin: currentSite.origin, grant: "absent", relay: "unknown", daemon: "unknown" });
+      render({ origin: site.origin, grant: "absent", relay: "unknown", daemon: "unknown" }, snapshot);
       return;
     }
-    if (tab?.id === undefined) {
-      render({ origin: currentSite.origin, grant: "present", relay: "unknown", daemon: "unknown", error: "Could not contact the page relay." });
-      return;
-    }
-    const status = await probeRelayStatus(tab.id, currentSite.origin, deps.scripting);
-    render({ origin: currentSite.origin, grant: "present", relay: status.relay, daemon: status.daemon, error: status.error });
+    const status = await probeRelayStatus(tab.id, deps.tabs);
+    if (!isCurrent(snapshot)) return;
+    render({ origin: site.origin, grant: "present", relay: status.relay, daemon: status.daemon, error: status.error }, snapshot);
   };
 
-  const onPrimaryAction = () => {
-    const site = currentSite;
-    const action = currentView?.primaryAction;
-    if (site === null || action === undefined || action === null) return;
-    if (action.kind === "grant") {
-      // Chrome requires this prompt to be initiated before any await or queued task.
-      const requested = deps.permissions.request({ origins: [site.pattern] });
-      void requested.then(onPermissionChanged, () => renderFailure("Could not change site access."));
+  const reconcile = async (snapshot: ActionSnapshot, error: string) => {
+    let granted: boolean;
+    try {
+      granted = await deps.permissions.contains({ origins: [snapshot.pattern] });
+    } catch {
+      if (isCurrent(snapshot)) render({ origin: snapshot.origin, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not verify site access." });
       return;
     }
-    const removed = deps.permissions.remove({ origins: [site.pattern] });
-    void removed.then(onPermissionChanged, () => renderFailure("Could not change site access."));
+    if (!isCurrent(snapshot)) return;
+    const base: Omit<ActionSnapshot, "action"> = snapshot;
+    if (!granted) {
+      render({ origin: snapshot.origin, grant: "absent", relay: "unknown", daemon: "unknown", error }, base);
+      return;
+    }
+    const status = await probeRelayStatus(snapshot.tabId, deps.tabs);
+    if (!isCurrent(snapshot)) return;
+    render({ origin: snapshot.origin, grant: "present", relay: status.relay, daemon: status.daemon, error }, base);
   };
 
-  const onPermissionChanged = async (): Promise<void> => {
+  const completeMutation = async (snapshot: ActionSnapshot, changed: boolean, failure: string) => {
+    if (!changed) {
+      await reconcile(snapshot, failure);
+      return;
+    }
     try {
       await deps.syncRegistrations();
     } catch {
-      renderFailure("Could not update site access.");
+      await reconcile(snapshot, "Could not update site access.");
       return;
     }
-    await refresh();
+    await reconcile(snapshot, "Could not refresh site access.");
   };
 
-  const renderFailure = (error: string) => {
-    render({
-      origin: currentSite?.origin ?? null,
-      grant: currentSite === null ? "unknown" : "absent",
-      relay: "unknown",
-      daemon: "unknown",
-      error,
-    });
+  const onPrimaryAction = () => {
+    const snapshot = currentAction;
+    if (snapshot === null || !isCurrent(snapshot)) return;
+    if (snapshot.action === "grant") {
+      // This must stay directly in the click stack for Chrome's permission gesture.
+      const requested = deps.permissions.request({ origins: [snapshot.pattern] });
+      suppressAction();
+      void requested.then(
+        (changed) => completeMutation(snapshot, changed, "Site access was not changed."),
+        () => reconcile(snapshot, "Could not change site access."),
+      );
+      return;
+    }
+    const removed = deps.permissions.remove({ origins: [snapshot.pattern] });
+    suppressAction();
+    void removed.then(
+      (changed) => completeMutation(snapshot, changed, "Site access was not changed."),
+      () => reconcile(snapshot, "Could not change site access."),
+    );
   };
 
-  void refresh().catch(() => renderFailure("Could not refresh popup status."));
+  deps.tabs.onActivated?.addListener(() => { void refresh(); });
+  deps.tabs.onUpdated?.addListener((tabId, changeInfo) => {
+    if (changeInfo.url !== undefined && (pendingTabId === undefined || tabId === pendingTabId)) void refresh();
+  });
+
+  void refresh();
   return { refresh };
 }
 
@@ -108,7 +156,6 @@ function chromeDependencies(): PopupDependencies {
     document,
     tabs: chrome.tabs,
     permissions: chrome.permissions,
-    scripting: chrome.scripting,
     syncRegistrations: () => registerGrantedRelay(registration),
   };
 }

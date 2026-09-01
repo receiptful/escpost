@@ -1,4 +1,12 @@
-import { extensionProtocolVersion, isPageRequest, type PageReply, type PageRequest, type WorkerReply } from "./protocol";
+import {
+  extensionProtocolVersion,
+  isPageRequest,
+  isRelayProbeRequest,
+  type PageReply,
+  type PageRequest,
+  type RelayProbeReply,
+  type WorkerReply,
+} from "./protocol";
 
 type RelayWindow = {
   location: { origin: string };
@@ -14,6 +22,10 @@ type RuntimePort = {
 };
 
 type Runtime = {
+  id?: string;
+  onMessage?: {
+    addListener(listener: (message: unknown, sender: { id?: string }, sendResponse: (response: RelayProbeReply) => void) => boolean | void): void;
+  };
   sendMessage(message: unknown): Promise<unknown>;
   connect?(details: { name: string }): RuntimePort;
 };
@@ -39,6 +51,7 @@ export function installRelay(
   tasks: RelayTasks = defaultRelayTasks,
 ): void {
   const streams = createStreamRelay(page, runtime, tasks);
+  installPrivateProbe(runtime);
   page.addEventListener("message", (event) => {
     const origin = currentOrigin(page);
     if (origin === null || event.source !== page || event.origin !== origin) return;
@@ -61,6 +74,30 @@ export function installRelay(
     }
     void forward(event.data, page, runtime, origin);
   });
+}
+
+function installPrivateProbe(runtime: Runtime): void {
+  runtime.onMessage?.addListener((message, sender, sendResponse) => {
+    if (!isRelayProbeRequest(message) || (runtime.id !== undefined && sender.id !== runtime.id)) return;
+    void runtime.sendMessage({
+      source: "escpost-relay",
+      request: { source: "escpost-page", protocol: extensionProtocolVersion, id: 0, op: "daemon.health", payload: null },
+    }).then(
+      (reply) => sendResponse(probeReply(reply)),
+      () => sendResponse(probeReply(null)),
+    );
+    return true;
+  });
+}
+
+function probeReply(reply: unknown): RelayProbeReply {
+  return {
+    source: "escpost-popup",
+    kind: "relay-probe-result",
+    protocol: extensionProtocolVersion,
+    relay: true,
+    daemon: isWorkerReply(reply) && reply.ok === true && typeof reply.data === "boolean" ? reply.data : null,
+  };
 }
 
 function createStreamRelay(page: RelayWindow, runtime: Runtime, tasks: RelayTasks) {

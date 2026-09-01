@@ -105,6 +105,33 @@ test("refreshes registration on permission add and removal", async () => {
   expect(scripting.unregisterContentScripts).toHaveBeenCalledWith({ ids: ["escpost-relay"] });
 });
 
+test("keeps permission-event registration sync alive without popup ownership", async () => {
+  // Break caught: relying on a popup continuation means an allowed/revoked
+  // origin is never registered/removed when the popup closes immediately.
+  let added: (() => void) | undefined;
+  let origins: string[] = [];
+  const scripting = {
+    getRegisteredContentScripts: vi.fn(async () => []),
+    registerContentScripts: vi.fn(async () => undefined),
+    updateContentScripts: vi.fn(async () => undefined),
+    unregisterContentScripts: vi.fn(async () => undefined),
+  };
+  installGrantRegistration({
+    permissions: {
+      getAll: vi.fn(async () => ({ origins })),
+      onAdded: { addListener: vi.fn((listener) => { added = listener; }) },
+    },
+    scripting,
+  });
+  await settle();
+
+  origins = ["https://shop.example/*"];
+  added?.();
+  await settle();
+
+  expect(scripting.registerContentScripts).toHaveBeenCalledWith([expect.objectContaining({ matches: ["https://shop.example/*"] })]);
+});
+
 test("coalesces a delayed add snapshot behind a later removal", async () => {
   // Break caught: an earlier async add pass can finish after a removal and
   // restore relay injection for an origin that is no longer granted.
