@@ -12,7 +12,12 @@ export function startSdkPage(client, pageDocument) {
   const printStatus = requiredElement(pageDocument, "print-status");
   let selectedPrinter = "";
   let stopped = false;
+  let printing = false;
   let currentPrint = Promise.resolve();
+
+  function updatePrintEligibility() {
+    printButton.disabled = printing || selectedPrinter === "";
+  }
 
   function renderSnapshot(next) {
     const previousSelection = selectedPrinter;
@@ -28,7 +33,7 @@ export function startSdkPage(client, pageDocument) {
       : (next.printers[0]?.name ?? "");
     printer.value = selectedPrinter;
     printer.disabled = next.printers.length === 0;
-    printButton.disabled = next.printers.length === 0;
+    updatePrintEligibility();
     snapshot.textContent = `Snapshot updated at: ${next.updatedAt}`;
     warning.textContent = next.warning ?? "No inventory warnings.";
     inventoryError.textContent = "";
@@ -42,13 +47,18 @@ export function startSdkPage(client, pageDocument) {
   }
 
   async function sendRawPrint() {
-    if (selectedPrinter === "") return;
+    if (printing || selectedPrinter === "") return;
+    printing = true;
+    updatePrintEligibility();
     printStatus.textContent = "Sending raw print job…";
     try {
       const result = await client.print({ printer: selectedPrinter, data: receiptBytes });
       printStatus.textContent = `Print sent: ${result.jobId}`;
     } catch (error) {
       printStatus.textContent = `Print failed: ${messageFor(error)}`;
+    } finally {
+      printing = false;
+      updatePrintEligibility();
     }
   }
 

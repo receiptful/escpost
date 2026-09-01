@@ -81,11 +81,13 @@ function fakeSdk({
   initialSnapshot: snapshot,
   healthy = true,
   printError,
+  printResult,
   stop = vi.fn(),
 }: {
   initialSnapshot: Snapshot;
   healthy?: boolean | Error;
   printError?: Error;
+  printResult?: Promise<{ jobId: string }>;
   stop?: ReturnType<typeof vi.fn>;
 }) {
   let onSnapshot: ((next: Snapshot) => void) | undefined;
@@ -105,10 +107,10 @@ function fakeSdk({
         return stop;
       }),
     },
-    print: vi.fn(async ({ printer, data }) => {
+    print: vi.fn(({ printer, data }) => {
       if (printError !== undefined) throw printError;
       printed.push({ printer, data: Array.from(data as Uint8Array) });
-      return { jobId: "job-17" };
+      return printResult ?? Promise.resolve({ jobId: "job-17" });
     }),
   };
 
@@ -118,6 +120,12 @@ function fakeSdk({
     fail(error: Error) { onError?.(error); },
     printedJobs: () => printed,
   };
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve: (value: T) => resolve(value) };
 }
 
 async function flush(): Promise<void> {
@@ -207,6 +215,59 @@ test("disables printing when the current snapshot contains no configured printer
   expect(document.body.textContent).toContain("No configured printers are available.");
   await page.clickPrint();
   expect(sdk.printedJobs()).toEqual([]);
+});
+
+test("allows one pending raw job and recomputes print eligibility from later inventory", async () => {
+  // Break caught: a second rapid click can submit the receipt twice, while a
+  // snapshot that removes the selected printer during the job can re-enable a
+  // stale raw-print action after settlement.
+  const pending = deferred<{ jobId: string }>();
+  const sdk = fakeSdk({ initialSnapshot, printResult: pending.promise });
+  const page = startSdkPage(sdk.sdk, document);
+  page.selectPrinter("kitchen printer");
+
+  const firstClick = page.clickPrint();
+  const secondClick = page.clickPrint();
+
+  expect(sdk.printedJobs()).toEqual([{
+    printer: "kitchen printer",
+    data: [0x1b, 0x40, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x0a, 0x0a, 0x0a],
+  }]);
+  expect(page.printButton().disabled).toBe(true);
+
+  sdk.emit({
+    updatedAt: "2026-09-01T12:03:00Z",
+    warning: null,
+    printers: [],
+  });
+  pending.resolve({ jobId: "job-18" });
+  await Promise.all([firstClick, secondClick]);
+
+  expect(page.selectedPrinter()).toBe("");
+  expect(page.printButton().disabled).toBe(true);
+  await page.clickPrint();
+  expect(sdk.printedJobs()).toEqual([{
+    printer: "kitchen printer",
+    data: [0x1b, 0x40, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x0a, 0x0a, 0x0a],
+  }]);
+
+  sdk.emit({
+    ...initialSnapshot,
+    updatedAt: "2026-09-01T12:04:00Z",
+    printers: [initialSnapshot.printers[0]!],
+  });
+  expect(page.printButton().disabled).toBe(false);
+  await page.clickPrint();
+  expect(sdk.printedJobs()).toEqual([
+    {
+      printer: "kitchen printer",
+      data: [0x1b, 0x40, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x0a, 0x0a, 0x0a],
+    },
+    {
+      printer: "counter",
+      data: [0x1b, 0x40, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x0a, 0x0a, 0x0a],
+    },
+  ]);
 });
 
 test("shows unavailable health, stream failures, and a rejected print without unhandled rejection", async () => {
