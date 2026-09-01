@@ -215,6 +215,49 @@ test("rechecks the explicit page grant before a reconnect opens daemon traffic",
   });
 });
 
+test("aborts and removes a live stream as soon as its site permission is revoked", async () => {
+  // Break caught: checking permission only when opening or reconnecting leaves
+  // an already-open SSE stream delivering inventory after its site's grant is
+  // removed from Chrome.
+  let connect: ((port: ControlledPort) => void) | undefined;
+  let removePermission: ((details: { origins?: string[] }) => void) | undefined;
+  const runtime = { onConnect: { addListener: vi.fn((listener) => { connect = listener; }) } };
+  const permissions = {
+    contains: vi.fn(async () => true),
+    onRemoved: {
+      addListener: vi.fn((listener: (details: { origins?: string[] }) => void) => {
+        removePermission = listener;
+      }),
+    },
+  };
+  const daemon = new ControlledDaemon();
+  installInventoryStreams(runtime, { permissions, daemon });
+  const port = new ControlledPort();
+  connect?.(port);
+  port.receive({ kind: "subscribe", subscriptionId: 17, protocol: 1 });
+  await flush();
+
+  daemon.emit(snapshot);
+  removePermission?.({ origins: ["https://shop.example/*"] });
+
+  expect(daemon.attempts[0]?.signal.aborted).toBe(true);
+  daemon.emit({ ...snapshot, updated_at: "2026-09-01T12:01:00Z" });
+  port.receive({ kind: "subscribe", subscriptionId: 18, protocol: 1 });
+  await flush();
+  expect(daemon.attempts).toHaveLength(1);
+  expect(port.posted).toEqual([
+    { kind: "snapshot", subscriptionId: 17, data: snapshot },
+    {
+      kind: "failure",
+      subscriptionId: 17,
+      error: {
+        code: "ORIGIN_NOT_GRANTED",
+        message: "This page origin is not granted access to ESCPost.",
+      },
+    },
+  ]);
+});
+
 test("rejects wrong ports and untrusted sender URLs before grant checks or daemon traffic", async () => {
   // Break caught: trusting a page-supplied origin or the fixed loopback host
   // lets non-web/ungranted documents turn extension host access into SSE access.

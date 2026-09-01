@@ -174,3 +174,28 @@ test("does not replay a print after a 5xx response and invalidates its port", as
   expect(calls).toEqual(["http://127.0.0.1:9005/api/print?printer=counter"]);
   await expect(ports.read()).resolves.toBeNull();
 });
+
+test("preserves a recognized printer-not-found API envelope without discarding the daemon port", async () => {
+  // Break caught: collapsing the daemon's typed 404 envelope into a generic
+  // availability failure prevents the worker and SDK from reporting the
+  // configured-name error, while invalidating this healthy port is needless.
+  const calls: string[] = [];
+  const { client: daemon, ports } = client(async (input) => {
+    calls.push(String(input));
+    return response({
+      error: {
+        code: "PRINTER_NOT_FOUND",
+        message: "No configured printer is named missing.",
+      },
+    }, 404);
+  });
+  await ports.remember("http://127.0.0.1:9007");
+
+  await expect(daemon.print("missing", new Uint8Array([0x1b]))).rejects.toMatchObject({
+    name: "DaemonError",
+    code: "PRINTER_NOT_FOUND",
+    message: "No configured printer is named missing.",
+  });
+  expect(calls).toEqual(["http://127.0.0.1:9007/api/print?printer=missing"]);
+  await expect(ports.read()).resolves.toBe("http://127.0.0.1:9007");
+});

@@ -1,4 +1,5 @@
 import { extensionProtocolVersion, isPageRequest, type ErrorCode, type PageRequest, type WorkerReply } from "./protocol";
+import { DaemonError } from "./daemon";
 import { isDaemonOrigin, originPattern } from "./registration";
 
 const maximumRawJobBytes = 8 * 1024 * 1024;
@@ -59,7 +60,10 @@ async function printRequest(request: PageRequest, deps: RequestDependencies): Pr
   if (payload === null) return protocolFailure();
   try {
     return { ok: true, data: await deps.daemon.print(payload.printer, payload.bytes) };
-  } catch {
+  } catch (error) {
+    if (error instanceof DaemonError && error.code === "PRINTER_NOT_FOUND") {
+      return failure("PRINTER_NOT_FOUND", error.message);
+    }
     return failure("PRINT_FAILED", "The daemon could not complete the raw print job.");
   }
 }

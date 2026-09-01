@@ -20,8 +20,18 @@ type InventoryDaemon = {
 };
 
 export type InventoryStreamDependencies = {
-  permissions: { contains(details: { origins: string[] }): Promise<boolean> };
+  permissions: {
+    contains(details: { origins: string[] }): Promise<boolean>;
+    onRemoved?: {
+      addListener(listener: (details: { origins?: string[] }) => void): void;
+    };
+  };
   daemon: InventoryDaemon;
+};
+
+type OwnedPortStream = {
+  pattern: string;
+  revoke(): void;
 };
 
 const reconnectDelays = [150, 300, 600, 1_000] as const;
@@ -35,14 +45,28 @@ const deniedError = {
 } as const;
 
 export function installInventoryStreams(runtime: StreamRuntime, deps: InventoryStreamDependencies): void {
+  const ownedStreams = new Set<OwnedPortStream>();
+  deps.permissions.onRemoved?.addListener((details) => {
+    const removedOrigins = details.origins ?? [];
+    for (const owned of [...ownedStreams]) {
+      if (removedOrigins.includes(owned.pattern)) owned.revoke();
+    }
+  });
   runtime.onConnect.addListener((port) => {
     const pattern = trustedSenderPattern(port);
     if (pattern === null) return;
-    ownPortStream(port, pattern, deps);
+    let owned: OwnedPortStream;
+    owned = ownPortStream(port, pattern, deps, () => ownedStreams.delete(owned));
+    ownedStreams.add(owned);
   });
 }
 
-function ownPortStream(port: StreamPort, pattern: string, deps: InventoryStreamDependencies): void {
+function ownPortStream(
+  port: StreamPort,
+  pattern: string,
+  deps: InventoryStreamDependencies,
+  onClose: () => void,
+): OwnedPortStream {
   const subscriptions = new Set<number>();
   const deniedSubscriptions = new Set<number>();
   let authorization: Promise<boolean> | undefined;
@@ -67,6 +91,7 @@ function ownPortStream(port: StreamPort, pattern: string, deps: InventoryStreamD
     subscriptions.clear();
     deniedSubscriptions.clear();
     stopOwnedWork();
+    onClose();
   };
 
   const post = (message: unknown) => {
@@ -90,6 +115,12 @@ function ownPortStream(port: StreamPort, pattern: string, deps: InventoryStreamD
       post({ kind: "failure", subscriptionId, error });
       if (disconnected) return;
     }
+  };
+
+  const revoke = () => {
+    if (disconnected) return;
+    fanFailure(deniedError);
+    close();
   };
 
   const startAttempt = () => {
@@ -158,6 +189,7 @@ function ownPortStream(port: StreamPort, pattern: string, deps: InventoryStreamD
     if (subscriptions.size === 0) stopOwnedWork();
   });
   port.onDisconnect.addListener(close);
+  return { pattern, revoke };
 }
 
 async function granted(pattern: string, deps: InventoryStreamDependencies): Promise<boolean> {

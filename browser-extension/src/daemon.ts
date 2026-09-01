@@ -37,9 +37,10 @@ export type InventoryStreamCallbacks = {
 };
 
 export class DaemonError extends Error {
-  readonly code = "DAEMON_UNAVAILABLE" as const;
-
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: "DAEMON_UNAVAILABLE" | "PRINTER_NOT_FOUND" = "DAEMON_UNAVAILABLE",
+  ) {
     super(message);
     this.name = "DaemonError";
   }
@@ -88,11 +89,12 @@ export class DaemonClient {
         headers: { "Content-Type": "application/octet-stream" },
         body: bytes as unknown as BodyInit,
       });
-      if (!response.ok) throw new DaemonError("The daemon could not confirm the print job.");
+      if (!response.ok) throw await printFailure(response);
       const result = await json(response);
       if (!isPrintResult(result)) throw new DaemonError("The daemon sent an invalid print response.");
       return result;
     } catch (error) {
+      if (error instanceof DaemonError && error.code === "PRINTER_NOT_FOUND") throw error;
       await this.ports.invalidate(baseUrl);
       if (error instanceof DaemonError) throw error;
       throw new DaemonError("The daemon could not confirm the print job.");
@@ -176,6 +178,27 @@ export class DaemonClient {
     }
     return null;
   }
+}
+
+async function printFailure(response: Response): Promise<DaemonError> {
+  try {
+    const value: unknown = await response.json();
+    if (response.status === 404 && isPrinterNotFoundEnvelope(value)) {
+      return new DaemonError(value.error.message, "PRINTER_NOT_FOUND");
+    }
+  } catch {
+    // The generic print failure below covers malformed and non-JSON envelopes.
+  }
+  return new DaemonError("The daemon could not confirm the print job.");
+}
+
+function isPrinterNotFoundEnvelope(value: unknown): value is {
+  error: { code: "PRINTER_NOT_FOUND"; message: string };
+} {
+  return isRecord(value)
+    && isRecord(value.error)
+    && value.error.code === "PRINTER_NOT_FOUND"
+    && typeof value.error.message === "string";
 }
 
 function unavailable(error: unknown): DaemonError {

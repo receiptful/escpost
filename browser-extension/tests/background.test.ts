@@ -1,5 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { installBackground } from "../src/background";
+import { DaemonClient } from "../src/daemon";
+import { DaemonPortStore } from "../src/daemon-port";
 import { handleRequest } from "../src/messages";
 
 const request = { source: "escpost-page", protocol: 1, id: 4, op: "print.raw", payload: { printer: "counter", dataBase64: "G0D/" } };
@@ -141,6 +143,34 @@ test("maps a daemon print rejection to PRINT_FAILED", async () => {
 
   await expect(handleRequest(request, "https://shop.example", deps)).resolves.toMatchObject({
     ok: false, error: { code: "PRINT_FAILED" },
+  });
+});
+
+test("preserves a printer-not-found 404 from daemon HTTP through the worker bridge", async () => {
+  // Break caught: the complete HTTP-to-worker path can parse the daemon error
+  // but still erase its recognized code before the SDK receives the reply.
+  const values: Record<string, unknown> = { daemonBaseUrl: "http://127.0.0.1:9000" };
+  const ports = new DaemonPortStore({
+    async get(key: string) { return key in values ? { [key]: values[key] } : {}; },
+    async set(next: Record<string, unknown>) { Object.assign(values, next); },
+    async remove(key: string) { delete values[key]; },
+  });
+  const daemon = new DaemonClient(ports, async () => new Response(JSON.stringify({
+    error: {
+      code: "PRINTER_NOT_FOUND",
+      message: "No configured printer is named counter.",
+    },
+  }), { status: 404 }));
+
+  await expect(handleRequest(request, "https://shop.example", {
+    permissions: { contains: vi.fn(async () => true) },
+    daemon,
+  })).resolves.toEqual({
+    ok: false,
+    error: {
+      code: "PRINTER_NOT_FOUND",
+      message: "No configured printer is named counter.",
+    },
   });
 });
 
