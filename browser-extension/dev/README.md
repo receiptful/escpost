@@ -11,15 +11,19 @@ docker compose -f browser-extension/compose.yaml \
   run --rm browser-extension-build
 ```
 
-Run the API without its web app in a separate terminal:
+## Manual SDK raw-print path
+
+From the repository root, run the daemon, build the extension, and host the
+static page:
 
 ```bash
-docker compose run --rm -e ESCPOST_WATCH=0 escpost serve \
-  --web-listen 127.0.0.1:9000 --no-web-app --non-interactive
-```
-
-To host built extension-local pages on loopback port 8081, first run the build command above, then run:
-
-```bash
+docker compose up escpost
+docker compose -f browser-extension/compose.yaml run --rm browser-extension-build
 docker compose -f browser-extension/compose.yaml up browser-extension-pages
 ```
+
+In Chrome, load `browser-extension/dist/` as an unpacked extension. Open
+`http://127.0.0.1:8081/browser-extension/dev/sdk-page/`, use the extension
+popup to grant `http://127.0.0.1:8081`, then reload the page. Select an already
+configured printer and use **Print exact raw bytes** to send the SDK-only raw
+print check.
