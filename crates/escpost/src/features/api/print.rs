@@ -11,7 +11,11 @@ fn decode_payload(
     printer: Option<&str>,
     body: &[u8],
 ) -> Result<PrintRequest, ApiFailure> {
-    if content_type.split(';').next().unwrap_or_default() != "application/octet-stream" {
+    let media_type = content_type
+        .split_once(';')
+        .map_or(content_type, |(media_type, _)| media_type)
+        .trim();
+    if media_type != "application/octet-stream" {
         return Err(ApiFailure::unsupported_media_type());
     }
 
@@ -44,6 +48,18 @@ mod tests {
         .expect("raw bytes should be accepted");
         assert_eq!(request.printer, "counter");
         assert_eq!(request.bytes, [0x1b, 0x40, 0x00, 0xff, 0x0a]);
+    }
+
+    #[test]
+    fn octet_stream_trims_whitespace_before_parameters() {
+        let request = decode_payload(
+            "application/octet-stream ; charset=binary",
+            Some("counter"),
+            &[0x1b, 0x40],
+        )
+        .expect("whitespace before parameters should not change the media type");
+        assert_eq!(request.printer, "counter");
+        assert_eq!(request.bytes, [0x1b, 0x40]);
     }
 
     #[test]
