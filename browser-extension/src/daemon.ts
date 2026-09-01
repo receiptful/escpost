@@ -60,9 +60,11 @@ export class DaemonClient {
     if (cached === null) return (await this.discover()) !== null;
 
     try {
-      return (await this.fetcher(`${cached}/health`)).ok;
+      const healthy = (await this.fetcher(`${cached}/health`)).ok;
+      if (!healthy) await this.ports.invalidate(cached);
+      return healthy;
     } catch {
-      await this.ports.invalidate();
+      await this.ports.invalidate(cached);
       return (await this.discover()) !== null;
     }
   }
@@ -91,17 +93,19 @@ export class DaemonClient {
       if (!isPrintResult(result)) throw new DaemonError("The daemon sent an invalid print response.");
       return result;
     } catch (error) {
-      await this.ports.invalidate();
+      await this.ports.invalidate(baseUrl);
       if (error instanceof DaemonError) throw error;
       throw new DaemonError("The daemon could not confirm the print job.");
     }
   }
 
   async openInventoryStream(callbacks: InventoryStreamCallbacks, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
     let response: Response;
     try {
-      response = await this.get("/api/printers/list/events");
+      response = await this.get("/api/printers/list/events", signal);
     } catch (error) {
+      if (signal.aborted) return;
       callbacks.onError(error instanceof Error ? error : new DaemonError("The daemon is unavailable."));
       return;
     }
@@ -112,45 +116,48 @@ export class DaemonClient {
     await readInventoryEvents(response.body, callbacks, signal);
   }
 
-  private async get(path: string): Promise<Response> {
-    let baseUrl = await this.baseUrl();
+  private async get(path: string, signal?: AbortSignal): Promise<Response> {
+    let baseUrl = await this.baseUrl(signal);
     try {
-      return await this.getAt(baseUrl, path);
+      return await this.getAt(baseUrl, path, signal);
     } catch (error) {
+      if (signal?.aborted) throw error;
       if (!isTransportError(error)) throw error;
-      await this.ports.invalidate();
-      baseUrl = await this.baseUrl();
+      await this.ports.invalidate(baseUrl);
+      baseUrl = await this.baseUrl(signal);
       try {
-        return await this.getAt(baseUrl, path);
+        return await this.getAt(baseUrl, path, signal);
       } catch (retryError) {
-        if (isTransportError(retryError)) await this.ports.invalidate();
+        if (signal?.aborted) throw retryError;
+        if (isTransportError(retryError)) await this.ports.invalidate(baseUrl);
         throw unavailable(retryError);
       }
     }
   }
 
-  private async getAt(baseUrl: string, path: string): Promise<Response> {
-    const response = await this.fetcher(`${baseUrl}${path}`);
+  private async getAt(baseUrl: string, path: string, signal?: AbortSignal): Promise<Response> {
+    const response = await this.fetcher(`${baseUrl}${path}`, signal === undefined ? undefined : { signal });
     if (!response.ok) throw new DaemonError("The daemon rejected the request.");
     return response;
   }
 
-  private async baseUrl(): Promise<string> {
-    return (await this.ports.read()) ?? await this.discoverOrThrow();
+  private async baseUrl(signal?: AbortSignal): Promise<string> {
+    return (await this.ports.read()) ?? await this.discoverOrThrow(signal);
   }
 
-  private async discoverOrThrow(): Promise<string> {
-    const baseUrl = await this.discover();
+  private async discoverOrThrow(signal?: AbortSignal): Promise<string> {
+    const baseUrl = await this.discover(signal);
     if (baseUrl === null) throw new DaemonError("The local daemon is unavailable.");
     return baseUrl;
   }
 
-  private async discover(): Promise<string | null> {
+  private async discover(signal?: AbortSignal): Promise<string | null> {
     for (const port of DAEMON_PORTS) {
       const baseUrl = `http://${DAEMON_HOST}:${port}`;
       try {
-        if (!(await this.fetcher(`${baseUrl}/health`)).ok) continue;
-      } catch {
+        if (!(await this.fetcher(`${baseUrl}/health`, signal === undefined ? undefined : { signal })).ok) continue;
+      } catch (error) {
+        if (signal?.aborted) throw error;
         continue;
       }
       await this.ports.remember(baseUrl);
@@ -182,6 +189,14 @@ async function readInventoryEvents(
   signal: AbortSignal,
 ): Promise<void> {
   const reader = body.getReader();
+  if (signal.aborted) {
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
+    return;
+  }
   const decoder = new TextDecoder();
   let buffer = "";
   const cancel = () => { void reader.cancel(); };
@@ -215,12 +230,12 @@ function emitEvent(block: string, callbacks: InventoryStreamCallbacks): void {
   let data: string[] = [];
   for (const line of block.split(/\r?\n/)) {
     if (line.startsWith("event:")) {
-      event = line.slice("event:".length).trimStart();
+      event = line.slice("event:".length).replace(/^ /, "");
     } else if (line.startsWith("data:")) {
       data.push(line.slice("data:".length).replace(/^ /, ""));
     }
   }
-  if (event === "message" && data.length > 0) emitSnapshot(data.join("\n"), callbacks);
+  if ((event === "" || event === "message") && data.length > 0) emitSnapshot(data.join("\n"), callbacks);
 }
 
 function emitSnapshot(data: string, callbacks: InventoryStreamCallbacks): void {

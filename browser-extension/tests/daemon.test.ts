@@ -109,6 +109,21 @@ test("does not rediscover after a list 4xx response", async () => {
   await expect(ports.read()).resolves.toBe("http://127.0.0.1:9003");
 });
 
+test("invalidates a cached port after a non-success health response without retrying", async () => {
+  // Break caught: retaining a daemon port that has already rejected health
+  // causes the next operation to contact a stale endpoint instead of discover.
+  const calls: string[] = [];
+  const { client: daemon, ports } = client(async (input) => {
+    calls.push(String(input));
+    return response({ error: "unhealthy" }, 503);
+  });
+  await ports.remember("http://127.0.0.1:9006");
+
+  await expect(daemon.health()).resolves.toBe(false);
+  expect(calls).toEqual(["http://127.0.0.1:9006/health"]);
+  await expect(ports.read()).resolves.toBeNull();
+});
+
 test("posts exact raw bytes to the configured printer name", async () => {
   // Break caught: JSON/base64 conversion or an unencoded printer query
   // corrupts receipt bytes or changes the configured printer target.

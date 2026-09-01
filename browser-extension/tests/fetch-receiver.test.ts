@@ -78,6 +78,72 @@ test("waits for the blank SSE delimiter before joining multi-line data", async (
   expect(errors).toEqual([]);
 });
 
+test("parses empty default events, comments, named events, and CRLF split across chunks", async () => {
+  // Break caught: trimming the event field changes an empty default event or
+  // treats a named SSE event as inventory, while CRLF chunking loses framing.
+  const snapshots: unknown[] = [];
+  const errors: Error[] = [];
+  const ignored = JSON.stringify(inventory);
+  const daemon = new DaemonClient(
+    new DaemonPortStore(new MemoryStorageArea()),
+    async () => new Response(stream([
+      ": daemon keepalive\r",
+      `\nevent:\r\ndata: ${JSON.stringify(inventory)}\r\n\r\nevent: status\r\ndata: ${ignored}\r\n\r\n`,
+    ])),
+  );
+
+  await daemon.openInventoryStream({ onSnapshot: (snapshot) => snapshots.push(snapshot), onError: (error) => errors.push(error) }, new AbortController().signal);
+  expect(snapshots).toEqual([inventory]);
+  expect(errors).toEqual([]);
+});
+
+test("does not fetch when an inventory stream is already aborted", async () => {
+  // Break caught: a pre-aborted caller still opening an SSE socket leaks a
+  // daemon connection after the UI has already disposed its subscription.
+  let calls = 0;
+  const daemon = new DaemonClient(new DaemonPortStore(new MemoryStorageArea()), async () => {
+    calls += 1;
+    return new Response();
+  });
+  const controller = new AbortController();
+  controller.abort();
+
+  await daemon.openInventoryStream({ onSnapshot: () => undefined, onError: () => undefined }, controller.signal);
+  expect(calls).toBe(0);
+});
+
+test("passes the inventory signal to a pending fetch and stops without rediscovery on abort", async () => {
+  // Break caught: an aborted stream-open fetch is treated as a transport
+  // failure, causing discovery and another connection after cancellation.
+  let calls = 0;
+  let receivedSignal: AbortSignal | undefined;
+  const controller = new AbortController();
+  let rejectPending: (error: Error) => void = () => undefined;
+  let fetchStarted: () => void;
+  const started = new Promise<void>((resolve) => { fetchStarted = resolve; });
+  const daemon = new DaemonClient(new DaemonPortStore(new MemoryStorageArea()), async (_input, init) => {
+    calls += 1;
+    receivedSignal = init?.signal ?? undefined;
+    if (calls > 1) return new Response(null, { status: 503 });
+    fetchStarted();
+    return await new Promise<Response>((_resolve, reject) => {
+      rejectPending = reject;
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
+  });
+  const errors: Error[] = [];
+
+  const opened = daemon.openInventoryStream({ onSnapshot: () => undefined, onError: (error) => errors.push(error) }, controller.signal);
+  await started;
+  controller.abort();
+  rejectPending(new DOMException("Aborted", "AbortError"));
+  await opened;
+
+  expect(receivedSignal).toBe(controller.signal);
+  expect(calls).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 test("reports invalid SSE snapshots and cancels the reader when aborted", async () => {
   // Break caught: forwarding malformed stream data or leaving a reader open
   // after callers cancel leaks a live daemon connection into later views.
