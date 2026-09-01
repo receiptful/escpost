@@ -43,14 +43,36 @@ function currentOrigin(page: RelayWindow): string | null {
 }
 
 function isWorkerReply(value: unknown): value is WorkerReply {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const reply = value as { ok?: unknown; data?: unknown; error?: unknown };
-  return reply.ok === true || (reply.ok === false
-    && typeof reply.error === "object"
-    && reply.error !== null
-    && typeof (reply.error as { code?: unknown }).code === "string"
-    && typeof (reply.error as { message?: unknown }).message === "string");
+  if (!isRecord(value) || !Object.hasOwn(value, "ok")) return false;
+  if (value.ok === true) return hasExactOwnKeys(value, ["ok", "data"]);
+  return value.ok === false
+    && hasExactOwnKeys(value, ["ok", "error"])
+    && isSerializedError(value.error);
 }
+
+function isSerializedError(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactOwnKeys(value, ["code", "message"])) return false;
+  return typeof value.code === "string"
+    && knownErrorCodes.has(value.code)
+    && typeof value.message === "string";
+}
+
+function hasExactOwnKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const knownErrorCodes: ReadonlySet<string> = new Set([
+  "EXTENSION_UNAVAILABLE",
+  "ORIGIN_NOT_GRANTED",
+  "DAEMON_UNAVAILABLE",
+  "PRINTER_NOT_FOUND",
+  "PRINT_FAILED",
+  "PROTOCOL_MISMATCH",
+]);
 
 function isReplyablePageMessage(value: unknown): value is { source: "escpost-page"; id: number } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -75,7 +97,12 @@ function guardedResponse(page: RelayWindow, id: number, origin: string): (reply:
   return (reply) => {
     if (responded || currentOrigin(page) !== origin) return;
     responded = true;
-    page.postMessage({ source: "escpost-extension", id, ...reply }, origin);
+    page.postMessage(
+      reply.ok === true
+        ? { source: "escpost-extension", id, ok: true, data: reply.data }
+        : { source: "escpost-extension", id, ok: false, error: reply.error },
+      origin,
+    );
   };
 }
 

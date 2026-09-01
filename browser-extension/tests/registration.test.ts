@@ -133,6 +133,60 @@ test("coalesces a delayed add snapshot behind a later removal", async () => {
   expect(scripting.registerContentScripts).not.toHaveBeenCalled();
 });
 
+test("recovers a later revocation refresh after an initial grant read failure", async () => {
+  // Break caught: a rejected permissions read leaves refresh state permanently
+  // busy, so a later revocation cannot remove an already registered relay.
+  let removed: (() => void) | undefined;
+  let registered = true;
+  const scripting = {
+    getRegisteredContentScripts: vi.fn(async () => registered ? [{ id: "escpost-relay" }] : []),
+    registerContentScripts: vi.fn(async () => { registered = true; }),
+    updateContentScripts: vi.fn(async () => undefined),
+    unregisterContentScripts: vi.fn(async () => { registered = false; }),
+  };
+  const permissions = {
+    getAll: vi.fn()
+      .mockRejectedValueOnce(new Error("temporary permission read failure"))
+      .mockResolvedValue({ origins: [] }),
+    onRemoved: { addListener: vi.fn((listener) => { removed = listener; }) },
+  };
+  installGrantRegistration({ permissions, scripting });
+  await settle();
+  removed?.();
+  await settle();
+
+  expect(scripting.unregisterContentScripts).toHaveBeenCalledWith({ ids: ["escpost-relay"] });
+  expect(registered).toBe(false);
+});
+
+test("recovers a later revocation refresh after an update mutation failure", async () => {
+  // Break caught: a rejected scripting mutation wedges refresh state and leaves
+  // an existing relay registered after its grant has been removed.
+  let origins = ["https://shop.example/*"];
+  let removed: (() => void) | undefined;
+  let registered = true;
+  const scripting = {
+    getRegisteredContentScripts: vi.fn(async () => registered ? [{ id: "escpost-relay" }] : []),
+    registerContentScripts: vi.fn(async () => { registered = true; }),
+    updateContentScripts: vi.fn()
+      .mockRejectedValueOnce(new Error("temporary scripting failure"))
+      .mockResolvedValue(undefined),
+    unregisterContentScripts: vi.fn(async () => { registered = false; }),
+  };
+  const permissions = {
+    getAll: vi.fn(async () => ({ origins })),
+    onRemoved: { addListener: vi.fn((listener) => { removed = listener; }) },
+  };
+  installGrantRegistration({ permissions, scripting });
+  await settle();
+  origins = [];
+  removed?.();
+  await settle();
+
+  expect(scripting.unregisterContentScripts).toHaveBeenCalledWith({ ids: ["escpost-relay"] });
+  expect(registered).toBe(false);
+});
+
 async function settle(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }

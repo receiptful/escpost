@@ -64,12 +64,18 @@ export function installGrantRegistration(deps: RegistrationDependencies): void {
   };
   const drain = async () => {
     refreshing = true;
-    let observed: number;
-    do {
-      observed = revision;
-      await registerGrantedRelay(deps, () => revision === observed);
-    } while (observed !== revision);
-    refreshing = false;
+    try {
+      let observed: number;
+      do {
+        observed = revision;
+        await registerGrantedRelay(deps, () => revision === observed);
+      } while (observed !== revision);
+    } catch {
+      // A later Chrome permission event starts a fresh pass. Retrying here
+      // would spin indefinitely when the API remains unavailable.
+    } finally {
+      refreshing = false;
+    }
   };
 
   refresh();

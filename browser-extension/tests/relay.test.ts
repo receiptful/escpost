@@ -135,3 +135,39 @@ test("settles rejected runtime delivery and malformed worker replies exactly onc
     "https://shop.example",
   );
 });
+
+test("accepts only exact known worker reply shapes", async () => {
+  // Break caught: partial, ambiguous, inherited, or unknown-code worker replies
+  // can cross the isolated-world boundary as if they came from the extension.
+  const inheritedSuccess = Object.create({ ok: true, data: true });
+  const cases: Array<{ name: string; reply: unknown; expected: "PROTOCOL_MISMATCH" | "ORIGIN_NOT_GRANTED" }> = [
+    { name: "missing success data", reply: { ok: true }, expected: "PROTOCOL_MISMATCH" },
+    { name: "ambiguous success error", reply: { ok: true, data: true, error: { code: "ORIGIN_NOT_GRANTED", message: "denied" } }, expected: "PROTOCOL_MISMATCH" },
+    { name: "unknown failure code", reply: { ok: false, error: { code: "NOT_A_CODE", message: "nope" } }, expected: "PROTOCOL_MISMATCH" },
+    { name: "wrong failure message", reply: { ok: false, error: { code: "ORIGIN_NOT_GRANTED", message: 9 } }, expected: "PROTOCOL_MISMATCH" },
+    { name: "inherited fields", reply: inheritedSuccess, expected: "PROTOCOL_MISMATCH" },
+    { name: "valid success", reply: { ok: true, data: { job_id: "job-22" } }, expected: "PROTOCOL_MISMATCH" },
+    { name: "valid failure", reply: { ok: false, error: { code: "ORIGIN_NOT_GRANTED", message: "denied" } }, expected: "ORIGIN_NOT_GRANTED" },
+  ];
+
+  for (const [index, entry] of cases.entries()) {
+    const fixture = page();
+    installRelay(fixture.window, { sendMessage: vi.fn(async () => entry.reply) });
+    fixture.emit({ source: "escpost-page", protocol: 1, id: 20 + index, op: "daemon.health", payload: null });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fixture.postMessage).toHaveBeenCalledTimes(1);
+    if (entry.name === "valid success") {
+      expect(fixture.postMessage).toHaveBeenCalledWith(
+        { source: "escpost-extension", id: 20 + index, ok: true, data: { job_id: "job-22" } },
+        "https://shop.example",
+      );
+    } else {
+      expect(fixture.postMessage).toHaveBeenCalledWith(
+        { source: "escpost-extension", id: 20 + index, ok: false, error: expect.objectContaining({ code: entry.expected }) },
+        "https://shop.example",
+      );
+    }
+  }
+});
