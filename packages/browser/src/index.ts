@@ -1,4 +1,4 @@
-import type { EscpostError } from "./errors";
+import { EscpostError } from "./errors";
 import type { RawPrintPayload } from "./protocol";
 import { PageTransport, type PageWindow } from "./transport";
 import { SubscriptionTransport } from "./subscriptions";
@@ -65,8 +65,11 @@ function createEscpostClient(page?: PageWindow) {
   return {
     async isAvailable(): Promise<boolean> {
       try {
-        await transport.request("daemon.health", null, healthTimeoutMs);
-        return true;
+        const available = await transport.request<unknown>("daemon.health", null, healthTimeoutMs);
+        if (typeof available !== "boolean") {
+          throw protocolMismatch("health result");
+        }
+        return available;
       } catch {
         return false;
       }
@@ -74,11 +77,14 @@ function createEscpostClient(page?: PageWindow) {
 
     printers: {
       async list(options: { transport?: "usb" | "network" } = {}): Promise<PrinterInventory> {
-        const snapshot = await transport.request<WirePrinterInventory>(
+        const snapshot = await transport.request<unknown>(
           "printers.list",
           options.transport === undefined ? {} : { transport: options.transport },
           listTimeoutMs,
         );
+        if (!isWirePrinterInventory(snapshot)) {
+          throw protocolMismatch("printer inventory");
+        }
         return mapInventory(snapshot);
       },
 
@@ -101,7 +107,10 @@ function createEscpostClient(page?: PageWindow) {
           typeof request.data === "string" ? new TextEncoder().encode(request.data) : request.data,
         ),
       };
-      const result = await transport.request<WirePrintResult>("print.raw", payload, printTimeoutMs);
+      const result = await transport.request<unknown>("print.raw", payload, printTimeoutMs);
+      if (!isWirePrintResult(result)) {
+        throw protocolMismatch("print result");
+      }
       return { jobId: result.job_id };
     },
   };
@@ -117,6 +126,14 @@ function isWirePrinterInventory(value: unknown): value is WirePrinterInventory {
     Array.isArray(value.printers) &&
     value.printers.every(isWirePrinter)
   );
+}
+
+function isWirePrintResult(value: unknown): value is WirePrintResult {
+  return isRecord(value) && typeof value.job_id === "string";
+}
+
+function protocolMismatch(resultName: string): EscpostError {
+  return new EscpostError("PROTOCOL_MISMATCH", `The extension returned an invalid ${resultName}.`);
 }
 
 function isWirePrinter(value: unknown): value is WirePrinter {

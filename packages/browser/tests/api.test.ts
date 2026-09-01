@@ -154,3 +154,37 @@ test("UTF-8 encodes string receipts before relaying them", async () => {
   page.reply(request, { ok: true, data: { job_id: "job-18" } });
   await expect(printed).resolves.toEqual({ jobId: "job-18" });
 });
+
+test("rejects a malformed successful inventory as a protocol mismatch", async () => {
+  // Break caught: mapping an unchecked success payload throws a native
+  // TypeError instead of the SDK's documented typed protocol error.
+  const page = pageRelay();
+  const before = page.posted.length;
+  const inventory = escpost.printers.list();
+  const request = page.posted[before];
+
+  page.reply(request, { ok: true, data: { updated_at: "not-a-date", warning: null, printers: [] } });
+
+  await expect(inventory).rejects.toMatchObject({
+    name: "EscpostError",
+    code: "PROTOCOL_MISMATCH",
+    message: "The extension returned an invalid printer inventory.",
+  });
+});
+
+test("rejects a malformed successful print result as a protocol mismatch", async () => {
+  // Break caught: reading job_id from an unchecked success payload can resolve
+  // an undefined public job id or throw a native TypeError.
+  const page = pageRelay();
+  const before = page.posted.length;
+  const printed = escpost.print({ printer: "counter", data: new Uint8Array([0x0a]) });
+  const request = page.posted[before];
+
+  page.reply(request, { ok: true, data: { job_id: 17 } });
+
+  await expect(printed).rejects.toMatchObject({
+    name: "EscpostError",
+    code: "PROTOCOL_MISMATCH",
+    message: "The extension returned an invalid print result.",
+  });
+});

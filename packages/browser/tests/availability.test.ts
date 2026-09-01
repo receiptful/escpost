@@ -48,3 +48,29 @@ test("returns false when the health relay reports any error", async () => {
 
   await expect(available).resolves.toBe(false);
 });
+
+test("returns the boolean health payload instead of treating every reply as available", async () => {
+  // Break caught: ignoring a successful false payload reports an unavailable
+  // daemon as available even though the worker answered the health probe.
+  const page = pageRelay();
+  const before = page.posted.length;
+  const available = escpost.isAvailable();
+  const request = page.posted[before];
+
+  page.reply(request, { ok: true, data: false });
+
+  await expect(available).resolves.toBe(false);
+});
+
+test("treats a malformed successful health payload as unavailable", async () => {
+  // Break caught: accepting a non-boolean success payload lets an incompatible
+  // extension fabricate availability instead of failing the SDK protocol check.
+  const page = pageRelay();
+  const before = page.posted.length;
+  const available = escpost.isAvailable();
+  const request = page.posted[before];
+
+  page.reply(request, { ok: true, data: "healthy" });
+
+  await expect(available).resolves.toBe(false);
+});
