@@ -79,6 +79,35 @@ test("rejects a matching extension failure as an EscpostError", async () => {
   } satisfies Partial<EscpostError>);
 });
 
+test("ignores unrelated and malformed replies until the matching valid reply arrives", async () => {
+  // Break caught: consuming a pending request for a wrong source, wrong ID, or
+  // non-boolean ok field lets unrelated page messages fabricate SDK success.
+  const page = new FakePageWindow();
+  const transport = new PageTransport(page);
+  const result = transport.request<string>("daemon.health", null, 2_000);
+  let settled = false;
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  const request = page.posted[0];
+
+  page.reply({ source: "another-page", id: request.id, ok: true, data: "wrong source" });
+  page.reply({ source: "escpost-extension", id: request.id + 1, ok: true, data: "wrong id" });
+  page.reply({ source: "escpost-extension", id: request.id, data: "missing ok" });
+  page.reply({ source: "escpost-extension", id: request.id, ok: "true", data: "wrong ok" });
+
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  page.reply({ source: "escpost-extension", id: request.id, ok: true, data: "healthy" });
+  await expect(result).resolves.toBe("healthy");
+});
+
 test("times out a silent health relay as unavailable", async () => {
   // Break caught: leaving a silent extension request pending means availability
   // checks can hang a page forever instead of resolving within two seconds.

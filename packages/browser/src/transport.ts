@@ -52,8 +52,8 @@ export class PageTransport {
 
   private receive(event: MessageEvent): void {
     if (event.source !== this.pageWindow()) return;
-    const reply = event.data as ExtensionReply | undefined;
-    if (reply?.source !== "escpost-extension" || typeof reply.id !== "number") return;
+    const reply = event.data;
+    if (!isExtensionReply(reply)) return;
 
     const pending = this.pending.get(reply.id);
     if (!pending) return;
@@ -74,4 +74,14 @@ export class PageTransport {
     }
     return page;
   }
+}
+
+function isExtensionReply(value: unknown): value is ExtensionReply {
+  if (typeof value !== "object" || value === null) return false;
+  const reply = value as { source?: unknown; id?: unknown; ok?: unknown };
+  return (
+    reply.source === "escpost-extension" &&
+    typeof reply.id === "number" &&
+    (reply.ok === true || reply.ok === false)
+  );
 }

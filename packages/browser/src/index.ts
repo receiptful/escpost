@@ -10,6 +10,7 @@ import type {
 } from "./types";
 
 export { EscpostError } from "./errors";
+export type { ErrorCode } from "./errors";
 export type {
   NetworkConnection,
   Printer,
