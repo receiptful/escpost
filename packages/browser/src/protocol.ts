@@ -12,6 +12,22 @@ export type PageRequest = {
   payload: unknown;
 };
 
+export type SubscriptionRequest = {
+  source: "escpost-page";
+  protocol: 1;
+  kind: "subscribe";
+  subscriptionId: number;
+  op: "printers.events";
+};
+
+export type UnsubscribeRequest = {
+  source: "escpost-page";
+  kind: "unsubscribe";
+  subscriptionId: number;
+};
+
+export type PageMessage = PageRequest | SubscriptionRequest | UnsubscribeRequest;
+
 export type RawPrintPayload = {
   printer: string;
   dataBase64: string;
@@ -25,3 +41,17 @@ export type SerializedError = {
 export type ExtensionReply =
   | { source: "escpost-extension"; id: number; ok: true; data: unknown }
   | { source: "escpost-extension"; id: number; ok: false; error: SerializedError };
+
+export type ExtensionSubscriptionMessage =
+  | {
+      source: "escpost-extension";
+      subscriptionId: number;
+      kind: "snapshot";
+      data: unknown;
+    }
+  | {
+      source: "escpost-extension";
+      subscriptionId: number;
+      kind: "failure";
+      error: SerializedError;
+    };

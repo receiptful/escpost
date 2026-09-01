@@ -1,5 +1,7 @@
+import type { EscpostError } from "./errors";
 import type { RawPrintPayload } from "./protocol";
 import { PageTransport, type PageWindow } from "./transport";
+import { SubscriptionTransport } from "./subscriptions";
 import type {
   NetworkConnection,
   Printer,
@@ -58,6 +60,7 @@ type WirePrintResult = { job_id: string };
 
 function createEscpostClient(page?: PageWindow) {
   const transport = new PageTransport(page);
+  const subscriptions = new SubscriptionTransport(page);
 
   return {
     async isAvailable(): Promise<boolean> {
@@ -77,6 +80,13 @@ function createEscpostClient(page?: PageWindow) {
           listTimeoutMs,
         );
         return mapInventory(snapshot);
+      },
+
+      subscribe(
+        onSnapshot: (snapshot: PrinterInventory) => void,
+        options: { onError?: (error: EscpostError) => void } = {},
+      ): () => void {
+        return subscriptions.subscribe<WirePrinterInventory>((snapshot) => onSnapshot(mapInventory(snapshot)), options);
       },
     },
 

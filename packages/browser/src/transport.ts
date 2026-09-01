@@ -2,15 +2,15 @@ import { EscpostError, fromSerializedError } from "./errors";
 import {
   protocolVersion,
   type ExtensionReply,
+  type PageMessage,
   type PageOperation,
-  type PageRequest,
 } from "./protocol";
 
 const idBlockSize = 2 ** 20;
 
 export type PageWindow = {
   addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  postMessage(message: PageRequest, targetOrigin?: string): void;
+  postMessage(message: PageMessage, targetOrigin?: string): void;
 };
 
 type PendingRequest = {
