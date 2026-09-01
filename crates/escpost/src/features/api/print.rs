@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -9,7 +10,9 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::sync::OwnedMutexGuard;
 
+use crate::application::{self, ApplicationError};
 use crate::features::printing::{self, ResolveRequest};
 use crate::web::WebState;
 
@@ -68,6 +71,22 @@ async fn printer_lock(state: &WebState, printer: &str) -> Arc<tokio::sync::Mutex
     )
 }
 
+async fn spawn_guarded_print<Output, Operation>(
+    guard: OwnedMutexGuard<()>,
+    operation: Operation,
+) -> application::Result<Output>
+where
+    Output: Send + 'static,
+    Operation: Future<Output = application::Result<Output>> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let _printing = guard;
+        operation.await
+    })
+    .await
+    .map_err(ApplicationError::PrintTaskFailed)?
+}
+
 async fn print_job(
     State(state): State<WebState>,
     query: Result<Query<PrintQuery>, QueryRejection>,
@@ -95,11 +114,14 @@ async fn print_job(
     .map_err(ApiFailure::from_resolve_failure)?;
 
     let lock = printer_lock(&state, &request.printer).await;
-    let _printing = lock.lock().await;
-    printing::print(printing::Request {
-        bytes: request.bytes,
-        printer,
-    })
+    let guard = lock.lock_owned().await;
+    spawn_guarded_print(
+        guard,
+        printing::print(printing::Request {
+            bytes: request.bytes,
+            printer,
+        }),
+    )
     .await
     .map_err(ApiFailure::from_print_failure)?;
 
@@ -114,10 +136,15 @@ async fn print_job(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use tokio::sync::{Mutex, oneshot};
+    use tokio::time::timeout;
 
-    use super::decode_payload;
+    use super::{decode_payload, spawn_guarded_print};
     use crate::application::ApplicationError;
     use crate::features::api::error::ApiFailure;
 
@@ -187,5 +214,47 @@ mod tests {
             body.as_ref(),
             br#"{"error":{"code":"PRINTER_REQUIRED","message":"Name a printer with ?printer=."}}"#,
         );
+    }
+
+    #[tokio::test]
+    async fn cancelling_http_caller_keeps_printer_locked_until_physical_transfer_finishes() {
+        // Defect caught: cancelling the HTTP awaiter drops its guard while an
+        // already-started physical transfer continues in a detached task.
+        let printer_lock = Arc::new(Mutex::new(()));
+        let first_guard = Arc::clone(&printer_lock).lock_owned().await;
+        let (physical_started_tx, physical_started_rx) = oneshot::channel();
+        let (release_physical_tx, release_physical_rx) = oneshot::channel();
+
+        let caller = tokio::spawn(spawn_guarded_print(first_guard, async move {
+            physical_started_tx
+                .send(())
+                .expect("the test should observe the physical transfer");
+            release_physical_rx
+                .await
+                .expect("the test should release the physical transfer");
+            Ok::<(), ApplicationError>(())
+        }));
+        physical_started_rx
+            .await
+            .expect("the physical transfer should start");
+
+        caller.abort();
+        assert!(
+            caller
+                .await
+                .expect_err("the HTTP caller should be cancelled")
+                .is_cancelled()
+        );
+        assert!(
+            Arc::clone(&printer_lock).try_lock_owned().is_err(),
+            "a second job must not acquire the printer during the physical transfer"
+        );
+
+        release_physical_tx
+            .send(())
+            .expect("the physical transfer should still be running");
+        timeout(Duration::from_secs(1), printer_lock.lock_owned())
+            .await
+            .expect("the printer should unlock after the physical transfer completes");
     }
 }
