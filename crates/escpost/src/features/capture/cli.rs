@@ -2,6 +2,7 @@
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Args;
@@ -28,6 +29,14 @@ pub(crate) struct ServeArgs {
     /// Printer profile used to render captured jobs.
     #[arg(long, default_value = "REFERENCE")]
     pub(crate) profile: String,
+
+    /// Read printer configuration from this exact file.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) config: Option<PathBuf>,
+
+    /// Accept print jobs only from this browser extension id.
+    #[arg(long, value_name = "ID")]
+    pub(crate) extension_id: Option<String>,
 
     /// Start virtual IP printer [defaults: IP 127.0.0.1; port first free 9100–9109].
     #[arg(
@@ -166,6 +175,10 @@ pub(crate) async fn run(arguments: ServeArgs, non_interactive: bool) -> Result<(
                 idle_timeout,
                 open_browser,
                 !arguments.no_web_app,
+                web::WebConfiguration {
+                    printer_config: arguments.config,
+                    extension_id: arguments.extension_id,
+                },
             )
             .await
         }

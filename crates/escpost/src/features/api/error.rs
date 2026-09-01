@@ -40,11 +40,35 @@ impl ApiFailure {
         )
     }
 
+    pub(super) fn origin_not_granted() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "ORIGIN_NOT_GRANTED",
+            "This origin is not allowed to print.",
+        )
+    }
+
+    pub(super) fn invalid_request() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_REQUEST",
+            "The print request is invalid.",
+        )
+    }
+
+    pub(super) fn payload_too_large() -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "PAYLOAD_TOO_LARGE",
+            "Print requests must not exceed 8 MiB.",
+        )
+    }
+
     pub(super) fn from_resolve_failure(error: crate::application::ApplicationError) -> Self {
         match error {
             crate::application::ApplicationError::UnknownConfiguredPrinter(_) => Self::new(
                 StatusCode::NOT_FOUND,
-                "UNKNOWN_PRINTER",
+                "PRINTER_NOT_FOUND",
                 "The named printer is not configured.",
             ),
             error => Self::from_print_failure(error),

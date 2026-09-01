@@ -15,13 +15,15 @@ fn serve_help_contract_documents_listener_port_shorthand() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("serve help should be UTF-8"),
         "\
-Capture RAW TCP print jobs and preview them in the web app
+Serve the web API and web app, and capture RAW TCP jobs for preview
 
 Usage: escpost serve [OPTIONS]
 
 Options:
       --non-interactive              Never prompt for missing values
       --profile <PROFILE>            Printer profile used to render captured jobs [default: REFERENCE]
+      --config <FILE>                Read printer configuration from this exact file
+      --extension-id <ID>            Accept print jobs only from this browser extension id
       --listen [<PORT|IP:PORT>]      Start virtual IP printer [defaults: IP 127.0.0.1; port first free 9100–9109]
       --web-listen [<PORT|IP:PORT>]  Start web/API server [defaults: IP 127.0.0.1; port first free 9000–9099]
       --idle-timeout <SECONDS>       Complete a held-open connection's job after this many seconds of silence. Use 0 to disable and end a job only when the connection closes [default: 20]

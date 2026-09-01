@@ -1,3 +1,18 @@
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, QueryRejection};
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, header};
+use axum::response::IntoResponse;
+use axum::routing::post;
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+
+use crate::features::printing::{self, ResolveRequest};
+use crate::web::WebState;
+
 use super::error::ApiFailure;
 
 #[derive(Debug)]
@@ -27,6 +42,74 @@ fn decode_payload(
         printer: printer.to_owned(),
         bytes: body.to_vec(),
     })
+}
+
+pub(super) fn router() -> Router<WebState> {
+    Router::new().route("/api/print", post(print_job))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrintQuery {
+    printer: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PrintResponse {
+    job_id: String,
+}
+
+async fn printer_lock(state: &WebState, printer: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = state.printer_locks.lock().await;
+    Arc::clone(
+        locks
+            .entry(printer.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+    )
+}
+
+async fn print_job(
+    State(state): State<WebState>,
+    query: Result<Query<PrintQuery>, QueryRejection>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<impl IntoResponse, ApiFailure> {
+    let Query(query) = query.map_err(|_| ApiFailure::invalid_request())?;
+    let body = body.map_err(|rejection| {
+        let status = rejection.into_response().status();
+        if status == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+            ApiFailure::payload_too_large()
+        } else {
+            ApiFailure::invalid_request()
+        }
+    })?;
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let request = decode_payload(content_type, query.printer.as_deref(), &body)?;
+    let printer = printing::resolve_target(ResolveRequest {
+        printer_name: request.printer.clone(),
+        config: state.printer_config.clone(),
+    })
+    .map_err(ApiFailure::from_resolve_failure)?;
+
+    let lock = printer_lock(&state, &request.printer).await;
+    let _printing = lock.lock().await;
+    printing::print(printing::Request {
+        bytes: request.bytes,
+        printer,
+    })
+    .await
+    .map_err(ApiFailure::from_print_failure)?;
+
+    let sequence = state.job_sequence.fetch_add(1, Ordering::Relaxed);
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(PrintResponse {
+            job_id: format!("job-{sequence}"),
+        }),
+    ))
 }
 
 #[cfg(test)]
@@ -82,7 +165,7 @@ mod tests {
             "counter".to_owned(),
         ));
         assert_eq!(error.status(), StatusCode::NOT_FOUND);
-        assert_eq!(error.code(), "UNKNOWN_PRINTER");
+        assert_eq!(error.code(), "PRINTER_NOT_FOUND");
     }
 
     #[test]

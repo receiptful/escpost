@@ -53,7 +53,7 @@ enum HttpTransport {
 }
 
 async fn list_printers(
-    State(_state): State<WebState>,
+    State(state): State<WebState>,
     query: Result<Query<ListQuery>, QueryRejection>,
 ) -> Result<
     (
@@ -64,7 +64,7 @@ async fn list_printers(
 > {
     let Query(query) = query.map_err(|_| ApiError::invalid_query())?;
     let snapshot = monitor::collect_once(list::Request {
-        config: None,
+        config: state.printer_config.clone(),
         transport: query.transport.map(transport),
     })
     .await
