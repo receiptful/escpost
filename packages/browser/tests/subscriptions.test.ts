@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { escpost } from "../src/index";
 import type { PageMessage } from "../src/protocol";
 import { SubscriptionTransport } from "../src/subscriptions";
@@ -53,6 +53,8 @@ const mappedSnapshot: PrinterInventory = {
 };
 
 let pageRelay: FakePageWindow | undefined;
+
+afterEach(() => vi.restoreAllMocks());
 
 function installPageRelay(): FakePageWindow {
   pageRelay ??= new FakePageWindow();
@@ -149,6 +151,74 @@ test("reports a stream failure without replacing the last good snapshot", () => 
   stop();
 });
 
+test("rejects malformed snapshot envelopes without replacing a valid inventory", () => {
+  // Break caught: forwarding a missing snapshot payload into the inventory
+  // mapper throws a native exception instead of reporting a typed protocol error.
+  const page = installPageRelay();
+  const snapshots: PrinterInventory[] = [];
+  const errors: unknown[] = [];
+  const stop = escpost.printers.subscribe(
+    (snapshot) => snapshots.push(snapshot),
+    { onError: (error) => errors.push(error) },
+  );
+  const id = subscriptionId(page);
+
+  page.dispatchExtensionMessage({ source: "escpost-extension", subscriptionId: id, kind: "snapshot", data: wireSnapshot });
+  expect(() => {
+    page.dispatchExtensionMessage({ source: "escpost-extension", subscriptionId: id, kind: "snapshot" });
+  }).not.toThrow();
+
+  expect(snapshots).toEqual([mappedSnapshot]);
+  expect(errors).toMatchObject([
+    { name: "EscpostError", code: "PROTOCOL_MISMATCH" },
+  ]);
+  stop();
+});
+
+test("rejects malformed nested snapshot data and delivers a later valid snapshot", () => {
+  // Break caught: accepting a partial wire printer publishes invalid public
+  // inventory facts instead of retaining the caller's last valid snapshot.
+  const page = installPageRelay();
+  const snapshots: PrinterInventory[] = [];
+  const errors: unknown[] = [];
+  const stop = escpost.printers.subscribe(
+    (snapshot) => snapshots.push(snapshot),
+    { onError: (error) => errors.push(error) },
+  );
+  const id = subscriptionId(page);
+  const laterWireSnapshot = { ...wireSnapshot, updated_at: "2026-09-01T11:10:00Z" };
+
+  page.dispatchExtensionMessage({ source: "escpost-extension", subscriptionId: id, kind: "snapshot", data: wireSnapshot });
+  expect(() => {
+    page.dispatchExtensionMessage({
+      source: "escpost-extension",
+      subscriptionId: id,
+      kind: "snapshot",
+      data: {
+        ...wireSnapshot,
+        printers: [
+          {
+            ...wireSnapshot.printers[0],
+            connection: { type: "network", host: 192, port: 9100 },
+          },
+        ],
+      },
+    });
+  }).not.toThrow();
+  page.dispatchExtensionMessage({
+    source: "escpost-extension",
+    subscriptionId: id,
+    kind: "snapshot",
+    data: laterWireSnapshot,
+  });
+
+  expect(snapshots).toEqual([mappedSnapshot, { ...mappedSnapshot, updatedAt: "2026-09-01T11:10:00Z" }]);
+  expect(errors).toMatchObject([
+    { name: "EscpostError", code: "PROTOCOL_MISMATCH" },
+  ]);
+  stop();
+});
+
 test("cancels a subscription once and ignores snapshots after cancellation", () => {
   // Break caught: leaving callbacks registered or posting duplicate cancels
   // after a repeated stop leaks subscriptions and delivers stale events.
@@ -173,8 +243,9 @@ test("cancels a subscription once and ignores snapshots after cancellation", () 
 });
 
 test("keeps matching stream messages isolated between subscription transport instances", () => {
-  // Break caught: a shared callback registry lets one SDK instance consume
-  // another instance's stream messages when both listen on the same page.
+  // Break caught: independently random subscription-ID blocks can collide, so
+  // two SDK instances both consume one matching extension stream message.
+  vi.spyOn(Math, "random").mockReturnValue(0);
   const page = new FakePageWindow();
   const first = new SubscriptionTransport(page);
   const second = new SubscriptionTransport(page);
@@ -185,7 +256,8 @@ test("keeps matching stream messages isolated between subscription transport ins
   const stopSecond = second.subscribe((snapshot) => secondSnapshots.push(snapshot));
   const secondId = subscriptionId(page, 1);
 
-  expect(firstId).not.toBe(secondId);
+  expect(firstId).toBe(1);
+  expect(secondId).toBe(2);
   page.dispatchExtensionMessage({
     source: "escpost-extension",
     subscriptionId: firstId,

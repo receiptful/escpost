@@ -86,7 +86,11 @@ function createEscpostClient(page?: PageWindow) {
         onSnapshot: (snapshot: PrinterInventory) => void,
         options: { onError?: (error: EscpostError) => void } = {},
       ): () => void {
-        return subscriptions.subscribe<WirePrinterInventory>((snapshot) => onSnapshot(mapInventory(snapshot)), options);
+        return subscriptions.subscribe<WirePrinterInventory>(
+          (snapshot) => onSnapshot(mapInventory(snapshot)),
+          options,
+          isWirePrinterInventory,
+        );
       },
     },
 
@@ -104,6 +108,67 @@ function createEscpostClient(page?: PageWindow) {
 }
 
 export const escpost = createEscpostClient();
+
+function isWirePrinterInventory(value: unknown): value is WirePrinterInventory {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.updated_at === "string" &&
+    isNullableString(value.warning) &&
+    Array.isArray(value.printers) &&
+    value.printers.every(isWirePrinter)
+  );
+}
+
+function isWirePrinter(value: unknown): value is WirePrinter {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.name === "string" &&
+    (value.transport === "usb" || value.transport === "network") &&
+    (value.availability === "connected" || value.availability === "unavailable") &&
+    isNullableString(value.profile) &&
+    isWireConnection(value.connection)
+  );
+}
+
+function isWireConnection(value: unknown): value is WireConnection {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "network") {
+    return typeof value.host === "string" && isNumber(value.port);
+  }
+  return (
+    value.type === "usb" &&
+    isNumber(value.vendor_id) &&
+    isNumber(value.product_id) &&
+    isNullableString(value.bus) &&
+    isNullableNumber(value.address) &&
+    isNullableString(value.manufacturer) &&
+    isNullableString(value.product) &&
+    isNullableString(value.serial_number) &&
+    isNumber(value.interface_number) &&
+    isNumberArray(value.out_endpoints) &&
+    isNumberArray(value.in_endpoints)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return typeof value === "string" || value === null;
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || isNumber(value);
+}
+
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(isNumber);
+}
 
 function mapInventory(snapshot: WirePrinterInventory): PrinterInventory {
   return {
