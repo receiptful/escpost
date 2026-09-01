@@ -219,6 +219,173 @@ test("rejects malformed nested snapshot data and delivers a later valid snapshot
   stop();
 });
 
+test("rejects a printer whose transport disagrees with its connection", () => {
+  // Break caught: accepting a USB printer with a network connection publishes
+  // contradictory public inventory instead of a typed protocol mismatch.
+  const page = installPageRelay();
+  const snapshots: PrinterInventory[] = [];
+  const errors: unknown[] = [];
+  const stop = escpost.printers.subscribe(
+    (snapshot) => snapshots.push(snapshot),
+    { onError: (error) => errors.push(error) },
+  );
+  const id = subscriptionId(page);
+  const laterWireSnapshot = { ...wireSnapshot, updated_at: "2026-09-01T11:15:00Z" };
+
+  page.dispatchExtensionMessage({ source: "escpost-extension", subscriptionId: id, kind: "snapshot", data: wireSnapshot });
+  expect(() => {
+    page.dispatchExtensionMessage({
+      source: "escpost-extension",
+      subscriptionId: id,
+      kind: "snapshot",
+      data: { ...wireSnapshot, printers: [{ ...wireSnapshot.printers[0], transport: "usb" }] },
+    });
+  }).not.toThrow();
+  page.dispatchExtensionMessage({
+    source: "escpost-extension",
+    subscriptionId: id,
+    kind: "snapshot",
+    data: laterWireSnapshot,
+  });
+
+  expect(snapshots).toEqual([mappedSnapshot, { ...mappedSnapshot, updatedAt: "2026-09-01T11:15:00Z" }]);
+  expect(errors).toMatchObject([{ name: "EscpostError", code: "PROTOCOL_MISMATCH" }]);
+  stop();
+});
+
+test("rejects non-integer and out-of-range network ports", () => {
+  // Break caught: passing fractional or 16-bit-overflow ports to consumers
+  // creates network printer entries the daemon itself would never emit.
+  const page = installPageRelay();
+  const snapshots: PrinterInventory[] = [];
+  const errors: unknown[] = [];
+  const stop = escpost.printers.subscribe(
+    (snapshot) => snapshots.push(snapshot),
+    { onError: (error) => errors.push(error) },
+  );
+  const id = subscriptionId(page);
+  const laterWireSnapshot = { ...wireSnapshot, updated_at: "2026-09-01T11:20:00Z" };
+
+  for (const port of [9100.5, 65_536]) {
+    expect(() => {
+      page.dispatchExtensionMessage({
+        source: "escpost-extension",
+        subscriptionId: id,
+        kind: "snapshot",
+        data: { ...wireSnapshot, printers: [{ ...wireSnapshot.printers[0], connection: { type: "network", host: "192.0.2.10", port } }] },
+      });
+    }).not.toThrow();
+  }
+  page.dispatchExtensionMessage({
+    source: "escpost-extension",
+    subscriptionId: id,
+    kind: "snapshot",
+    data: laterWireSnapshot,
+  });
+
+  expect(snapshots).toEqual([{ ...mappedSnapshot, updatedAt: "2026-09-01T11:20:00Z" }]);
+  expect(errors).toMatchObject([
+    { name: "EscpostError", code: "PROTOCOL_MISMATCH" },
+    { name: "EscpostError", code: "PROTOCOL_MISMATCH" },
+  ]);
+  stop();
+});
+
+test("rejects non-integer and out-of-range USB numeric identifiers", () => {
+  // Break caught: accepting USB values outside the daemon's unsigned 16-bit
+  // and byte fields exposes impossible device identifiers to SDK callers.
+  const page = installPageRelay();
+  const snapshots: PrinterInventory[] = [];
+  const errors: unknown[] = [];
+  const stop = escpost.printers.subscribe(
+    (snapshot) => snapshots.push(snapshot),
+    { onError: (error) => errors.push(error) },
+  );
+  const id = subscriptionId(page);
+  const usbConnection = {
+    type: "usb",
+    vendor_id: 1046,
+    product_id: 20497,
+    bus: "001",
+    address: 4,
+    manufacturer: "Bixolon",
+    product: "SRP-350",
+    serial_number: "serial-7",
+    interface_number: 2,
+    out_endpoints: [1, 3],
+    in_endpoints: [129],
+  };
+  const usbPrinter = {
+    name: "counter",
+    transport: "usb",
+    availability: "connected",
+    profile: "80mm",
+    connection: usbConnection,
+  };
+  const laterWireSnapshot = { ...wireSnapshot, updated_at: "2026-09-01T11:25:00Z" };
+
+  for (const connection of [
+    { ...usbConnection, vendor_id: 1046.5 },
+    { ...usbConnection, product_id: 65_536 },
+    { ...usbConnection, address: 256 },
+    { ...usbConnection, interface_number: -1 },
+    { ...usbConnection, out_endpoints: [256] },
+    { ...usbConnection, in_endpoints: [-1] },
+  ]) {
+    expect(() => {
+      page.dispatchExtensionMessage({
+        source: "escpost-extension",
+        subscriptionId: id,
+        kind: "snapshot",
+        data: { ...wireSnapshot, printers: [{ ...usbPrinter, connection }] },
+      });
+    }).not.toThrow();
+  }
+  page.dispatchExtensionMessage({
+    source: "escpost-extension",
+    subscriptionId: id,
+    kind: "snapshot",
+    data: laterWireSnapshot,
+  });
+
+  expect(snapshots).toEqual([{ ...mappedSnapshot, updatedAt: "2026-09-01T11:25:00Z" }]);
+  expect(errors).toMatchObject(Array.from({ length: 6 }, () => ({ name: "EscpostError", code: "PROTOCOL_MISMATCH" })));
+  stop();
+});
+
+test("rejects an invalid inventory timestamp before delivering a later valid snapshot", () => {
+  // Break caught: accepting a non-RFC3339 update time makes the public
+  // inventory chronology unreliable even though the daemon rejects it.
+  const page = installPageRelay();
+  const snapshots: PrinterInventory[] = [];
+  const errors: unknown[] = [];
+  const stop = escpost.printers.subscribe(
+    (snapshot) => snapshots.push(snapshot),
+    { onError: (error) => errors.push(error) },
+  );
+  const id = subscriptionId(page);
+  const laterWireSnapshot = { ...wireSnapshot, updated_at: "2026-09-01T11:30:00Z" };
+
+  expect(() => {
+    page.dispatchExtensionMessage({
+      source: "escpost-extension",
+      subscriptionId: id,
+      kind: "snapshot",
+      data: { ...wireSnapshot, updated_at: "2026-09-01" },
+    });
+  }).not.toThrow();
+  page.dispatchExtensionMessage({
+    source: "escpost-extension",
+    subscriptionId: id,
+    kind: "snapshot",
+    data: laterWireSnapshot,
+  });
+
+  expect(snapshots).toEqual([{ ...mappedSnapshot, updatedAt: "2026-09-01T11:30:00Z" }]);
+  expect(errors).toMatchObject([{ name: "EscpostError", code: "PROTOCOL_MISMATCH" }]);
+  stop();
+});
+
 test("cancels a subscription once and ignores snapshots after cancellation", () => {
   // Break caught: leaving callbacks registered or posting duplicate cancels
   // after a repeated stop leaks subscriptions and delivers stale events.

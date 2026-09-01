@@ -112,7 +112,7 @@ export const escpost = createEscpostClient();
 function isWirePrinterInventory(value: unknown): value is WirePrinterInventory {
   if (!isRecord(value)) return false;
   return (
-    typeof value.updated_at === "string" &&
+    isRfc3339(value.updated_at) &&
     isNullableString(value.warning) &&
     Array.isArray(value.printers) &&
     value.printers.every(isWirePrinter)
@@ -126,48 +126,52 @@ function isWirePrinter(value: unknown): value is WirePrinter {
     (value.transport === "usb" || value.transport === "network") &&
     (value.availability === "connected" || value.availability === "unavailable") &&
     isNullableString(value.profile) &&
-    isWireConnection(value.connection)
+    (value.transport === "network" ? isNetworkConnection(value.connection) : isUsbConnection(value.connection))
   );
 }
 
-function isWireConnection(value: unknown): value is WireConnection {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  if (value.type === "network") {
-    return typeof value.host === "string" && isNumber(value.port);
-  }
-  return (
-    value.type === "usb" &&
-    isNumber(value.vendor_id) &&
-    isNumber(value.product_id) &&
-    isNullableString(value.bus) &&
-    isNullableNumber(value.address) &&
-    isNullableString(value.manufacturer) &&
-    isNullableString(value.product) &&
-    isNullableString(value.serial_number) &&
-    isNumber(value.interface_number) &&
-    isNumberArray(value.out_endpoints) &&
-    isNumberArray(value.in_endpoints)
-  );
+function isNetworkConnection(value: unknown): boolean {
+  return isRecord(value)
+    && value.type === "network"
+    && typeof value.host === "string"
+    && isUnsignedInteger(value.port, 0xffff);
+}
+
+function isUsbConnection(value: unknown): boolean {
+  return isRecord(value)
+    && value.type === "usb"
+    && isUnsignedInteger(value.vendor_id, 0xffff)
+    && isUnsignedInteger(value.product_id, 0xffff)
+    && isNullableString(value.bus)
+    && (value.address === null || isUnsignedInteger(value.address, 0xff))
+    && isNullableString(value.manufacturer)
+    && isNullableString(value.product)
+    && isNullableString(value.serial_number)
+    && isUnsignedInteger(value.interface_number, 0xff)
+    && isByteArray(value.out_endpoints)
+    && isByteArray(value.in_endpoints);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNullableString(value: unknown): value is string | null {
   return typeof value === "string" || value === null;
 }
 
-function isNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+function isUnsignedInteger(value: unknown, maximum: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 }
 
-function isNullableNumber(value: unknown): value is number | null {
-  return value === null || isNumber(value);
+function isByteArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every((entry) => isUnsignedInteger(entry, 0xff));
 }
 
-function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every(isNumber);
+function isRfc3339(value: unknown): value is string {
+  return typeof value === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && !Number.isNaN(Date.parse(value));
 }
 
 function mapInventory(snapshot: WirePrinterInventory): PrinterInventory {
