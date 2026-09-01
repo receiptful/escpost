@@ -1,0 +1,17 @@
+{
+  "name": "escpost-browser-workspace",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "bun run --cwd packages/browser build",
+    "test": "vitest run packages/browser",
+    "typecheck": "tsc --build --force"
+  },
+  "devDependencies": {
+    "happy-dom": "20.0.0",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vitest": "3.2.4"
+  }
+}
