@@ -346,7 +346,7 @@ fn bodies_larger_than_eight_mebibytes_use_a_no_store_api_failure() {
 
 #[test]
 fn malformed_query_rejections_use_the_no_store_api_envelope() {
-    // Defect caught: Query extractor failures bypass ApiFailure and return the
+    // Defect caught: Query extractor failures bypass ApiError and return the
     // framework's default cacheable plain-text response.
     let directory = TemporaryDirectory::new("bad-query");
     let config = empty_configuration(&directory);

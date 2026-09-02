@@ -15,6 +15,7 @@ pub(crate) mod error;
 mod frontend;
 mod job_store;
 mod jobs;
+pub(crate) mod origin;
 mod status;
 
 pub(crate) use commands::{CommandResponse, command_responses};
@@ -81,7 +82,7 @@ pub(crate) async fn serve(
         .merge(crate::features::profiles::http::router())
         .merge(status::route())
         .merge(jobs::router())
-        .merge(crate::features::api::router())
+        .merge(crate::features::printing::http::router())
         .route("/health", get(health))
         .route("/api", any(error::not_found))
         .route("/api/{*path}", any(error::not_found));

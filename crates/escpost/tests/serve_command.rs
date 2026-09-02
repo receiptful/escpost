@@ -427,24 +427,19 @@ fn serve_replaces_the_preview_with_the_most_recent_job() {
     wait_until_listening(&mut child, web_port);
 
     send_raw_job(raw_port, b"First job\n");
-    wait_for_first_job(web_port);
+    let first_metadata = wait_for_first_job(web_port);
+    let first_generation = first_metadata["job"]["id"]
+        .as_str()
+        .and_then(|id| id.parse::<u64>().ok())
+        .expect("the first job should have a numeric generation");
     let first = sheet_png(web_port, 1);
 
     send_raw_job(raw_port, b"A visibly different second job\n");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let second = loop {
-        let candidate = sheet_png(web_port, 1);
-        if candidate != first {
-            break candidate;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the preview did not advance to the second job"
-        );
-        thread::sleep(Duration::from_millis(50));
-    };
+    wait_for_generation_change(web_port, first_generation);
+    let second = sheet_png(web_port, 1);
     stop(&mut child);
     assert_eq!(&second[..8], b"\x89PNG\r\n\x1a\n");
+    assert_ne!(second, first, "the second job should replace the preview");
 }
 
 #[test]

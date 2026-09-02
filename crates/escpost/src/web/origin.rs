@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 
 use crate::web::WebState;
 
-use super::error::ApiFailure;
+use super::error::ApiError;
 
 const EXTENSION_SCHEMES: [&str; 3] = [
     "chrome-extension://",
@@ -34,7 +34,7 @@ pub(super) fn origin_allowed(origin: Option<&str>, pinned_extension_id: Option<&
     pinned_extension_id.is_none_or(|expected| id == expected)
 }
 
-pub(super) async fn guard(
+pub(crate) async fn guard(
     Extension(state): Extension<WebState>,
     request: Request,
     next: Next,
@@ -49,7 +49,7 @@ pub(super) async fn guard(
     if allowed {
         next.run(request).await
     } else {
-        ApiFailure::origin_not_granted().into_response()
+        ApiError::origin_not_granted().into_response()
     }
 }
 

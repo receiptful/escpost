@@ -14,6 +14,7 @@ use crate::application::{self, ApplicationError};
 use crate::configuration::{self, ConfiguredPrinter};
 
 pub(crate) mod cli;
+pub(crate) mod http;
 
 const USB_WRITE_BUFFER_BYTES: usize = 16 * 1024;
 const USB_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);

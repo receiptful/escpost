@@ -71,7 +71,7 @@ src/
 │   │   └── inventory.rs
 │   ├── profiles/{mod,cli}.rs
 │   ├── rendering/{mod,cli}.rs
-│   ├── printing/{mod,cli}.rs
+│   ├── printing/{mod,cli,http}.rs
 │   └── capture/{mod,cli}.rs
 ├── configuration.rs
 ├── discovery.rs
