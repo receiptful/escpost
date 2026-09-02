@@ -1,5 +1,5 @@
 {
-  "name": "@escpost/browser",
+  "name": "@receiptful/escpost",
   "version": "0.0.0",
   "description": "Browser SDK for ESCPost raw printing.",
   "license": "Apache-2.0",

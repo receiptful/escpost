@@ -12,7 +12,7 @@
       },
     },
     "packages/browser": {
-      "name": "@escpost/browser",
+      "name": "@receiptful/escpost",
       "version": "0.0.0",
     },
   },
@@ -69,7 +69,7 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.2", "", { "os": "win32", "cpu": "x64" }, "sha512-5ebpxr3nWMzrL/rnUI755Jkuee0bHL/Gq0WTF9lvcpv73wAp5eu8MfBUgWK9bhWvZjj7yX8etf/8tI8Ney695g=="],
 
-    "@escpost/browser": ["@escpost/browser@workspace:packages/browser"],
+    "@receiptful/escpost": ["@receiptful/escpost@workspace:packages/browser"],
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.6.0", "", {}, "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="],
 

@@ -1,6 +1,6 @@
-# @escpost/browser
+# @receiptful/escpost
 
-`@escpost/browser` provides a small browser-side API for discovering configured
+`@receiptful/escpost` provides a small browser-side API for discovering configured
 printers and sending raw ESC/POS bytes to one of them.
 
 ## Install
@@ -8,13 +8,13 @@ printers and sending raw ESC/POS bytes to one of them.
 Install the package with your JavaScript package manager:
 
 ```bash
-bun add @escpost/browser
+bun add @receiptful/escpost
 ```
 
 Then import the named `escpost` client:
 
 ```ts
-import { escpost } from "@escpost/browser";
+import { escpost } from "@receiptful/escpost";
 ```
 
 The local ESCPost daemon must be serving its API. Start the API without the
@@ -88,7 +88,7 @@ Operations may reject with `EscpostError`, whose `code` identifies the failure:
 | `PROTOCOL_MISMATCH` | A response did not match the SDK protocol. |
 
 ```ts
-import { EscpostError, escpost } from "@escpost/browser";
+import { EscpostError, escpost } from "@receiptful/escpost";
 
 try {
   await escpost.print({ printer: "counter", data: receiptBytes });
