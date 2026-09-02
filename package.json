@@ -1,11 +1,11 @@
 {
-  "name": "escpost-browser-workspace",
+  "name": "escpost-javascript-workspace",
   "private": true,
   "packageManager": "bun@1.4.0",
-  "workspaces": ["packages/*"],
+  "workspaces": ["sdks/javascript"],
   "scripts": {
-    "build": "bun run --cwd packages/browser build",
-    "test": "vitest run packages/browser",
+    "build": "bun run --cwd sdks/javascript build",
+    "test": "vitest run sdks/javascript",
     "typecheck": "tsc --build --force"
   },
   "devDependencies": {

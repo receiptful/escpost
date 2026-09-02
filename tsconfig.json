@@ -1,4 +1,4 @@
 {
   "files": [],
-  "references": [{ "path": "./packages/browser" }]
+  "references": [{ "path": "./sdks/javascript" }]
 }
