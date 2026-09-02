@@ -154,7 +154,7 @@ where
 {
     tokio::task::spawn_blocking(operation)
         .await
-        .map_err(ApplicationError::UsbTransferTaskFailed)?
+        .map_err(ApplicationError::UsbTransferTaskJoinFailed)?
 }
 
 #[cfg(test)]

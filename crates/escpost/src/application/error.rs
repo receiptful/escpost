@@ -80,7 +80,7 @@ pub(crate) enum ApplicationError {
     EnumerateUsb(#[source] nusb::Error),
 
     #[error("the blocking USB transfer task did not complete: {0}")]
-    UsbTransferTaskFailed(#[source] tokio::task::JoinError),
+    UsbTransferTaskJoinFailed(#[source] tokio::task::JoinError),
 
     #[error("the print task did not complete: {0}")]
     PrintTaskFailed(#[source] tokio::task::JoinError),
