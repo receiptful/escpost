@@ -67,8 +67,8 @@ escpost print receipt.hex --network 127.0.0.1:9100
 
 ### Raw browser printing
 
-To expose the local print API without the embedded web application, run the
-existing `serve` command with its web listener and API-only mode:
+To expose the local print API without the embedded web application, run
+`escpost serve` with a web listener and API-only mode:
 
 ```bash
 escpost serve --web-listen 127.0.0.1:9000 --no-web-app
