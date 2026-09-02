@@ -79,6 +79,12 @@ pub(crate) enum ApplicationError {
     #[error("could not enumerate USB devices: {0}")]
     EnumerateUsb(#[source] nusb::Error),
 
+    #[error("the blocking USB transfer task did not complete: {0}")]
+    UsbTransferTaskJoinFailed(#[source] tokio::task::JoinError),
+
+    #[error("the print task did not complete: {0}")]
+    PrintTaskFailed(#[source] tokio::task::JoinError),
+
     #[error("could not enumerate network interfaces: {0}")]
     EnumerateNetworkInterfaces(#[source] std::io::Error),
 

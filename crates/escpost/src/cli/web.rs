@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 
 use crate::error::CliError;
-use crate::web::{self as transport, JobStore};
+use crate::web::{self as transport, JobStore, WebConfiguration};
 
 pub(crate) async fn bind(requested: Option<SocketAddr>) -> Result<TcpListener, CliError> {
     transport::bind(requested)
@@ -24,6 +24,7 @@ pub(crate) async fn serve(
     idle_timeout: Option<Duration>,
     open_browser: bool,
     web_app: bool,
+    configuration: WebConfiguration,
 ) -> Result<(), CliError> {
     let address = listener.local_addr().map_err(CliError::ServeWeb)?;
     let url = format!("http://{address}/");
@@ -35,9 +36,15 @@ pub(crate) async fn serve(
         eprintln!("warning: could not open the browser ({error}); open {url} manually");
     }
 
-    transport::serve(listener, jobs, virtual_printer_address, web_app)
-        .await
-        .map_err(CliError::ServeWeb)
+    transport::serve(
+        listener,
+        jobs,
+        virtual_printer_address,
+        web_app,
+        configuration,
+    )
+    .await
+    .map_err(CliError::ServeWeb)
 }
 
 pub(crate) fn listener_status(

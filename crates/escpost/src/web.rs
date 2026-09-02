@@ -1,16 +1,21 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::routing::{any, get};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Mutex, watch};
 
 mod commands;
 pub(crate) mod error;
 mod frontend;
 mod job_store;
 mod jobs;
+pub(crate) mod origin;
 mod status;
 
 pub(crate) use commands::{CommandResponse, command_responses};
@@ -34,6 +39,18 @@ pub(crate) struct WebState {
     /// end themselves, because the server waits for every open request.
     pub(crate) shutdown: watch::Receiver<bool>,
     pub(crate) printer_monitor: crate::features::printers::monitor::PrinterMonitor,
+    pub(crate) printer_config: Option<PathBuf>,
+    pub(crate) extension_id: Option<String>,
+    pub(crate) job_sequence: Arc<AtomicU64>,
+    pub(crate) printer_locks: PrinterLocks,
+}
+
+pub(crate) type PrinterLocks = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WebConfiguration {
+    pub(crate) printer_config: Option<PathBuf>,
+    pub(crate) extension_id: Option<String>,
 }
 
 /// Current wall-clock time in Unix epoch milliseconds, for job completion.
@@ -55,6 +72,7 @@ pub(crate) async fn serve(
     jobs: JobStore,
     virtual_printer_address: Option<SocketAddr>,
     web_app: bool,
+    configuration: WebConfiguration,
 ) -> std::io::Result<()> {
     let status_metadata = status::ServerStatusMetadata::resolve(virtual_printer_address);
     let (shutdown, watch_shutdown) = watch::channel(false);
@@ -64,6 +82,7 @@ pub(crate) async fn serve(
         .merge(crate::features::profiles::http::router())
         .merge(status::route())
         .merge(jobs::router())
+        .merge(crate::features::printing::http::router())
         .route("/health", get(health))
         .route("/api", any(error::not_found))
         .route("/api/{*path}", any(error::not_found));
@@ -73,12 +92,24 @@ pub(crate) async fn serve(
             .route("/assets/{*path}", get(frontend::asset))
             .route("/{*path}", get(frontend::index));
     }
-    let router = router.with_state(WebState {
+    let state = WebState {
         jobs,
         status_metadata,
         shutdown: watch_shutdown,
-        printer_monitor: crate::features::printers::monitor::PrinterMonitor::new(None),
-    });
+        printer_monitor: crate::features::printers::monitor::PrinterMonitor::new(
+            configuration.printer_config.clone(),
+        ),
+        printer_config: configuration.printer_config,
+        extension_id: configuration.extension_id,
+        job_sequence: Arc::new(AtomicU64::new(0)),
+        printer_locks: Arc::new(Mutex::new(HashMap::new())),
+    };
+    // The print-only origin middleware reads the same state as its handler.
+    // Axum keeps router state outside request extensions, so expose one clone
+    // to that middleware before installing the handler state.
+    let router = router
+        .layer(axum::Extension(state.clone()))
+        .with_state(state);
     let server = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal(shutdown));
     // Stop when the last request is done, or when the grace period after the
     // signal is over, whichever comes first.

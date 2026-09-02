@@ -99,7 +99,10 @@ and the web app over real loopback sockets. These tests cover:
 - automatic, strict, and operating-system-selected web ports;
 - ordered HTTP metadata, PNG responses, missing routes, and path traversal;
 - `serve` capturing a RAW TCP job, previewing the most recent one, and showing
-  a waiting hint before the first job arrives.
+  a waiting hint before the first job arrives; and
+- raw `POST /api/print?printer=<configured name>` requests, including exact
+  byte forwarding with `application/octet-stream` and rejection of ordinary
+  browser origins.
 
 Run them with:
 
@@ -173,6 +176,10 @@ already configured, `400` for invalid facts and malformed bodies, and `405`
 with an `Allow` header for a GET. Job-resource tests verify that a replaced
 job identifier cannot resolve to a newer job. The existing viewer at `/` remains covered separately as a
 behavioral reference during the SPA transition.
+
+The print endpoint's origin tests cover its negative filter: ordinary browser
+origins are rejected, while extension-origin requests and local program calls
+without an `Origin` header are allowed. The filter is not authentication.
 
 ### Robustness tests
 

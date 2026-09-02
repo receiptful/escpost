@@ -14,6 +14,7 @@ use crate::application::{self, ApplicationError};
 use crate::configuration::{self, ConfiguredPrinter};
 
 pub(crate) mod cli;
+pub(crate) mod http;
 
 const USB_WRITE_BUFFER_BYTES: usize = 16 * 1024;
 const USB_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -128,9 +129,36 @@ pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<Res
 /// This operation is deliberately presentation-free: callers choose names,
 /// load sources, and render the resulting target facts for their own transport.
 pub(crate) async fn print(request: Request) -> application::Result<Response> {
-    print_with_transport(request, &mut NusbTransport).await
+    let bytes_sent = request.bytes.len();
+    let ResolvedPrinter {
+        printer_name,
+        target,
+    } = request.printer;
+    match &target {
+        Target::Usb(target) => {
+            let target = target.clone();
+            run_blocking_usb(move || NusbTransport.send(&target, &request.bytes)).await?;
+        }
+        Target::Network(target) => send_network(target, &request.bytes).await?,
+    }
+    Ok(Response {
+        printer_name,
+        bytes_sent,
+        target,
+    })
 }
 
+async fn run_blocking_usb<T, Operation>(operation: Operation) -> application::Result<T>
+where
+    T: Send + 'static,
+    Operation: FnOnce() -> application::Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(ApplicationError::UsbTransferTaskJoinFailed)?
+}
+
+#[cfg(test)]
 async fn print_with_transport(
     request: Request,
     transport: &mut impl UsbTransport,
@@ -261,9 +289,24 @@ mod tests {
 
     use super::{
         NetworkTarget, Request, ResolveRequest, ResolvedPrinter, Target, UsbTarget, UsbTransport,
-        print, print_with_transport, require_unique_device, resolve_target,
+        print, print_with_transport, require_unique_device, resolve_target, run_blocking_usb,
     };
     use crate::application::ApplicationError;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn synchronous_usb_work_runs_off_the_async_worker() {
+        // Defect caught: nusb enumeration, send, and flush park a Tokio worker
+        // when the shared print operation is called by the HTTP server.
+        let async_worker = std::thread::current().id();
+
+        let usb_worker = run_blocking_usb(|| -> crate::application::Result<_> {
+            Ok(std::thread::current().id())
+        })
+        .await
+        .expect("the blocking USB task should complete");
+
+        assert_ne!(usb_worker, async_worker);
+    }
 
     #[tokio::test]
     async fn exact_bytes_reach_the_named_usb_target_unchanged() {

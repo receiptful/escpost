@@ -65,6 +65,29 @@ Send an existing ESC/POS source directly to that virtual printer:
 escpost print receipt.hex --network 127.0.0.1:9100
 ```
 
+### Raw browser printing
+
+To expose the local print API without the embedded web application, run
+`escpost serve` with a web listener and API-only mode:
+
+```bash
+escpost serve --web-listen 127.0.0.1:9000 --no-web-app
+```
+
+For a printer configured with the exact name `counter`, submit the ESC/POS
+file as raw bytes:
+
+```bash
+curl -X POST 'http://127.0.0.1:9000/api/print?printer=counter' \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @receipt.bin
+```
+
+The `printer` value must be the exact configured printer name. Requests from
+ordinary browser origins are rejected; browser-extension origins and local
+program calls are allowed. This origin filter constrains which browser pages
+may send a request; it is not authentication.
+
 <p align="center">
   <img src="docs/assets/readme/web-preview.svg" alt="Placeholder for the ESCPost browser workbench" width="100%">
 </p>

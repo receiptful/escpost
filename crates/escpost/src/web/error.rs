@@ -26,6 +26,65 @@ struct ErrorBody {
 }
 
 impl ApiError {
+    pub(crate) fn unsupported_media_type() -> Self {
+        Self::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "UNSUPPORTED_MEDIA_TYPE",
+            "Print requests must use application/octet-stream.",
+        )
+    }
+
+    pub(crate) fn printer_required() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "PRINTER_REQUIRED",
+            "Name a printer with ?printer=.",
+        )
+    }
+
+    pub(crate) fn origin_not_granted() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "ORIGIN_NOT_GRANTED",
+            "This origin is not allowed to print.",
+        )
+    }
+
+    pub(crate) fn invalid_request() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_REQUEST",
+            "The print request is invalid.",
+        )
+    }
+
+    pub(crate) fn payload_too_large() -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "PAYLOAD_TOO_LARGE",
+            "Print requests must not exceed 8 MiB.",
+        )
+    }
+
+    pub(crate) fn from_resolve_failure(error: crate::application::ApplicationError) -> Self {
+        match error {
+            crate::application::ApplicationError::UnknownConfiguredPrinter(_) => Self::new(
+                StatusCode::NOT_FOUND,
+                "PRINTER_NOT_FOUND",
+                "The named printer is not configured.",
+            ),
+            error => Self::from_print_failure(error),
+        }
+    }
+
+    pub(crate) fn from_print_failure(_error: crate::application::ApplicationError) -> Self {
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PRINT_FAILED",
+            "The print job could not be sent.",
+        )
+    }
+
     pub(crate) fn invalid_query() -> Self {
         Self::new(
             StatusCode::BAD_REQUEST,
