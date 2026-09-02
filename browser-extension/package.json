@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "dependencies": {
-    "@escpost/browser": "workspace:*"
+    "@receiptful/escpost": "workspace:*"
   },
   "scripts": {
     "build": "rm -rf dist && ESCPOST_ENTRY=background vite build && ESCPOST_ENTRY=relay vite build && ESCPOST_ENTRY=popup vite build && node scripts/build-manifest.mjs"
