@@ -1,7 +1,6 @@
 {
   "manifest_version": 3,
   "name": "ESCPost Raw Printing",
-  "version": "0.0.0",
   "description": "Send raw ESC/POS print jobs through the local ESCPost daemon.",
   "minimum_chrome_version": "114",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtVqSL0gEcqcAOAyA9eo5BWflIIDg8zQdqSmY6Ifp47hH/bDnhH7wEwH3US5YXzogfuq5T/PCnEFURWFpIcGqTZ8Pfa5hIpKNUM0MErKpkSRRHy4yFA+XCwnEsXMXXqTACPviHz/zLKC+6UwjrPDPcPa1JtuuukXDVvBjS3DjDi1cUa0/UJGREipvNT6SzXr1lkgoIT0bV8Ig8fsjIzlNhb8BrOM+IBagH0bXQnnqxRqS4oG4vp8ZZmQr4WqSAxpDxtWPlw+601UTB4VeN160eS5Ph/WhF2c36kta7R5ly0oOj0M2Z307AvP/+PufZcmmUb6ZY/kqFFsP5hcYeLb6FwIDAQAB",

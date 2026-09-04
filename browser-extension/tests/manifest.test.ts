@@ -1,6 +1,16 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 
+test("both browser manifests use the extension package version", () => {
+  const packageVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
+  const chromeVersion = JSON.parse(readFileSync("dist/chrome/manifest.json", "utf8")).version;
+  const firefoxVersion = JSON.parse(readFileSync("dist/firefox/manifest.json", "utf8")).version;
+
+  expect(packageVersion).toBe("0.1.0");
+  expect(chromeVersion).toBe(packageVersion);
+  expect(firefoxVersion).toBe(packageVersion);
+});
+
 test("Chrome uses an extension iframe without page access", () => {
   // Break caught: broadening required permissions or daemon host access lets the
   // extension run against sites or ports beyond the local ESCPost daemon.

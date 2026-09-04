@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,7 +8,12 @@ const browser = process.argv[2];
 if (browser !== "chrome" && browser !== "firefox") throw new Error("Expected chrome or firefox");
 const dist = resolve(extensionRoot, "dist", browser);
 
-copyFileSync(resolve(extensionRoot, "manifests", `${browser}.json`), resolve(dist, "manifest.json"));
+const packageManifest = JSON.parse(readFileSync(resolve(extensionRoot, "package.json"), "utf8"));
+const browserManifest = JSON.parse(readFileSync(resolve(extensionRoot, "manifests", `${browser}.json`), "utf8"));
+writeFileSync(
+  resolve(dist, "manifest.json"),
+  `${JSON.stringify({ ...browserManifest, version: packageManifest.version }, null, 2)}\n`,
+);
 copyFileSync(
   resolve(extensionRoot, "src/popup/popup.html"),
   resolve(dist, "popup.html"),
