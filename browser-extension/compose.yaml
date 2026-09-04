@@ -1,21 +1,38 @@
-x-browser-extension-tool: &browser-extension-tool
+x-javascript-tool: &javascript-tool
   image: oven/bun:1.4.0
   network_mode: host
-  working_dir: /workspace/browser-extension
   user: "0:0"
   volumes:
     - ..:/workspace
+    - javascript-sdk-node-modules:/workspace/sdks/javascript/node_modules
     - browser-extension-node-modules:/workspace/browser-extension/node_modules
 
 services:
-  browser-extension-build:
-    <<: *browser-extension-tool
+  javascript-sdk-build:
+    <<: *javascript-tool
     profiles: [browser-extension-tools]
+    working_dir: /workspace/sdks/javascript
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
+
+  javascript-sdk-test:
+    <<: *javascript-tool
+    profiles: [browser-extension-tools]
+    working_dir: /workspace/sdks/javascript
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run test && bun run typecheck && bun run build"]
+
+  browser-extension-build:
+    <<: *javascript-tool
+    profiles: [browser-extension-tools]
+    working_dir: /workspace/browser-extension
     command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
 
   browser-extension-test:
-    <<: *browser-extension-tool
+    <<: *javascript-tool
     profiles: [browser-extension-tools]
+    working_dir: /workspace/browser-extension
+    depends_on:
+      javascript-sdk-build:
+        condition: service_completed_successfully
     command: ["sh", "-c", "bun install --frozen-lockfile && bun run typecheck && bun run test"]
 
   browser-extension-pages:
@@ -26,9 +43,12 @@ services:
     volumes:
       - ..:/workspace:ro
     depends_on:
+      javascript-sdk-build:
+        condition: service_completed_successfully
       browser-extension-build:
         condition: service_completed_successfully
     command: ["python", "-m", "http.server", "8081", "--bind", "127.0.0.1"]
 
 volumes:
+  javascript-sdk-node-modules:
   browser-extension-node-modules:

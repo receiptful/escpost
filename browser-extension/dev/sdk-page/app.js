@@ -1,4 +1,4 @@
-import { escpost } from "/sdks/javascript/dist/index.js";
+import { escpost } from "../../../sdks/javascript/dist/index.js";
 
 const receiptBytes = new Uint8Array([0x1b, 0x40, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x0a, 0x0a, 0x0a]);
 

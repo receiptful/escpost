@@ -3,7 +3,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { Window } from "happy-dom";
 
-vi.mock("/sdks/javascript/dist/index.js", () => ({ escpost: undefined }));
+vi.mock("../../sdks/javascript/dist/index.js", () => ({ escpost: undefined }));
 
 const testWindow = new Window();
 Object.assign(globalThis, { window: testWindow, document: testWindow.document, Event: testWindow.Event });
