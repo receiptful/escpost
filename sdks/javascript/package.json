@@ -1,9 +1,10 @@
 {
   "name": "@receiptful/escpost",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Browser SDK for ESCPost raw printing.",
   "license": "Apache-2.0",
   "type": "module",
+  "packageManager": "bun@1.4.0",
   "files": ["dist"],
   "exports": {
     ".": {
@@ -12,6 +13,14 @@
     }
   },
   "scripts": {
-    "build": "vite build && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/index.ts"
+    "build": "vite build && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "happy-dom": "20.0.0",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vitest": "3.2.4"
   }
 }

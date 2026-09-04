@@ -4,7 +4,7 @@ import type { ErrorCode } from "../src/index";
 
 test("the package exports only the raw browser entry", () => {
   const manifest = JSON.parse(
-    readFileSync("sdks/javascript/package.json", "utf8"),
+    readFileSync("package.json", "utf8"),
   );
 
   expect(Object.keys(manifest.exports)).toEqual(["."]);

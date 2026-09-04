@@ -8,6 +8,9 @@ printers and sending raw ESC/POS bytes to one of them.
 Install the package with your JavaScript package manager:
 
 ```bash
+npm install @receiptful/escpost
+pnpm add @receiptful/escpost
+yarn add @receiptful/escpost
 bun add @receiptful/escpost
 ```
 

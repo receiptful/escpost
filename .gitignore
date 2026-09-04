@@ -5,9 +5,6 @@
 /dist/
 /crates/escpost/frontend/dist/
 /crates/escpost/frontend/node_modules/
-/sdks/javascript/dist/
-/sdks/javascript/*.tsbuildinfo
-/node_modules/
 
 # Generated test output
 /.test-output/
