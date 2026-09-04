@@ -8,7 +8,7 @@ const request = { source: "escpost-page", protocol: 1, id: 4, op: "print.raw", p
 
 function dependencies(granted = true) {
   return {
-    permissions: { contains: vi.fn(async () => granted) },
+    grants: { contains: vi.fn(async () => granted), onRemoved: vi.fn() },
     daemon: {
       health: vi.fn(async () => true),
       list: vi.fn(async () => ({ printers: [] as string[] })),
@@ -26,7 +26,7 @@ test("denies an ungranted concrete sender origin before daemon print", async () 
     ok: false,
     error: expect.objectContaining({ code: "ORIGIN_NOT_GRANTED" }),
   });
-  expect(deps.permissions.contains).toHaveBeenCalledWith({ origins: ["https://denied.example/*"] });
+  expect(deps.grants.contains).toHaveBeenCalledWith("https://denied.example/*");
   expect(deps.daemon.print).not.toHaveBeenCalled();
 });
 
@@ -45,7 +45,7 @@ test("fails closed when checking the stored grant errors", async () => {
   // Break caught: allowing a failed permission lookup to escape leaves a page
   // request hanging and risks a later refactor dispatching without a grant.
   const deps = dependencies();
-  deps.permissions.contains.mockRejectedValueOnce(new Error("storage unavailable"));
+  deps.grants.contains.mockRejectedValueOnce(new Error("storage unavailable"));
 
   await expect(handleRequest(request, "https://shop.example", deps)).resolves.toMatchObject({
     ok: false, error: { code: "ORIGIN_NOT_GRANTED" },
@@ -163,7 +163,7 @@ test("preserves a printer-not-found 404 from daemon HTTP through the worker brid
   }), { status: 404 }));
 
   await expect(handleRequest(request, "https://shop.example", {
-    permissions: { contains: vi.fn(async () => true) },
+    grants: { contains: vi.fn(async () => true), onRemoved: vi.fn() },
     daemon,
   })).resolves.toEqual({
     ok: false,

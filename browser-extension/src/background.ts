@@ -1,8 +1,5 @@
-import { DaemonClient } from "./daemon";
-import { installInventoryStreams } from "./inventory-stream";
 import { handleRequest, type RequestDependencies } from "./messages";
 import { isRelayRequest, type WorkerReply } from "./protocol";
-import { installGrantRegistration } from "./registration";
 
 type RuntimeMessageSender = { origin?: string };
 type Runtime = {
@@ -14,7 +11,7 @@ type RequestHandler = (request: unknown, senderOrigin: string | undefined, deps:
 
 export function installBackground(
   runtime: Runtime,
-  deps: RequestDependencies = { permissions: chrome.permissions, daemon: new DaemonClient() },
+  deps: RequestDependencies,
   requestHandler: RequestHandler = handleRequest,
 ): void {
   runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -31,11 +28,4 @@ export function installBackground(
     );
     return true;
   });
-}
-
-if (typeof chrome !== "undefined") {
-  const daemon = new DaemonClient();
-  installBackground(chrome.runtime, { permissions: chrome.permissions, daemon });
-  installInventoryStreams(chrome.runtime, { permissions: chrome.permissions, daemon });
-  installGrantRegistration({ permissions: chrome.permissions, scripting: chrome.scripting });
 }

@@ -1,4 +1,5 @@
 import { EscpostError } from "./errors";
+import { IframePage } from "./iframe-page";
 import type { RawPrintPayload } from "./protocol";
 import { PageTransport, type PageWindow } from "./transport";
 import { SubscriptionTransport } from "./subscriptions";
@@ -25,6 +26,7 @@ export type {
 const healthTimeoutMs = 2_000;
 const listTimeoutMs = 30_000;
 const printTimeoutMs = 20_000;
+const chromeExtensionId = "gdflkakcdpkllfhndncimkpfeomfccia";
 
 type WireConnection =
   | {
@@ -59,8 +61,9 @@ type WirePrinterInventory = {
 type WirePrintResult = { job_id: string };
 
 function createEscpostClient(page?: PageWindow) {
-  const transport = new PageTransport(page);
-  const subscriptions = new SubscriptionTransport(page);
+  const browserPage = page ?? defaultPage();
+  const transport = new PageTransport(browserPage);
+  const subscriptions = new SubscriptionTransport(browserPage);
 
   return {
     async isAvailable(): Promise<boolean> {
@@ -114,6 +117,12 @@ function createEscpostClient(page?: PageWindow) {
       return { jobId: result.job_id };
     },
   };
+}
+
+function defaultPage(): PageWindow | undefined {
+  if (typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined") return undefined;
+  const firefox = typeof globalThis.navigator !== "undefined" && globalThis.navigator.userAgent.includes("Firefox/");
+  return firefox ? undefined : new IframePage(chromeExtensionId);
 }
 
 export const escpost = createEscpostClient();

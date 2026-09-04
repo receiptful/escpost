@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { originPattern } from "../src/registration";
+import { originPattern } from "../src/web-origin";
 
 test("derives a concrete HTTP(S) sender origin pattern and rejects opaque origins", () => {
   // Break caught: using sender URLs or accepting an opaque/non-web origin can

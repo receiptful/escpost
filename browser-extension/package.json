@@ -5,7 +5,9 @@
   "type": "module",
   "packageManager": "bun@1.4.0",
   "scripts": {
-    "build": "rm -rf dist && ESCPOST_ENTRY=background vite build && ESCPOST_ENTRY=relay vite build && ESCPOST_ENTRY=popup vite build && node scripts/build-manifest.mjs",
+    "build": "rm -rf dist && bun run build:chrome && bun run build:firefox",
+    "build:chrome": "ESCPOST_BROWSER=chrome ESCPOST_ENTRY=bridge vite build && ESCPOST_BROWSER=chrome ESCPOST_ENTRY=popup vite build && node scripts/build-manifest.mjs chrome",
+    "build:firefox": "ESCPOST_BROWSER=firefox ESCPOST_ENTRY=background vite build && ESCPOST_BROWSER=firefox ESCPOST_ENTRY=relay vite build && ESCPOST_BROWSER=firefox ESCPOST_ENTRY=popup vite build && node scripts/build-manifest.mjs firefox",
     "test": "bun run build && vitest run",
     "typecheck": "tsc --noEmit"
   },

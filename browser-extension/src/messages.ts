@@ -1,6 +1,7 @@
 import { extensionProtocolVersion, isPageRequest, type ErrorCode, type PageRequest, type WorkerReply } from "./protocol";
 import { DaemonError } from "./daemon";
-import { isDaemonOrigin, originPattern } from "./registration";
+import type { OriginGrants } from "./grants";
+import { isDaemonOrigin, originPattern } from "./web-origin";
 
 const maximumRawJobBytes = 8 * 1024 * 1024;
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -12,7 +13,7 @@ type OneShotDaemon = {
 };
 
 export type RequestDependencies = {
-  permissions: { contains(details: { origins: string[] }): Promise<boolean> };
+  grants: OriginGrants;
   daemon: OneShotDaemon;
 };
 
@@ -43,7 +44,7 @@ export async function handleRequest(
 
 async function granted(pattern: string, deps: RequestDependencies): Promise<boolean> {
   try {
-    return await deps.permissions.contains({ origins: [pattern] });
+    return await deps.grants.contains(pattern);
   } catch {
     return false;
   }

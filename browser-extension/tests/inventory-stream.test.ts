@@ -74,10 +74,13 @@ const snapshot: WirePrinterInventory = {
 function setup(granted = true) {
   let connect: ((port: ControlledPort) => void) | undefined;
   const runtime = { onConnect: { addListener: vi.fn((listener) => { connect = listener; }) } };
-  const permissions = { contains: vi.fn(async () => granted) };
+  const grants = {
+    contains: vi.fn(async () => granted),
+    onRemoved: vi.fn(),
+  };
   const daemon = new ControlledDaemon();
-  installInventoryStreams(runtime, { permissions, daemon });
-  return { connect: (port: ControlledPort) => connect?.(port), permissions, daemon };
+  installInventoryStreams(runtime, { grants, daemon });
+  return { connect: (port: ControlledPort) => connect?.(port), grants, daemon };
 }
 
 async function flush(): Promise<void> {
@@ -93,15 +96,15 @@ afterEach(() => {
 test("shares one authorized daemon stream across every subscription on a port", async () => {
   // Break caught: opening one SSE fetch per id defeats document-level
   // multiplexing and makes one unsubscribe abort another id's ownership.
-  const { connect, permissions, daemon } = setup();
+  const { connect, grants, daemon } = setup();
   const port = new ControlledPort();
   connect(port);
   port.receive({ kind: "subscribe", subscriptionId: 17, protocol: 1 });
   port.receive({ kind: "subscribe", subscriptionId: 18, protocol: 1 });
   await flush();
 
-  expect(permissions.contains).toHaveBeenCalledOnce();
-  expect(permissions.contains).toHaveBeenCalledWith({ origins: ["https://shop.example/*"] });
+  expect(grants.contains).toHaveBeenCalledOnce();
+  expect(grants.contains).toHaveBeenCalledWith("https://shop.example/*");
   expect(daemon.attempts).toHaveLength(1);
 
   daemon.emit(snapshot);
@@ -189,13 +192,14 @@ test("rechecks the explicit page grant before a reconnect opens daemon traffic",
   vi.useFakeTimers();
   let connect: ((port: ControlledPort) => void) | undefined;
   const runtime = { onConnect: { addListener: vi.fn((listener) => { connect = listener; }) } };
-  const permissions = {
+  const grants = {
     contains: vi.fn()
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false),
+    onRemoved: vi.fn(),
   };
   const daemon = new ControlledDaemon();
-  installInventoryStreams(runtime, { permissions, daemon });
+  installInventoryStreams(runtime, { grants, daemon });
   const port = new ControlledPort();
   connect?.(port);
   port.receive({ kind: "subscribe", subscriptionId: 17, protocol: 1 });
@@ -206,7 +210,7 @@ test("rechecks the explicit page grant before a reconnect opens daemon traffic",
   vi.advanceTimersByTime(150);
   await flush();
 
-  expect(permissions.contains).toHaveBeenCalledTimes(2);
+  expect(grants.contains).toHaveBeenCalledTimes(2);
   expect(daemon.attempts).toHaveLength(1);
   expect(port.posted.at(-1)).toEqual({
     kind: "failure",
@@ -220,25 +224,23 @@ test("aborts and removes a live stream as soon as its site permission is revoked
   // an already-open SSE stream delivering inventory after its site's grant is
   // removed from Chrome.
   let connect: ((port: ControlledPort) => void) | undefined;
-  let removePermission: ((details: { origins?: string[] }) => void) | undefined;
+  let removeGrant: ((patterns: string[]) => void) | undefined;
   const runtime = { onConnect: { addListener: vi.fn((listener) => { connect = listener; }) } };
-  const permissions = {
+  const grants = {
     contains: vi.fn(async () => true),
-    onRemoved: {
-      addListener: vi.fn((listener: (details: { origins?: string[] }) => void) => {
-        removePermission = listener;
-      }),
-    },
+    onRemoved: vi.fn((listener: (patterns: string[]) => void) => {
+      removeGrant = listener;
+    }),
   };
   const daemon = new ControlledDaemon();
-  installInventoryStreams(runtime, { permissions, daemon });
+  installInventoryStreams(runtime, { grants, daemon });
   const port = new ControlledPort();
   connect?.(port);
   port.receive({ kind: "subscribe", subscriptionId: 17, protocol: 1 });
   await flush();
 
   daemon.emit(snapshot);
-  removePermission?.({ origins: ["https://shop.example/*"] });
+  removeGrant?.(["https://shop.example/*"]);
 
   expect(daemon.attempts[0]?.signal.aborted).toBe(true);
   daemon.emit({ ...snapshot, updated_at: "2026-09-01T12:01:00Z" });
@@ -261,7 +263,7 @@ test("aborts and removes a live stream as soon as its site permission is revoked
 test("rejects wrong ports and untrusted sender URLs before grant checks or daemon traffic", async () => {
   // Break caught: trusting a page-supplied origin or the fixed loopback host
   // lets non-web/ungranted documents turn extension host access into SSE access.
-  const { connect, permissions, daemon } = setup();
+  const { connect, grants, daemon } = setup();
   const ports = [
     new ControlledPort("other-port"),
     new ControlledPort("escpost-printers", null),
@@ -277,20 +279,20 @@ test("rejects wrong ports and untrusted sender URLs before grant checks or daemo
   }
   await flush();
 
-  expect(permissions.contains).not.toHaveBeenCalled();
+  expect(grants.contains).not.toHaveBeenCalled();
   expect(daemon.attempts).toEqual([]);
 });
 
 test("fails a denied port subscription without opening a daemon stream", async () => {
   // Break caught: beginning the SSE fetch before the asynchronous explicit
   // host-grant decision exposes daemon inventory to a denied document.
-  const { connect, permissions, daemon } = setup(false);
+  const { connect, grants, daemon } = setup(false);
   const port = new ControlledPort();
   connect(port);
   port.receive({ kind: "subscribe", subscriptionId: 17, protocol: 1 });
   await flush();
 
-  expect(permissions.contains).toHaveBeenCalledWith({ origins: ["https://shop.example/*"] });
+  expect(grants.contains).toHaveBeenCalledWith("https://shop.example/*");
   expect(daemon.attempts).toEqual([]);
   expect(port.posted).toEqual([{
     kind: "failure",

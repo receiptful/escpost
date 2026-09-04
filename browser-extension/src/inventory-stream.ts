@@ -1,5 +1,6 @@
 import type { InventoryStreamCallbacks, WirePrinterInventory } from "./daemon";
-import { isDaemonOrigin, originPattern } from "./registration";
+import type { OriginGrants } from "./grants";
+import { isDaemonOrigin, originPattern } from "./web-origin";
 
 export const inventoryPortName = "escpost-printers";
 
@@ -20,12 +21,7 @@ type InventoryDaemon = {
 };
 
 export type InventoryStreamDependencies = {
-  permissions: {
-    contains(details: { origins: string[] }): Promise<boolean>;
-    onRemoved?: {
-      addListener(listener: (details: { origins?: string[] }) => void): void;
-    };
-  };
+  grants: OriginGrants;
   daemon: InventoryDaemon;
 };
 
@@ -46,8 +42,7 @@ const deniedError = {
 
 export function installInventoryStreams(runtime: StreamRuntime, deps: InventoryStreamDependencies): void {
   const ownedStreams = new Set<OwnedPortStream>();
-  deps.permissions.onRemoved?.addListener((details) => {
-    const removedOrigins = details.origins ?? [];
+  deps.grants.onRemoved((removedOrigins) => {
     for (const owned of [...ownedStreams]) {
       if (removedOrigins.includes(owned.pattern)) owned.revoke();
     }
@@ -194,7 +189,7 @@ function ownPortStream(
 
 async function granted(pattern: string, deps: InventoryStreamDependencies): Promise<boolean> {
   try {
-    return await deps.permissions.contains({ origins: [pattern] });
+    return await deps.grants.contains(pattern);
   } catch {
     return false;
   }

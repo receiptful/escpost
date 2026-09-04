@@ -1,8 +1,7 @@
 import "./popup.css";
-import { registerGrantedRelay, type RegistrationDependencies } from "../registration";
+import type { MutableOriginGrants } from "../grants";
 import { renderPopup } from "../ui/dom";
 import { currentSiteOrigin, type SiteOrigin } from "../ui/origins";
-import { probeRelayStatus, type RelayProbeTabs } from "../ui/status";
 import { buildPopupView, type PopupModelInput, type PopupView } from "./model";
 
 type Tab = { id?: number; url?: string };
@@ -15,13 +14,10 @@ type TabEvents = {
 
 export type PopupDependencies = {
   document: Document;
-  tabs: RelayProbeTabs & { query(details: { active: boolean; currentWindow: boolean }): Promise<Tab[]> } & TabEvents;
-  permissions: {
-    contains(details: { origins: string[] }): Promise<boolean>;
-    request(details: { origins: string[] }): Promise<boolean>;
-    remove(details: { origins: string[] }): Promise<boolean>;
-  };
-  syncRegistrations(): Promise<void>;
+  tabs: { query(details: { active: boolean; currentWindow: boolean }): Promise<Tab[]> } & TabEvents;
+  grants: MutableOriginGrants;
+  afterGrantChange(): Promise<void>;
+  probe(tabId: number): Promise<{ relay: "loaded" | "missing" | "unknown"; daemon: "running" | "unavailable" | "unknown"; error: string | null }>;
 };
 
 export type PopupController = { refresh(): Promise<void> };
@@ -72,7 +68,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
     const snapshot: Omit<ActionSnapshot, "action"> = { ...site, tabId: tab.id, revision: thisRevision };
     let granted: boolean;
     try {
-      granted = await deps.permissions.contains({ origins: [site.pattern] });
+      granted = await deps.grants.contains(site.pattern);
     } catch {
       if (isCurrent(snapshot)) render({ origin: site.origin, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not verify site access." });
       return;
@@ -82,7 +78,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
       render({ origin: site.origin, grant: "absent", relay: "unknown", daemon: "unknown" }, snapshot);
       return;
     }
-    const status = await probeRelayStatus(tab.id, deps.tabs);
+    const status = await deps.probe(tab.id);
     if (!isCurrent(snapshot)) return;
     render({ origin: site.origin, grant: "present", relay: status.relay, daemon: status.daemon, error: status.error }, snapshot);
   };
@@ -90,7 +86,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
   const reconcile = async (snapshot: ActionSnapshot, error: string | null) => {
     let granted: boolean;
     try {
-      granted = await deps.permissions.contains({ origins: [snapshot.pattern] });
+      granted = await deps.grants.contains(snapshot.pattern);
     } catch {
       if (isCurrent(snapshot)) render({ origin: snapshot.origin, grant: "unknown", relay: "unknown", daemon: "unknown", error: "Could not verify site access." });
       return;
@@ -101,7 +97,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
       render({ origin: snapshot.origin, grant: "absent", relay: "unknown", daemon: "unknown", error }, base);
       return;
     }
-    const status = await probeRelayStatus(snapshot.tabId, deps.tabs);
+    const status = await deps.probe(snapshot.tabId);
     if (!isCurrent(snapshot)) return;
     render({ origin: snapshot.origin, grant: "present", relay: status.relay, daemon: status.daemon, error }, base);
   };
@@ -112,7 +108,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
       return;
     }
     try {
-      await deps.syncRegistrations();
+      await deps.afterGrantChange();
     } catch {
       await reconcile(snapshot, "Could not update site access.");
       return;
@@ -124,8 +120,8 @@ export function installPopup(deps: PopupDependencies): PopupController {
     const snapshot = currentAction;
     if (snapshot === null || !isCurrent(snapshot)) return;
     if (snapshot.action === "grant") {
-      // This must stay directly in the click stack for Chrome's permission gesture.
-      const requested = deps.permissions.request({ origins: [snapshot.pattern] });
+      // Firefox requires the optional-host request to remain in the click stack.
+      const requested = deps.grants.request(snapshot.pattern);
       suppressAction();
       void requested.then(
         (changed) => completeMutation(snapshot, changed, "Site access was not changed."),
@@ -133,7 +129,7 @@ export function installPopup(deps: PopupDependencies): PopupController {
       );
       return;
     }
-    const removed = deps.permissions.remove({ origins: [snapshot.pattern] });
+    const removed = deps.grants.remove(snapshot.pattern);
     suppressAction();
     void removed.then(
       (changed) => completeMutation(snapshot, changed, "Site access was not changed."),
@@ -148,18 +144,4 @@ export function installPopup(deps: PopupDependencies): PopupController {
 
   void refresh();
   return { refresh };
-}
-
-function chromeDependencies(): PopupDependencies {
-  const registration: RegistrationDependencies = { permissions: chrome.permissions, scripting: chrome.scripting };
-  return {
-    document,
-    tabs: chrome.tabs,
-    permissions: chrome.permissions,
-    syncRegistrations: () => registerGrantedRelay(registration),
-  };
-}
-
-if (typeof chrome !== "undefined" && typeof document !== "undefined") {
-  installPopup(chromeDependencies());
 }

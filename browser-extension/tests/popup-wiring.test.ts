@@ -13,21 +13,22 @@ function fixture(deps: PopupOverrides = {}) {
   document.body.replaceChildren();
   document.body.append(document.createElement("main"));
   const main = document.querySelector("main")!;
-  const permissions = {
+  const grants = {
     contains: vi.fn(async () => false),
     request: vi.fn(async () => true),
     remove: vi.fn(async () => true),
+    onRemoved: vi.fn(),
   };
   let activated: ((info: { tabId: number }) => void) | undefined;
   let updated: ((tabId: number, change: { url?: string }) => void) | undefined;
   const defaultTabs = {
     query: vi.fn(async () => [{ id: 11, url: "https://shop.example/order" }]),
-    sendMessage: vi.fn(async () => ({ source: "escpost-popup", kind: "relay-probe-result", protocol: 1, relay: true, daemon: true })),
   };
   const input = {
     document,
-    permissions,
-    syncRegistrations: vi.fn(async () => undefined),
+    grants,
+    afterGrantChange: vi.fn(async () => undefined),
+    probe: vi.fn(async () => ({ relay: "loaded" as const, daemon: "running" as const, error: null })),
     ...deps,
     tabs: {
       ...defaultTabs,
@@ -39,7 +40,7 @@ function fixture(deps: PopupOverrides = {}) {
   const popup = installPopup(input);
   return {
     input,
-    permissions,
+    grants,
     popup,
     activate: (tabId: number) => activated?.({ tabId }),
     update: (tabId: number, url: string) => updated?.(tabId, { url }),
@@ -55,8 +56,8 @@ async function settle(): Promise<void> {
 }
 
 test("requests the exact origin synchronously in the grant click call stack", async () => {
-  // Break caught: awaiting, queuing, or refreshing before permissions.request
-  // loses Chrome's user gesture and turns the explicit consent prompt into a denial.
+  // Break caught: awaiting, queuing, or refreshing before the grant request
+  // loses Firefox's user gesture and turns the consent prompt into a denial.
   const events: string[] = [];
   let resolveRequest: ((value: boolean) => void) | undefined;
   const request = vi.fn(() => {
@@ -64,15 +65,15 @@ test("requests the exact origin synchronously in the grant click call stack", as
     return new Promise<boolean>((resolve) => { resolveRequest = resolve; });
   });
   const { input, button } = fixture({
-    permissions: { contains: vi.fn(async () => false), request, remove: vi.fn(async () => true) },
-    syncRegistrations: vi.fn(async () => { events.push("sync"); }),
+    grants: { contains: vi.fn(async () => false), request, remove: vi.fn(async () => true), onRemoved: vi.fn() },
+    afterGrantChange: vi.fn(async () => { events.push("sync"); }),
   });
   await settle();
 
   button().click();
-  expect(request).toHaveBeenCalledWith({ origins: ["https://shop.example/*"] });
+  expect(request).toHaveBeenCalledWith("https://shop.example/*");
   expect(events).toEqual(["request"]);
-  expect(input.syncRegistrations).not.toHaveBeenCalled();
+  expect(input.afterGrantChange).not.toHaveBeenCalled();
 
   resolveRequest?.(true);
   await settle();
@@ -83,10 +84,10 @@ test("synchronizes registrations after a completed revoke and refreshes the view
   // Break caught: removing a host permission without a registration sync leaves
   // an old document-start relay registered for a now-revoked site.
   const remove = vi.fn(async () => true);
-  const syncRegistrations = vi.fn(async () => undefined);
+  const afterGrantChange = vi.fn(async () => undefined);
   const { button } = fixture({
-    permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true), remove },
-    syncRegistrations,
+    grants: { contains: vi.fn(async () => true), request: vi.fn(async () => true), remove, onRemoved: vi.fn() },
+    afterGrantChange,
   });
   await settle();
 
@@ -94,8 +95,8 @@ test("synchronizes registrations after a completed revoke and refreshes the view
   button().click();
   await settle();
 
-  expect(remove).toHaveBeenCalledWith({ origins: ["https://shop.example/*"] });
-  expect(syncRegistrations).toHaveBeenCalledOnce();
+  expect(remove).toHaveBeenCalledWith("https://shop.example/*");
+  expect(afterGrantChange).toHaveBeenCalledOnce();
 });
 
 test("renders successful grant and revoke reconciliation without an error alert", async () => {
@@ -103,10 +104,11 @@ test("renders successful grant and revoke reconciliation without an error alert"
   // permission mutation falsely tells users that access is broken.
   let granted = false;
   const grantedSite = fixture({
-    permissions: {
+    grants: {
       contains: vi.fn(async () => granted),
       request: vi.fn(async () => { granted = true; return true; }),
       remove: vi.fn(async () => true),
+      onRemoved: vi.fn(),
     },
   });
   await settle();
@@ -117,10 +119,11 @@ test("renders successful grant and revoke reconciliation without an error alert"
 
   granted = true;
   const revokedSite = fixture({
-    permissions: {
+    grants: {
       contains: vi.fn(async () => granted),
       request: vi.fn(async () => true),
       remove: vi.fn(async () => { granted = false; return true; }),
+      onRemoved: vi.fn(),
     },
   });
   await settle();
@@ -130,7 +133,7 @@ test("renders successful grant and revoke reconciliation without an error alert"
   expect(document.querySelector<HTMLParagraphElement>("#popup-error")?.hidden).toBe(true);
 });
 
-test("reports tab, permission, and relay failures as view state without rejections", async () => {
+test("reports tab, grant, and transport failures as view state without rejections", async () => {
   // Break caught: a rejected browser API promise escapes the popup and leaves
   // users with neither a status nor a recovery instruction.
   const { input, popup } = fixture({
@@ -140,51 +143,52 @@ test("reports tab, permission, and relay failures as view state without rejectio
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not read the active tab.");
 
   input.tabs.query = vi.fn(async () => [{ id: 11, url: "https://shop.example/order" }]);
-  input.permissions.contains = vi.fn(async () => { throw new Error("permission failed"); });
+  input.grants.contains = vi.fn(async () => { throw new Error("permission failed"); });
   await popup.refresh();
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not verify site access.");
 
-  input.permissions.contains = vi.fn(async () => true);
-  input.tabs.sendMessage = vi.fn(async () => { throw new Error("relay failed"); });
+  input.grants.contains = vi.fn(async () => true);
+  input.probe = vi.fn(async () => ({ relay: "unknown" as const, daemon: "unknown" as const, error: "Could not contact the page relay." }));
   await popup.refresh();
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not contact the page relay.");
 });
 
-test("reconciles denied permission mutations without synchronizing registrations", async () => {
+test("reconciles denied grant mutations without synchronizing registrations", async () => {
   // Break caught: syncing after a declined permission dialog or claiming a
-  // changed grant makes the visible action disagree with Chrome's real state.
+  // changed grant makes the visible action disagree with the browser's real state.
   const absent = fixture({
-    permissions: { contains: vi.fn(async () => false), request: vi.fn(async () => false), remove: vi.fn(async () => true) },
+    grants: { contains: vi.fn(async () => false), request: vi.fn(async () => false), remove: vi.fn(async () => true), onRemoved: vi.fn() },
   });
   await settle();
   absent.button().click();
   await settle();
-  expect(absent.input.syncRegistrations).not.toHaveBeenCalled();
+  expect(absent.input.afterGrantChange).not.toHaveBeenCalled();
   expect(absent.button().textContent).toBe("Allow this site");
   expect(document.querySelector("#popup-error")?.textContent).toBe("Site access was not changed.");
 
   const present = fixture({
-    permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true), remove: vi.fn(async () => false) },
+    grants: { contains: vi.fn(async () => true), request: vi.fn(async () => true), remove: vi.fn(async () => false), onRemoved: vi.fn() },
   });
   await settle();
   present.button().click();
   await settle();
-  expect(present.input.syncRegistrations).not.toHaveBeenCalled();
+  expect(present.input.afterGrantChange).not.toHaveBeenCalled();
   expect(present.button().textContent).toBe("Remove access");
   expect(document.querySelector("#popup-error")?.textContent).toBe("Site access was not changed.");
 });
 
-test("reconciles rejected permission calls and failed registration sync to Chrome state", async () => {
+test("reconciles rejected grant calls and failed registration sync to browser state", async () => {
   // Break caught: a rejected mutation or failed sync using optimistic state can
   // offer the wrong action for the actual origin permission.
   let granted = false;
   const grant = fixture({
-    permissions: {
+    grants: {
       contains: vi.fn(async () => granted),
       request: vi.fn(async () => { granted = true; return true; }),
       remove: vi.fn(async () => true),
+      onRemoved: vi.fn(),
     },
-    syncRegistrations: vi.fn(async () => { throw new Error("sync failed"); }),
+    afterGrantChange: vi.fn(async () => { throw new Error("sync failed"); }),
   });
   await settle();
   grant.button().click();
@@ -193,23 +197,24 @@ test("reconciles rejected permission calls and failed registration sync to Chrom
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not update site access.");
 
   const rejected = fixture({
-    permissions: { contains: vi.fn(async () => false), request: vi.fn(async () => { throw new Error("denied"); }), remove: vi.fn(async () => true) },
+    grants: { contains: vi.fn(async () => false), request: vi.fn(async () => { throw new Error("denied"); }), remove: vi.fn(async () => true), onRemoved: vi.fn() },
   });
   await settle();
   rejected.button().click();
   await settle();
-  expect(rejected.input.syncRegistrations).not.toHaveBeenCalled();
+  expect(rejected.input.afterGrantChange).not.toHaveBeenCalled();
   expect(rejected.button().textContent).toBe("Allow this site");
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not change site access.");
 
   let stillGranted = true;
   const revoke = fixture({
-    permissions: {
+    grants: {
       contains: vi.fn(async () => stillGranted),
       request: vi.fn(async () => true),
       remove: vi.fn(async () => { stillGranted = false; return true; }),
+      onRemoved: vi.fn(),
     },
-    syncRegistrations: vi.fn(async () => { throw new Error("sync failed"); }),
+    afterGrantChange: vi.fn(async () => { throw new Error("sync failed"); }),
   });
   await settle();
   revoke.button().click();
@@ -218,12 +223,12 @@ test("reconciles rejected permission calls and failed registration sync to Chrom
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not update site access.");
 
   const removeRejected = fixture({
-    permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true), remove: vi.fn(async () => { throw new Error("denied"); }) },
+    grants: { contains: vi.fn(async () => true), request: vi.fn(async () => true), remove: vi.fn(async () => { throw new Error("denied"); }), onRemoved: vi.fn() },
   });
   await settle();
   removeRejected.button().click();
   await settle();
-  expect(removeRejected.input.syncRegistrations).not.toHaveBeenCalled();
+  expect(removeRejected.input.afterGrantChange).not.toHaveBeenCalled();
   expect(removeRejected.button().textContent).toBe("Remove access");
   expect(document.querySelector("#popup-error")?.textContent).toBe("Could not change site access.");
 });
@@ -236,9 +241,8 @@ test("discards a navigation update that arrives while the active-tab query is pe
     query: vi.fn()
       .mockImplementationOnce(() => new Promise<Array<{ id: number; url: string }>>((resolve) => { resolveOld = resolve; }))
       .mockResolvedValue([{ id: 11, url: "https://after-query.example/order" }]),
-    sendMessage: vi.fn(async () => ({ source: "escpost-popup", kind: "relay-probe-result", protocol: 1, relay: true, daemon: true })),
   };
-  const popup = fixture({ tabs, permissions: { contains: vi.fn(async () => false), request: vi.fn(async () => true), remove: vi.fn(async () => true) } });
+  const popup = fixture({ tabs, grants: { contains: vi.fn(async () => false), request: vi.fn(async () => true), remove: vi.fn(async () => true), onRemoved: vi.fn() } });
   await Promise.resolve();
   popup.update(11, "https://after-query.example/order");
   resolveOld?.([{ id: 11, url: "https://before-query.example/order" }]);
@@ -258,31 +262,35 @@ test("invalidates old actions and discards tab, grant, and probe results after n
     query: vi.fn()
       .mockImplementationOnce(() => new Promise<Array<{ id: number; url: string }>>((resolve) => { resolveTab = resolve; }))
       .mockResolvedValue([{ id: 22, url: "https://next.example/order" }]),
-    sendMessage: vi.fn()
-      .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveProbe = resolve; }))
-      .mockResolvedValue({ source: "escpost-popup", kind: "relay-probe-result", protocol: 1, relay: true, daemon: true }),
   };
-  const permissions = {
+  const grants = {
     contains: vi.fn()
       .mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveGrant = resolve; }))
       .mockResolvedValue(true),
     request: vi.fn(async () => true),
     remove: vi.fn(async () => true),
+    onRemoved: vi.fn(),
   };
-  const popup = fixture({ tabs, permissions });
+  const popup = fixture({
+    tabs,
+    grants,
+    probe: vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveProbe = resolve; }))
+      .mockResolvedValue({ relay: "loaded", daemon: "running", error: null }),
+  });
   popup.activate(22);
   await Promise.resolve();
   resolveTab?.([{ id: 11, url: "https://old.example/order" }]);
   await Promise.resolve();
   resolveGrant?.(true);
   await Promise.resolve();
-  resolveProbe?.({ source: "escpost-popup", kind: "relay-probe-result", protocol: 1, relay: true, daemon: true });
+  resolveProbe?.({ relay: "loaded", daemon: "running", error: null });
   await settle();
 
   expect(document.querySelector("#current-origin")?.textContent).toBe("https://next.example");
   const stale = popup.button();
   popup.update(22, "https://after.example/order");
   stale.click();
-  expect(permissions.remove).not.toHaveBeenCalled();
-  expect(permissions.request).not.toHaveBeenCalled();
+  expect(grants.remove).not.toHaveBeenCalled();
+  expect(grants.request).not.toHaveBeenCalled();
 });

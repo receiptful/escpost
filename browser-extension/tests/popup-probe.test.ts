@@ -10,8 +10,8 @@ function stack(health: boolean, granted = true) {
   const worker = {
     onMessage: { addListener: vi.fn((listener) => { workerListener = listener; }) },
   };
-  const permissions = { contains: vi.fn(async () => granted) };
-  installBackground(worker, { permissions, daemon: { health: vi.fn(async () => health), list: vi.fn(), print: vi.fn() } });
+  const grants = { contains: vi.fn(async () => granted), onRemoved: vi.fn() };
+  installBackground(worker, { grants, daemon: { health: vi.fn(async () => health), list: vi.fn(), print: vi.fn() } });
 
   let relayListener: MessageListener | undefined;
   const runtime = {
@@ -39,7 +39,7 @@ function stack(health: boolean, granted = true) {
       }
     })),
   };
-  return { tabs, runtime, pageMessage, permissions };
+  return { tabs, runtime, pageMessage, grants };
 }
 
 const probe = probeRelayStatus as unknown as (tabId: number, tabs: { sendMessage(tabId: number, message: unknown): Promise<unknown> }) => Promise<{
@@ -88,5 +88,5 @@ test("keeps page messages outside the private probe channel and retains worker s
   expect(denied.runtime.sendMessage).not.toHaveBeenCalled();
 
   await expect(probe(11, denied.tabs)).resolves.toEqual({ relay: "loaded", daemon: "unknown", error: null });
-  expect(denied.permissions.contains).toHaveBeenCalledWith({ origins: ["https://shop.example/*"] });
+  expect(denied.grants.contains).toHaveBeenCalledWith("https://shop.example/*");
 });

@@ -1,4 +1,4 @@
-import { isDaemonOrigin } from "../registration";
+import { isDaemonOrigin } from "../web-origin";
 
 export type SiteOrigin = { origin: string; pattern: string };
 
