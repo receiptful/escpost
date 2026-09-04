@@ -1,20 +1,11 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-
-function buildExtension() {
-  execFileSync("bun", ["--cwd", "browser-extension", "run", "build"], {
-    stdio: "pipe",
-  });
-}
 
 test("the installable manifest limits printing access to the local daemon", () => {
   // Break caught: broadening required permissions or daemon host access lets the
   // extension run against sites or ports beyond the local ESCPost daemon.
-  buildExtension();
-
   const manifest = JSON.parse(
-    readFileSync("browser-extension/dist/manifest.json", "utf8"),
+    readFileSync("dist/manifest.json", "utf8"),
   );
 
   expect(manifest.manifest_version).toBe(3);

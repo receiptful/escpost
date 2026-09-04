@@ -1,10 +1,15 @@
 {
-  "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
     "noEmit": true,
     "tsBuildInfoFile": "./browser-extension.tsbuildinfo",
     "types": ["chrome"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts", "vitest.config.ts"]
 }
