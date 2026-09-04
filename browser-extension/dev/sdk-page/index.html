@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESCPost SDK raw print check</title>
+    <style>
+      body { font-family: system-ui, sans-serif; line-height: 1.5; margin: 2rem; max-width: 44rem; }
+      label, button, select { font: inherit; }
+      select { min-width: 18rem; }
+      .status { min-height: 1.5em; }
+      .warning, .error { color: #8a3c00; }
+      .error { color: #a40000; }
+    </style>
+  </head>
+  <body>
+    <main id="sdk-page">
+      <h1>ESCPost SDK raw print check</h1>
+      <p id="health-status" class="status" role="status">Checking ESCPost health…</p>
+      <p id="snapshot-status" class="status">Waiting for the retained printer snapshot…</p>
+      <p id="inventory-warning" class="warning" role="status"></p>
+      <p id="inventory-error" class="error" role="alert"></p>
+      <label for="printer">Configured printer</label>
+      <select id="printer" disabled></select>
+      <button id="print" type="button" disabled>Print exact raw bytes</button>
+      <p id="print-status" class="status" role="status"></p>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
