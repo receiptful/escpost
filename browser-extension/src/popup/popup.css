@@ -1,0 +1,47 @@
+:root {
+  color: #1d1d1f;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 19rem;
+}
+
+main {
+  padding: 1rem;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+.lede {
+  margin-top: 0.5rem;
+}
+
+.statuses {
+  display: grid;
+  gap: 0.25rem 0.75rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: 1rem 0;
+}
+
+.statuses dt,
+.statuses dd {
+  margin: 0;
+}
+
+.statuses dd {
+  overflow-wrap: anywhere;
+}
+
+[data-tone="ok"] { color: #18794e; }
+[data-tone="warning"] { color: #9a6700; }
+[data-tone="error"],
+.error { color: #b42318; }
+
+.guidance,
+.error,
+button { margin-top: 1rem; }

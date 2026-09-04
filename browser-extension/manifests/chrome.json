@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "ESCPost Raw Printing",
+  "description": "Send raw ESC/POS print jobs through the local ESCPost daemon.",
+  "minimum_chrome_version": "114",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtVqSL0gEcqcAOAyA9eo5BWflIIDg8zQdqSmY6Ifp47hH/bDnhH7wEwH3US5YXzogfuq5T/PCnEFURWFpIcGqTZ8Pfa5hIpKNUM0MErKpkSRRHy4yFA+XCwnEsXMXXqTACPviHz/zLKC+6UwjrPDPcPa1JtuuukXDVvBjS3DjDi1cUa0/UJGREipvNT6SzXr1lkgoIT0bV8Ig8fsjIzlNhb8BrOM+IBagH0bXQnnqxRqS4oG4vp8ZZmQr4WqSAxpDxtWPlw+601UTB4VeN160eS5Ph/WhF2c36kta7R5ly0oOj0M2Z307AvP/+PufZcmmUb6ZY/kqFFsP5hcYeLb6FwIDAQAB",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "http://127.0.0.1:9000/*",
+    "http://127.0.0.1:9001/*",
+    "http://127.0.0.1:9002/*",
+    "http://127.0.0.1:9003/*",
+    "http://127.0.0.1:9004/*",
+    "http://127.0.0.1:9005/*",
+    "http://127.0.0.1:9006/*",
+    "http://127.0.0.1:9007/*",
+    "http://127.0.0.1:9008/*",
+    "http://127.0.0.1:9009/*"
+  ],
+  "web_accessible_resources": [{
+    "resources": ["bridge.html", "bridge.js"],
+    "matches": ["http://*/*", "https://*/*"]
+  }],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ESCPost",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  }
+}

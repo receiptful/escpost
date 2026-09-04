@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "ESCPost Raw Printing",
+  "description": "Send raw ESC/POS print jobs through the local ESCPost daemon.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage", "activeTab", "scripting"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": [
+    "http://127.0.0.1:9000/*",
+    "http://127.0.0.1:9001/*",
+    "http://127.0.0.1:9002/*",
+    "http://127.0.0.1:9003/*",
+    "http://127.0.0.1:9004/*",
+    "http://127.0.0.1:9005/*",
+    "http://127.0.0.1:9006/*",
+    "http://127.0.0.1:9007/*",
+    "http://127.0.0.1:9008/*",
+    "http://127.0.0.1:9009/*"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "escpost@receiptful.io",
+      "strict_min_version": "121.0"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ESCPost",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+x-browser-extension-tool: &browser-extension-tool
+  image: oven/bun:1.4.0
+  network_mode: host
+  working_dir: /workspace/browser-extension
+  user: "0:0"
+  volumes:
+    - ..:/workspace
+    - browser-extension-node-modules:/workspace/browser-extension/node_modules
+
+services:
+  browser-extension-build:
+    <<: *browser-extension-tool
+    profiles: [browser-extension-tools]
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
+
+  browser-extension-test:
+    <<: *browser-extension-tool
+    profiles: [browser-extension-tools]
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run typecheck && bun run test"]
+
+volumes:
+  browser-extension-node-modules:
