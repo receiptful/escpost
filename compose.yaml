@@ -18,7 +18,7 @@ x-frontend-service: &frontend-service
   network_mode: host
   working_dir: /workspace/crates/escpost/frontend
   user: "0:0"
-  entrypoint: /workspace/scripts/frontend-entrypoint
+  entrypoint: /workspace/scripts/frontend-docker-entrypoint.sh
   volumes:
     - .:/workspace
     - frontend-node-modules:/workspace/crates/escpost/frontend/node_modules

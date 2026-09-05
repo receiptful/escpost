@@ -3,6 +3,7 @@ x-browser-extension-tool: &browser-extension-tool
   network_mode: host
   user: "0:0"
   working_dir: /workspace
+  entrypoint: /workspace/scripts/docker-entrypoint.sh
   volumes:
     - .:/workspace
     - node-modules:/workspace/node_modules
