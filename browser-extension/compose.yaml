@@ -1,38 +1,21 @@
-x-javascript-tool: &javascript-tool
+x-browser-extension-tool: &browser-extension-tool
   image: oven/bun:1.4.0
   network_mode: host
   user: "0:0"
+  working_dir: /workspace
   volumes:
-    - ..:/workspace
-    - javascript-sdk-node-modules:/workspace/sdks/javascript/node_modules
-    - browser-extension-node-modules:/workspace/browser-extension/node_modules
+    - .:/workspace
+    - node-modules:/workspace/node_modules
 
 services:
-  javascript-sdk-build:
-    <<: *javascript-tool
-    profiles: [browser-extension-tools]
-    working_dir: /workspace/sdks/javascript
-    command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
-
-  javascript-sdk-test:
-    <<: *javascript-tool
-    profiles: [browser-extension-tools]
-    working_dir: /workspace/sdks/javascript
-    command: ["sh", "-c", "bun install --frozen-lockfile && bun run test && bun run typecheck && bun run build"]
-
   browser-extension-build:
-    <<: *javascript-tool
+    <<: *browser-extension-tool
     profiles: [browser-extension-tools]
-    working_dir: /workspace/browser-extension
     command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
 
   browser-extension-test:
-    <<: *javascript-tool
+    <<: *browser-extension-tool
     profiles: [browser-extension-tools]
-    working_dir: /workspace/browser-extension
-    depends_on:
-      javascript-sdk-build:
-        condition: service_completed_successfully
     command: ["sh", "-c", "bun install --frozen-lockfile && bun run typecheck && bun run test"]
 
   browser-extension-pages:
@@ -42,13 +25,19 @@ services:
     working_dir: /workspace
     volumes:
       - ..:/workspace:ro
-    depends_on:
-      javascript-sdk-build:
-        condition: service_completed_successfully
-      browser-extension-build:
-        condition: service_completed_successfully
-    command: ["python", "-m", "http.server", "8081", "--bind", "127.0.0.1"]
+    command:
+      - sh
+      - -c
+      - |
+        test -f /workspace/sdks/javascript/dist/index.js || {
+          echo "Missing sdks/javascript/dist/index.js; run: just javascript-sdk-build" >&2
+          exit 1
+        }
+        test -f /workspace/browser-extension/dist/chrome/manifest.json || {
+          echo "Missing browser-extension/dist/chrome/manifest.json; run: just browser-extension-build" >&2
+          exit 1
+        }
+        exec python -m http.server 8081 --bind 127.0.0.1
 
 volumes:
-  javascript-sdk-node-modules:
-  browser-extension-node-modules:
+  node-modules:

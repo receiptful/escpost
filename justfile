@@ -33,6 +33,14 @@ run *args:
 dev: frontend-install
     scripts/native-dev
 
+# Build browser-extension/dist/{chrome,firefox} through its local Compose stack.
+browser-extension-build:
+    docker compose -f browser-extension/compose.yaml run --rm browser-extension-build
+
+# Build sdks/javascript/dist through its local Compose stack.
+javascript-sdk-build:
+    docker compose -f sdks/javascript/compose.yaml run --rm build
+
 # --- Utilities ---
 
 # Clear the shared Docker Cargo build cache.

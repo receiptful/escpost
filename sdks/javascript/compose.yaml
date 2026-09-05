@@ -1,0 +1,22 @@
+x-javascript-sdk-tool: &javascript-sdk-tool
+  image: oven/bun:1.4.0
+  network_mode: host
+  user: "0:0"
+  working_dir: /workspace
+  volumes:
+    - .:/workspace
+    - node-modules:/workspace/node_modules
+
+services:
+  build:
+    <<: *javascript-sdk-tool
+    profiles: [javascript-sdk-tools]
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run build"]
+
+  test:
+    <<: *javascript-sdk-tool
+    profiles: [javascript-sdk-tools]
+    command: ["sh", "-c", "bun install --frozen-lockfile && bun run test && bun run typecheck && bun run build"]
+
+volumes:
+  node-modules:

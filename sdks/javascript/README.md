@@ -20,6 +20,18 @@ Then import the named `escpost` client:
 import { escpost } from "@receiptful/escpost";
 ```
 
+## Development
+
+The SDK owns its build and test tooling. From the repository root, run:
+
+```bash
+docker compose -f sdks/javascript/compose.yaml run --rm test
+docker compose -f sdks/javascript/compose.yaml run --rm build
+```
+
+The build writes the publishable package to `sdks/javascript/dist/`. The root
+shortcut for that build is `just javascript-sdk-build`.
+
 The local ESCPost daemon must be serving its API. Start the API without the
 embedded web application when the browser application provides its own UI:
 

@@ -3,13 +3,11 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { Window } from "happy-dom";
 
-vi.mock("../../sdks/javascript/dist/index.js", () => ({ escpost: undefined }));
-
 const testWindow = new Window();
 Object.assign(globalThis, { window: testWindow, document: testWindow.document, Event: testWindow.Event });
 
 // @ts-expect-error The manual page stays a plain browser module for static hosting.
-const { startSdkPage } = await import("../dev/sdk-page/app.js");
+const { startSdkPage } = await import("../dev/sdk-page/page.js");
 
 type Snapshot = {
   updatedAt: string;
