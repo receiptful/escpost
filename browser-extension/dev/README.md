@@ -5,10 +5,8 @@ The extension-local Compose file provides repeatable build, test, and static-pag
 From the repository root, use these non-interactive commands:
 
 ```bash
-docker compose -f browser-extension/compose.yaml \
-  run --rm browser-extension-test
-docker compose -f browser-extension/compose.yaml \
-  run --rm browser-extension-build
+just browser-extension test
+just browser-extension build
 ```
 
 ## Manual SDK raw-print path
@@ -19,11 +17,11 @@ the static page:
 ```bash
 docker compose up escpost
 just javascript-sdk-build
-just browser-extension-build
-docker compose -f browser-extension/compose.yaml up browser-extension-pages
+just browser-extension build
+docker compose -f browser-extension/compose.yaml up pages
 ```
 
-`browser-extension-pages` only hosts the already-built artifacts. It exits with
+`pages` only hosts the already-built artifacts. It exits with
 the missing build command when either package has not been built.
 
 In Chrome, load `browser-extension/dist/chrome/` as an unpacked extension. Open

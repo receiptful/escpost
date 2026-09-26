@@ -60,8 +60,8 @@ points, popup wiring, and manifests differ.
 From the repository root:
 
 ```bash
-docker compose -f browser-extension/compose.yaml run --rm browser-extension-test
-docker compose -f browser-extension/compose.yaml run --rm browser-extension-build
+just browser-extension test
+just browser-extension build
 ```
 
 The build produces installable extensions under `browser-extension/dist/chrome/`

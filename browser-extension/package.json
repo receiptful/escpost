@@ -8,6 +8,7 @@
     "build": "rm -rf dist && bun run build:chrome && bun run build:firefox",
     "build:chrome": "ESCPOST_BROWSER=chrome ESCPOST_ENTRY=bridge vite build && ESCPOST_BROWSER=chrome ESCPOST_ENTRY=popup vite build && node scripts/build-manifest.mjs chrome",
     "build:firefox": "ESCPOST_BROWSER=firefox ESCPOST_ENTRY=background vite build && ESCPOST_BROWSER=firefox ESCPOST_ENTRY=relay vite build && ESCPOST_BROWSER=firefox ESCPOST_ENTRY=popup vite build && node scripts/build-manifest.mjs firefox",
+    "package": "bun run build:chrome && node scripts/package-chrome.mjs",
     "test": "bun run build && vitest run",
     "typecheck": "tsc --noEmit"
   },

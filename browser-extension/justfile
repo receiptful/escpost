@@ -1,0 +1,17 @@
+# Browser extension workflows. Every recipe runs in the local Compose stack.
+
+# List available recipes.
+default:
+    @just --list
+
+# Build dist/chrome and dist/firefox.
+build:
+    docker compose run --rm build
+
+# Check the types and run the test suite.
+test:
+    docker compose run --rm test
+
+# Build dist/escpost-chrome.zip, the archive for the Chrome Web Store.
+package:
+    docker compose run --rm package
