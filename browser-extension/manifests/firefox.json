@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ESCPost Raw Printing",
+  "name": "ESCPost",
   "description": "Send raw ESC/POS print jobs through the local ESCPost daemon.",
   "icons": {
     "16": "icons/icon-16.png",
