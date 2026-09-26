@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ESCPost",
-  "description": "Send raw ESC/POS print jobs through the local ESCPost daemon.",
+  "name": "ESCPost Thermal Printer",
+  "description": "Print receipts and labels to your thermal printer directly from your browser",
   "minimum_chrome_version": "114",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtVqSL0gEcqcAOAyA9eo5BWflIIDg8zQdqSmY6Ifp47hH/bDnhH7wEwH3US5YXzogfuq5T/PCnEFURWFpIcGqTZ8Pfa5hIpKNUM0MErKpkSRRHy4yFA+XCwnEsXMXXqTACPviHz/zLKC+6UwjrPDPcPa1JtuuukXDVvBjS3DjDi1cUa0/UJGREipvNT6SzXr1lkgoIT0bV8Ig8fsjIzlNhb8BrOM+IBagH0bXQnnqxRqS4oG4vp8ZZmQr4WqSAxpDxtWPlw+601UTB4VeN160eS5Ph/WhF2c36kta7R5ly0oOj0M2Z307AvP/+PufZcmmUb6ZY/kqFFsP5hcYeLb6FwIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkRh8zdbBtZGxEmQ5ED0Np4W2kKUFPr5a3WDR9Bm3u6j8cUG0EtAY/dxc7vr/7NnpPHfztkeO5zHWBxQfbQrX5u1SBT38r9OPGHAqL2eMPAxZe3NXUO8kN2z5WW7llSmvsWJA6CWdgMeNxl99shKmbKwfOzSyPhPiJyJu5oG3rItw96H1fRMj+a1GE/HqCbw79LYCi7Tj99wPKOWhEORonSfcwpvgQcVqRi2na2t4sftlRsHXTVLgob5WmP+MKCh0da4wEnxY8GRKL+S64fpHBDXYdepm1x2niCZ6UY16XUDMbj3qXIXVlfloU4kh+Q3plejBxAAO29x+K4u7oa4AOwIDAQAB",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

@@ -63,7 +63,7 @@ test("the default SDK client uses the Chrome iframe bridge", async () => {
   const request = frameWindow.postMessage.mock.calls[0]?.[0] as { id: number };
   receive?.({
     source: frameWindow,
-    origin: "chrome-extension://gdflkakcdpkllfhndncimkpfeomfccia",
+    origin: "chrome-extension://npcieienmnjficdkdaabkcnfmfalbahl",
     data: { source: "escpost-extension", id: request.id, ok: true, data: true },
   } as unknown as MessageEvent);
 

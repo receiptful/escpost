@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "ESCPost",
-  "description": "Send raw ESC/POS print jobs through the local ESCPost daemon.",
+  "name": "ESCPost Thermal Printer",
+  "description": "Print receipts and labels to your thermal printer directly from your browser",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

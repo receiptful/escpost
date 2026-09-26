@@ -30,7 +30,14 @@ test("renders the raw popup controls without printers or unrelated actions", () 
   expect(main.textContent).toContain("escpost is running");
   expect(main.querySelector<HTMLButtonElement>("#permission-action")?.textContent).toBe("Remove access");
   expect(main.querySelectorAll("button")).toHaveLength(1);
-  expect(main.textContent).not.toMatch(/printer|settings|account|quota/i);
+
+  // The heading and the lede carry the product name, thus the guard reads the
+  // controls and the status rows only.
+  const controls = Array.from(main.children)
+    .filter((child) => child.id !== "popup-title" && !child.classList.contains("lede"))
+    .map((child) => child.textContent)
+    .join("");
+  expect(controls).not.toMatch(/printer|settings|account|quota/i);
 });
 
 test("uses DOM text nodes for page-derived origin and error content", () => {

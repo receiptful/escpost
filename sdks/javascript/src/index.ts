@@ -26,7 +26,7 @@ export type {
 const healthTimeoutMs = 2_000;
 const listTimeoutMs = 30_000;
 const printTimeoutMs = 20_000;
-const chromeExtensionId = "gdflkakcdpkllfhndncimkpfeomfccia";
+const chromeExtensionId = "npcieienmnjficdkdaabkcnfmfalbahl";
 
 type WireConnection =
   | {

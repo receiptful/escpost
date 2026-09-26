@@ -1,9 +1,9 @@
 import type { PopupView } from "../popup/model";
 
 export function renderPopup(main: HTMLElement, view: PopupView, onPrimaryAction: () => void): void {
-  const heading = element("h1", "ESCPost");
+  const heading = element("h1", "ESCPost Thermal Printer");
   heading.id = "popup-title";
-  const description = element("p", "Raw printing extension");
+  const description = element("p", "Receipts and labels, straight from your browser");
   description.className = "lede";
 
   const statuses = element("dl");
