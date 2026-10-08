@@ -1,6 +1,6 @@
-# @receiptful/escpost
+# @receiptful.io/escpost
 
-`@receiptful/escpost` provides a small browser-side API for discovering configured
+`@receiptful.io/escpost` provides a small browser-side API for discovering configured
 printers and sending raw ESC/POS bytes to one of them.
 
 This package is browser-only. It does not currently provide a Node.js transport
@@ -26,16 +26,16 @@ ESCPost binary.
 Install the package with your JavaScript package manager:
 
 ```bash
-npm install @receiptful/escpost
-pnpm add @receiptful/escpost
-yarn add @receiptful/escpost
-bun add @receiptful/escpost
+npm install @receiptful.io/escpost
+pnpm add @receiptful.io/escpost
+yarn add @receiptful.io/escpost
+bun add @receiptful.io/escpost
 ```
 
 Then import the named `escpost` client:
 
 ```ts
-import { escpost } from "@receiptful/escpost";
+import { escpost } from "@receiptful.io/escpost";
 ```
 
 ## Development
@@ -121,7 +121,7 @@ Operations may reject with `EscpostError`, whose `code` identifies the failure:
 | `PROTOCOL_MISMATCH` | A response did not match the SDK protocol. |
 
 ```ts
-import { EscpostError, escpost } from "@receiptful/escpost";
+import { EscpostError, escpost } from "@receiptful.io/escpost";
 
 try {
   await escpost.print({ printer: "counter", data: receiptBytes });

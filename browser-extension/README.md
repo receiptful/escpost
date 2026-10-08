@@ -1,6 +1,6 @@
 # Receiptful ESCPost browser extension
 
-The browser extension connects websites using `@receiptful/escpost` to the
+The browser extension connects websites using `@receiptful.io/escpost` to the
 ESCPost daemon running on the same computer. Websites use the SDK API; they do
 not call the daemon or depend on browser-extension internals.
 
@@ -45,7 +45,7 @@ stops its live printer connections.
 
 ### Shared SDK and extension core
 
-`@receiptful/escpost` selects the Chrome iframe bridge on Chromium browsers and
+`@receiptful.io/escpost` selects the Chrome iframe bridge on Chromium browsers and
 otherwise uses the Firefox relay protocol. Callers use the same
 `isAvailable()`, `printers.list()`, `printers.subscribe()`, and `print()` API in
 both browsers.

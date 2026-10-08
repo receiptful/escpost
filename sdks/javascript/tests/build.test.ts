@@ -17,6 +17,7 @@ test("the package publishes publicly from the canonical repository", () => {
     readFileSync("package.json", "utf8"),
   );
 
+  expect(manifest.name).toBe("@receiptful.io/escpost");
   expect(manifest.publishConfig).toEqual({ access: "public" });
   expect(manifest.repository).toEqual({
     type: "git",

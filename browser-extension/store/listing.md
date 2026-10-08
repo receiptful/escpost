@@ -31,7 +31,7 @@ WHO IT IS FOR
 
 Anyone whose counter runs on a web app: shops, restaurants, cafés, bakeries, market stalls, pharmacies, workshops, warehouses. If your point of sale, order system or label tool runs in a browser tab, it can print with ESCPost.
 
-If you build that software, the page-side library is @receiptful/escpost. Two lines of code print a receipt, and printers can be listed and watched live.
+If you build that software, the page-side library is @receiptful.io/escpost. Two lines of code print a receipt, and printers can be listed and watched live.
 
 HOW IT WORKS
 

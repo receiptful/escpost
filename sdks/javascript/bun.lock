@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@receiptful/escpost",
+      "name": "@receiptful.io/escpost",
       "devDependencies": {
         "happy-dom": "20.0.0",
         "typescript": "5.9.2",

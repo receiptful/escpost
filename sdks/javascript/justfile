@@ -12,11 +12,11 @@ build:
 test:
     docker compose run --rm test
 
-# Publish the exact SDK stored in a release tag. With no argument, use the
-# version in the current package.json; pass an older version to publish it
-# after development has moved on.
-[doc("Publish the SDK from its release tag to npm.")]
-publish version='':
+# Publish an exact SDK revision. With no arguments, use the package version and
+# its v-prefixed release tag. An explicit revision supports exceptional
+# package-only corrections without moving the product release tag.
+[doc("Publish the SDK from an exact Git revision to npm.")]
+publish version='' source_ref='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -26,7 +26,14 @@ publish version='':
     fi
 
     repository=$(git rev-parse --show-toplevel)
-    tag="v${requested_version}"
+    source_ref={{quote(source_ref)}}
+    require_remote_tag=false
+    if [[ -z "$source_ref" ]]; then
+      source_ref="v${requested_version}"
+      require_remote_tag=true
+    elif git -C "$repository" show-ref --verify --quiet "refs/tags/${source_ref}"; then
+      require_remote_tag=true
+    fi
 
     if [[ -n "$(git -C "$repository" status --porcelain --untracked-files=all)" ]]; then
       echo "Refusing to publish from a dirty worktree." >&2
@@ -48,31 +55,39 @@ publish version='':
       exit 1
     fi
 
-    tag_ref="refs/tags/${tag}"
-    local_tag=$(git -C "$repository" rev-parse --verify "$tag_ref" 2>/dev/null) || {
-      echo "Refusing to publish: local tag $tag does not exist." >&2
+    if [[ "$require_remote_tag" == true ]]; then
+      tag_ref="refs/tags/${source_ref}"
+      local_tag=$(git -C "$repository" rev-parse --verify "$tag_ref")
+      remote_tag=$(git -C "$repository" ls-remote --refs origin "$tag_ref" | awk 'NR == 1 { print $1 }')
+      if [[ -z "$remote_tag" ]]; then
+        echo "Refusing to publish: tag $source_ref is not on origin." >&2
+        exit 1
+      fi
+      if [[ "$local_tag" != "$remote_tag" ]]; then
+        echo "Refusing to publish: local and origin tags for $source_ref differ." >&2
+        exit 1
+      fi
+    fi
+
+    source_commit=$(git -C "$repository" rev-parse --verify "${source_ref}^{commit}" 2>/dev/null) || {
+      echo "Refusing to publish: Git revision $source_ref does not exist." >&2
       exit 1
     }
-    remote_tag=$(git -C "$repository" ls-remote --refs origin "$tag_ref" | awk 'NR == 1 { print $1 }')
-    if [[ -z "$remote_tag" ]]; then
-      echo "Refusing to publish: tag $tag is not on origin." >&2
-      exit 1
-    fi
-    if [[ "$local_tag" != "$remote_tag" ]]; then
-      echo "Refusing to publish: local and origin tags for $tag differ." >&2
+    if ! git -C "$repository" merge-base --is-ancestor "$source_commit" origin/main; then
+      echo "Refusing to publish: $source_ref is not reachable from origin/main." >&2
       exit 1
     fi
 
     release_root=$(mktemp -d)
     trap 'rm -rf "$release_root"' EXIT
-    git -C "$repository" archive "$tag" sdks/javascript | tar -x -C "$release_root"
+    git -C "$repository" archive "$source_commit" sdks/javascript | tar -x -C "$release_root"
     release_sdk="$release_root/sdks/javascript"
     cd "$release_sdk"
 
     package_name=$(bun -p "require('./package.json').name")
     tagged_version=$(bun -p "require('./package.json').version")
     if [[ "$tagged_version" != "$requested_version" ]]; then
-      echo "Refusing to publish: $tag contains $package_name@$tagged_version, not $requested_version." >&2
+      echo "Refusing to publish: $source_ref contains $package_name@$tagged_version, not $requested_version." >&2
       exit 1
     fi
 
@@ -87,7 +102,7 @@ publish version='':
     bun run typecheck
     npm publish --dry-run --access public
 
-    printf '\nPublish %s@%s from %s to npm? [y/N] ' "$package_name" "$requested_version" "$tag"
+    printf '\nPublish %s@%s from %s to npm? [y/N] ' "$package_name" "$requested_version" "$source_ref"
     read -r reply
     case "$reply" in
       [yY]|[yY][eE][sS]) ;;
