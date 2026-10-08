@@ -1,8 +1,11 @@
 # Native development workflows and repository maintenance utilities. Container
 # development uses Docker Compose directly; see README.md.
 
-# Browser extension recipes: `just browser-extension --list`.
+# Browser extension recipes: `just --list browser-extension`.
 mod browser-extension
+
+# JavaScript SDK recipes: `just --list javascript-sdk`.
+mod javascript-sdk 'sdks/javascript'
 
 # List available recipes.
 default:
@@ -35,10 +38,6 @@ run *args:
 # Run the native development stack, with Rust auto-restart when Watchexec exists.
 dev: frontend-install
     scripts/native-dev
-
-# Build sdks/javascript/dist through its local Compose stack.
-javascript-sdk-build:
-    docker compose -f sdks/javascript/compose.yaml run --rm build
 
 # --- Utilities ---
 

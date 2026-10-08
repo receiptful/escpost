@@ -1,0 +1,97 @@
+# JavaScript SDK workflows.
+
+# List available recipes.
+default:
+    @just --list
+
+# Build dist through the local Compose stack.
+build:
+    docker compose run --rm build
+
+# Check the SDK through the local Compose stack.
+test:
+    docker compose run --rm test
+
+# Publish the exact SDK stored in a release tag. With no argument, use the
+# version in the current package.json; pass an older version to publish it
+# after development has moved on.
+[doc("Publish the SDK from its release tag to npm.")]
+publish version='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    requested_version={{quote(version)}}
+    if [[ -z "$requested_version" ]]; then
+      requested_version=$(bun -p "require('./package.json').version")
+    fi
+
+    repository=$(git rev-parse --show-toplevel)
+    tag="v${requested_version}"
+
+    if [[ -n "$(git -C "$repository" status --porcelain --untracked-files=all)" ]]; then
+      echo "Refusing to publish from a dirty worktree." >&2
+      git -C "$repository" status --short >&2
+      exit 1
+    fi
+
+    branch=$(git -C "$repository" branch --show-current)
+    if [[ "$branch" != main ]]; then
+      echo "Refusing to publish from '$branch'; releases are published from main." >&2
+      exit 1
+    fi
+
+    git -C "$repository" fetch --quiet origin
+    head_commit=$(git -C "$repository" rev-parse HEAD)
+    remote_main=$(git -C "$repository" rev-parse origin/main)
+    if [[ "$head_commit" != "$remote_main" ]]; then
+      echo "Refusing to publish: main is not synchronized with origin/main." >&2
+      exit 1
+    fi
+
+    tag_ref="refs/tags/${tag}"
+    local_tag=$(git -C "$repository" rev-parse --verify "$tag_ref" 2>/dev/null) || {
+      echo "Refusing to publish: local tag $tag does not exist." >&2
+      exit 1
+    }
+    remote_tag=$(git -C "$repository" ls-remote --refs origin "$tag_ref" | awk 'NR == 1 { print $1 }')
+    if [[ -z "$remote_tag" ]]; then
+      echo "Refusing to publish: tag $tag is not on origin." >&2
+      exit 1
+    fi
+    if [[ "$local_tag" != "$remote_tag" ]]; then
+      echo "Refusing to publish: local and origin tags for $tag differ." >&2
+      exit 1
+    fi
+
+    release_root=$(mktemp -d)
+    trap 'rm -rf "$release_root"' EXIT
+    git -C "$repository" archive "$tag" sdks/javascript | tar -x -C "$release_root"
+    release_sdk="$release_root/sdks/javascript"
+    cd "$release_sdk"
+
+    package_name=$(bun -p "require('./package.json').name")
+    tagged_version=$(bun -p "require('./package.json').version")
+    if [[ "$tagged_version" != "$requested_version" ]]; then
+      echo "Refusing to publish: $tag contains $package_name@$tagged_version, not $requested_version." >&2
+      exit 1
+    fi
+
+    published_version=$(npm view "$package_name@$requested_version" version 2>/dev/null || true)
+    if [[ "$published_version" == "$requested_version" ]]; then
+      echo "$package_name@$requested_version is already on npm, skipping"
+      exit 0
+    fi
+
+    bun install --frozen-lockfile
+    bun run test
+    bun run typecheck
+    npm publish --dry-run --access public
+
+    printf '\nPublish %s@%s from %s to npm? [y/N] ' "$package_name" "$requested_version" "$tag"
+    read -r reply
+    case "$reply" in
+      [yY]|[yY][eE][sS]) ;;
+      *) echo "Aborted."; exit 1 ;;
+    esac
+
+    npm publish --access public
