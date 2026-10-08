@@ -6,7 +6,6 @@ test("both browser manifests use the extension package version", () => {
   const chromeVersion = JSON.parse(readFileSync("dist/chrome/manifest.json", "utf8")).version;
   const firefoxVersion = JSON.parse(readFileSync("dist/firefox/manifest.json", "utf8")).version;
 
-  expect(packageVersion).toBe("0.1.0");
   expect(chromeVersion).toBe(packageVersion);
   expect(firefoxVersion).toBe(packageVersion);
 });

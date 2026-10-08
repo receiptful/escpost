@@ -1,11 +1,30 @@
 {
   "name": "@receiptful/escpost",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Browser SDK for ESCPost raw printing.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/receiptful/escpost.git",
+    "directory": "sdks/javascript"
+  },
+  "homepage": "https://github.com/receiptful/escpost/tree/main/sdks/javascript#readme",
+  "bugs": {
+    "url": "https://github.com/receiptful/escpost/issues"
+  },
+  "keywords": [
+    "escpos",
+    "receipt",
+    "thermal-printer",
+    "browser",
+    "printing"
+  ],
   "type": "module",
   "packageManager": "bun@1.4.0",
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -14,6 +33,7 @@
   },
   "scripts": {
     "build": "vite build && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/index.ts",
+    "prepack": "bun run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

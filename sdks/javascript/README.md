@@ -3,6 +3,24 @@
 `@receiptful/escpost` provides a small browser-side API for discovering configured
 printers and sending raw ESC/POS bytes to one of them.
 
+This package is browser-only. It does not currently provide a Node.js transport
+for backend applications.
+
+## Requirements
+
+Printing goes through the
+[Receiptful ESCPost browser extension](https://github.com/receiptful/escpost/tree/main/browser-extension),
+which connects the website to an ESCPost binary running on the same computer.
+Before using the SDK:
+
+1. Install the ESCPost binary and start its local API.
+2. Install the matching browser extension.
+3. Use the extension popup to allow the website's exact origin.
+
+The extension manifests support Chrome 114 or newer and Firefox 121 or newer.
+Installing this npm package alone does not install the extension or start the
+ESCPost binary.
+
 ## Install
 
 Install the package with your JavaScript package manager:
@@ -32,7 +50,7 @@ docker compose -f sdks/javascript/compose.yaml run --rm build
 The build writes the publishable package to `sdks/javascript/dist/`. The root
 shortcut for that build is `just javascript-sdk-build`.
 
-The local ESCPost daemon must be serving its API. Start the API without the
+The local ESCPost binary must be serving its API. Start the API without the
 embedded web application when the browser application provides its own UI:
 
 ```bash

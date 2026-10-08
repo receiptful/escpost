@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import re
 import stat
@@ -11,6 +12,11 @@ from pathlib import Path
 
 VERSION = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
 DEPENDENCIES = ("escpost-profiles", "escpost-render")
+WORKSPACE_PACKAGES = ("escpost", "escpost-profiles", "escpost-python", "escpost-render")
+PACKAGE_MANIFESTS = (
+    (Path("sdks/javascript/package.json"), "@receiptful/escpost"),
+    (Path("browser-extension/package.json"), "escpost-browser-extension"),
+)
 
 
 def replace_once(text: str, pattern: str, version: str, description: str) -> str:
@@ -55,6 +61,53 @@ def updated_manifest(text: str, version: str) -> str:
     return text
 
 
+def updated_package_manifest(text: str, version: str, expected_name: str) -> str:
+    manifest = json.loads(text)
+    if manifest.get("name") != expected_name:
+        raise ValueError(f"expected package name {expected_name!r}")
+    current_version = manifest.get("version")
+    if not isinstance(current_version, str) or VERSION.fullmatch(current_version) is None:
+        raise ValueError(f"{expected_name} has no semantic version")
+    return replace_once(
+        text,
+        r'^(\s*"version"\s*:\s*")[^"]+(",?\s*)$',
+        version,
+        f"{expected_name} package version",
+    )
+
+
+def updated_lockfile(text: str, version: str) -> str:
+    lockfile = tomllib.loads(text)
+    packages = lockfile.get("package", [])
+    for package_name in WORKSPACE_PACKAGES:
+        matching = [package for package in packages if package.get("name") == package_name]
+        if len(matching) != 1:
+            raise ValueError(f"expected one {package_name} lockfile package, found {len(matching)}")
+        current_version = matching[0].get("version")
+        if not isinstance(current_version, str) or VERSION.fullmatch(current_version) is None:
+            raise ValueError(f"{package_name} has no semantic lockfile version")
+        text = replace_once(
+            text,
+            rf'^(\[\[package\]\]\nname = "{re.escape(package_name)}"\nversion = ")[^"]+(")',
+            version,
+            f"{package_name} lockfile version",
+        )
+    return text
+
+
+def release_updates(repository: Path, version: str) -> list[tuple[Path, str]]:
+    cargo_manifest = repository / "Cargo.toml"
+    cargo_lockfile = repository / "Cargo.lock"
+    updates = [
+        (cargo_manifest, updated_manifest(cargo_manifest.read_text(), version)),
+        (cargo_lockfile, updated_lockfile(cargo_lockfile.read_text(), version)),
+    ]
+    for relative_path, expected_name in PACKAGE_MANIFESTS:
+        path = repository / relative_path
+        updates.append((path, updated_package_manifest(path.read_text(), version, expected_name)))
+    return updates
+
+
 def write_atomically(path: Path, text: str) -> None:
     mode = stat.S_IMODE(path.stat().st_mode)
     descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
@@ -76,12 +129,13 @@ def main() -> int:
         print("usage: set-workspace-version <major.minor.patch>", file=sys.stderr)
         return 2
 
-    manifest_path = Path(__file__).resolve().parent.parent / "Cargo.toml"
+    repository = Path(__file__).resolve().parent.parent
     try:
-        text = updated_manifest(manifest_path.read_text(), sys.argv[1])
-        write_atomically(manifest_path, text)
+        updates = release_updates(repository, sys.argv[1])
+        for path, text in updates:
+            write_atomically(path, text)
     except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
-        print(f"could not set workspace version: {error}", file=sys.stderr)
+        print(f"could not set release version: {error}", file=sys.stderr)
         return 1
     return 0
 

@@ -46,8 +46,8 @@ javascript-sdk-build:
 docker-cargo-clean:
     docker compose run --rm --no-deps --entrypoint sh escpost -c 'find "$CARGO_TARGET_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
 
-# Set the lockstep workspace version and refresh Cargo.lock.
-[doc("Set every publishable Rust crate to one release version.")]
+# Set the lockstep product version and refresh Cargo.lock.
+[doc("Set the Rust workspace, browser SDK, and extension to one release version.")]
 set-version version:
     python3 scripts/set-workspace-version {{quote(version)}}
     cargo metadata --format-version 1 --no-deps > /dev/null
