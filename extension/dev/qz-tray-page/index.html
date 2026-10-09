@@ -1,0 +1,183 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>escpost against the real qz-tray.js</title>
+
+<!--
+  Captured before qz-tray.js evaluates. If ws-patch.js was injected at
+  document_start, WebSocket is already replaced here, which is the only moment
+  that is observable: qz-tray.js captures WebSocket when it loads, so a patch
+  arriving afterwards patches nothing.
+-->
+<script>
+  window.__escpostProbe = {
+    wsPatchedBeforeQzLoaded:
+      typeof WebSocket === "function" && WebSocket.CLOSED === 3 && WebSocket.name !== "WebSocket",
+    wsName: typeof WebSocket === "function" ? WebSocket.name : null,
+  };
+</script>
+
+<!--
+  The real client, unmodified, straight from vendor/. This page exists to run it
+  rather than our own shim: the shim serves a page with no qz-tray.js, and this
+  is the other case, the one a merchant cannot change.
+
+  qz-tray.js is QZ Industries' work under LGPL-2.1-only. It is served here for
+  local testing and is never built into anything shipped.
+-->
+<script src="../../vendor/qz-tray.js"></script>
+
+<style>
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 2rem; max-width: 62rem; }
+  h1 { font-size: 1.2rem; margin-bottom: .4rem; }
+  .lede { color: #555; max-width: 48rem; margin: 0 0 1.4rem; }
+  #summary { font-weight: bold; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: .25rem .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+  td.verdict { width: 4rem; font-weight: bold; }
+  .pass { color: #0a7d32; } .fail { color: #b3261e; } .skip { color: #8a8a8a; }
+  td.detail { color: #555; word-break: break-word; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    td { border-bottom-color: #333; }
+    .lede, td.detail { color: #aaa; }
+    .pass { color: #4ade80; } .fail { color: #f87171; } .skip { color: #999; }
+  }
+</style>
+
+<h1>escpost against the real qz-tray.js</h1>
+<p class="lede">
+  A till that ships QZ Tray's own client and cannot be changed. Nothing here is
+  escpost's shim: <code>qz</code> is QZ's, and escpost reaches it only by having
+  replaced <code>WebSocket</code> before this page loaded. Not shipped; nothing
+  here is bundled into the extension.
+</p>
+
+<button id="run">Re-run checks</button>
+
+<div id="summary">running…</div>
+<table id="results"></table>
+
+<script type="module">
+  const LOG = "[escpost]";
+  const table = document.querySelector("#results");
+  const summary = document.querySelector("#summary");
+
+  function record(id, verdict, detail) {
+    const row = table.insertRow();
+    row.insertCell().textContent = id;
+    const cell = row.insertCell();
+    cell.className = "verdict " + verdict.toLowerCase();
+    cell.textContent = verdict;
+    const detailCell = row.insertCell();
+    detailCell.className = "detail";
+    detailCell.textContent = detail ?? "";
+    console[verdict === "FAIL" ? "error" : "log"](LOG, verdict, id, detail ?? "");
+  }
+
+  async function check(id, fn) {
+    try {
+      record(id, "PASS", await fn());
+      return true;
+    } catch (error) {
+      record(id, "FAIL", error?.message ?? String(error));
+      return false;
+    }
+  }
+
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+
+  async function run() {
+    table.replaceChildren();
+    summary.textContent = "running…";
+
+    const probe = window.__escpostProbe;
+
+    await check("W1 WebSocket was replaced before qz-tray.js loaded", () => {
+      assert(probe.wsPatchedBeforeQzLoaded, "qz-tray.js captured the real WebSocket; the patch was too late");
+      return "WebSocket is " + probe.wsName;
+    });
+
+    const haveClient = typeof window.qz !== "undefined" && typeof qz.websocket?.connect === "function";
+    if (!haveClient) {
+      for (const id of ["W2", "W3", "W4", "W5", "W6", "W7"]) {
+        record(id, "SKIP", "qz-tray.js did not load");
+      }
+      finish();
+      return;
+    }
+
+    await check("W2 the client on this page is QZ's, not escpost's shim", () => {
+      // The shim installs only into a page with no qz, and steps aside when the
+      // real client evaluates. Its version constant differs from the client's.
+      assert(qz.version === "2.2.6", "got " + qz.version + "; 2.2.4 means the shim won, not the real client");
+      return "qz-tray.js " + qz.version;
+    });
+
+    await check("W3 the certificate handshake is answered without one", async () => {
+      qz.security.setCertificatePromise((resolve) => resolve("no-cert-needed"));
+      qz.security.setSignaturePromise(() => (resolve) => resolve(""));
+      if (qz.websocket.isActive()) await qz.websocket.disconnect();
+      await qz.websocket.connect();
+      assert(qz.websocket.isActive(), "connect resolved but the client says it is not active");
+      return "connected with no certificate and no signing";
+    });
+
+    await check("W4 escpost answers the version query the client parses", async () => {
+      const version = await qz.api.getVersion();
+      // 2.2.4 is the threshold of the last version-gated payload rewrite, so
+      // reporting it keeps the client sending data verbatim.
+      assert(version === "2.2.4", "escpost reported " + version + ", which re-enables payload rewrites");
+      return version;
+    });
+
+    let printers = [];
+    const found = await check("W5 printers.find reaches escpost", async () => {
+      const result = await qz.printers.find();
+      printers = Array.isArray(result) ? result : [result];
+      assert(printers.length > 0, "no printers configured; run `escpost printers add`");
+      return printers.join(", ");
+    });
+
+    if (!found) {
+      record("W6 raw ESC/POS print", "SKIP", "no printer to print to");
+      record("W7 HTML job refused", "SKIP", "no printer to print to");
+      finish();
+      return;
+    }
+
+    const target = (await qz.printers.getDefault().catch(() => null)) ?? printers[0];
+
+    await check("W6 raw ESC/POS print", async () => {
+      const config = qz.configs.create(target);
+      await qz.print(config, ["\x1b@\x1b!\x30 escpost\n\x1b!\x00via the real qz-tray.js\n\n\n\x1dV\x00"]);
+      return "printed to " + target;
+    });
+
+    await check("W7 HTML job refused with a pointer to @escpost/browser", async () => {
+      const config = qz.configs.create(target);
+      try {
+        await qz.print(config, [{ type: "pixel", format: "html", flavor: "plain", data: "<b>x</b>" }]);
+      } catch (error) {
+        const message = error?.message ?? String(error);
+        assert(/@escpost\/browser/.test(message), "refused, but not with the expected message: " + message);
+        return "refused as designed";
+      }
+      throw new Error("HTML was accepted; it should have been refused");
+    });
+
+    finish();
+  }
+
+  function finish() {
+    const rows = [...table.rows];
+    const count = (verdict) => rows.filter((row) => row.cells[1].textContent === verdict).length;
+    summary.textContent = `${count("PASS")} passed · ${count("FAIL")} failed · ${count("SKIP")} skipped`;
+    summary.className = count("FAIL") === 0 ? "pass" : "fail";
+    console.log(LOG, "=== done ===", summary.textContent);
+  }
+
+  document.querySelector("#run").onclick = run;
+  run();
+</script>

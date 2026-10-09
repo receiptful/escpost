@@ -1,0 +1,152 @@
+/*
+ * escpost's identity, applied to the extension.
+ *
+ * Every colour below is taken verbatim from escpost.dev's stylesheet, so the
+ * site and the extension cannot drift apart by being edited separately. Light
+ * mode is paper, dark mode is the machine, and teal is the one accent both
+ * share.
+ *
+ * No font is bundled. escpost.dev names Inter and ships no font file, falling
+ * back to the system stack, and an extension that fetches nothing is easier to
+ * justify to a store reviewer than one that carries 36KB for decoration.
+ * Sans is what a person reads; mono is reserved for what the machine said:
+ * printer ids, commands, byte counts.
+ */
+
+:root {
+  /* --- paper ------------------------------------------------------------ */
+  --ground: #f4f6f5;
+  --surface: #ffffff;
+  --surface-2: #eef2f1;
+  --ink: #091b36;
+  --ink-muted: #5c6d80;
+  --ink-faint: #6b7c8f;
+  --rule: #dbe2e5;
+  --rule-strong: #cbd5d8;
+
+  --accent: #00a99f;
+  --accent-ink: #007a73;
+  --accent-soft: #e3f7f4;
+
+  /* Status: teal when the path is clear, amber when it wants you, grey when
+     nothing is listening. Red is kept back for a job that actually failed. */
+  --ok: #007a73;
+  --ok-fill: #00a99f;
+  --ok-soft: #e3f7f4;
+  --warn: #7a4900;
+  --warn-fill: #a86b12;
+  --warn-soft: #f6eee1;
+  --out: #5c6d80;
+  --out-fill: #8496a6;
+  --out-soft: #e7ecee;
+  --mute: #5c6d80;
+  --mute-soft: #e7ecee;
+
+  --leader: 1px dotted #b9c6cc;
+  --perf: 1px dashed #c3d0d4;
+
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  /* The status glyphs are shapes, not type, and the mono stack above cannot be
+     relied on to carry them. */
+  --glyph: ui-monospace, "DejaVu Sans Mono", "Noto Sans Symbols 2", "Segoe UI Symbol", monospace;
+  --radius: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* --- machine -------------------------------------------------------- */
+    --ground: #071522;
+    --surface: #0b1d2d;
+    --surface-2: #0d2130;
+    --ink: #edf5f7;
+    --ink-muted: #9dafba;
+    --ink-faint: #8496a6;
+    --rule: #233848;
+    --rule-strong: #294353;
+
+    --accent: #21d5c6;
+    --accent-ink: #21d5c6;
+    --accent-soft: #0b3438;
+
+    --ok: #21d5c6;
+    --ok-fill: #21d5c6;
+    --ok-soft: #0b3438;
+    --warn: #f3c079;
+    --warn-fill: #d99b3f;
+    --warn-soft: #2b2519;
+    --out: #9dafba;
+    --out-fill: #5c7285;
+    --out-soft: #14293a;
+    --mute: #9dafba;
+    --mute-soft: #14293a;
+
+    --leader: 1px dotted #33505f;
+    --perf: 1px dashed #2b4553;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root { color-scheme: light dark; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- status pill: colour and form ---------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.pill-mark { font-family: var(--glyph); font-size: 8px; vertical-align: 1px; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.out { background: var(--out-soft); color: var(--out); }
+.pill.mute { background: var(--mute-soft); color: var(--mute); }
+
+/* ---------- allowance meter ---------- */
+.meter { height: 4px; border-radius: 1px; background: var(--rule); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--ok-fill); }
+.meter.warn > i { background: var(--warn-fill); }
+/* Exhausted is hatched, not merely a different colour, for the same reason the
+   pill carries a glyph: the bar has to read as blocked without reading as full. */
+.meter.out > i {
+  background: repeating-linear-gradient(135deg, var(--out-fill) 0 4px, var(--out-soft) 4px 8px);
+}
+
+/* ---------- notice strip ---------- */
+.strip {
+  border-left: 2px solid var(--warn-fill);
+  background: var(--warn-soft);
+  padding: 9px 11px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.strip.out { border-left-color: var(--out-fill); background: var(--out-soft); }
+
+/* ---------- the receipt's dotted leader ---------- */
+/* label ......... value. The rows already are receipt lines; this is the device
+   the design system has for exactly that shape. */
+.leader {
+  flex: 1;
+  border-bottom: var(--leader);
+  margin: 0 0.55em;
+  transform: translateY(-0.35em);
+}
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }

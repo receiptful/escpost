@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist-tsc",
+    "rootDir": "src",
+    "types": [
+      "chrome"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../packages/browser"
+    }
+  ]
+}
