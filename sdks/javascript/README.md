@@ -95,6 +95,20 @@ Each printer includes its configured `name`, `transport`, `availability`,
 optional `profile`, and connection details. Pass the configured printer name
 exactly to `print()`; the SDK does not derive another identifier.
 
+## Read printer profiles
+
+`profiles.list()` returns ESCPost's printer profile catalog. A printer's
+`profile` is the `id` of one of these profiles, or `null` when none is set
+(`escpost printers add --profile`). Each profile gives the printer's real
+geometry: `printableWidthDots` is the width the head can print, and `dpiX` and
+`dpiY` its resolution.
+
+```ts
+const [{ printers }, { profiles }] = await Promise.all([escpost.printers.list(), escpost.profiles.list()]);
+const profile = profiles.find(({ id }) => id === printers[0].profile);
+const width = profile?.printableWidthDots ?? 384;
+```
+
 ## Print raw bytes
 
 `print()` sends a raw print request and resolves with a `jobId`. `data` accepts
@@ -134,7 +148,12 @@ offline, and a page that prints no PDF never downloads it.
 `qz.security` calls are accepted and ignored, so no certificate is needed and no
 popup appears. Raw jobs are sent as they are, with plain text encoded in the
 config's `encoding`, as QZ Tray does. Image, HTML and PDF jobs are drawn in the
-browser and printed as an ESC/POS image. QZ Tray features that ESCPost does not
+browser and printed as an ESC/POS image; a raw one that asks for another printer
+language, such as ZPL or EPL, rejects with `UNSUPPORTED_FORMAT`. They are drawn
+for the printer's profile: its printable width and resolution. Give each
+printer its profile (`escpost printers add --profile`); a printer without one
+is drawn for a 58 mm roll at 203 dpi (384 dots wide), or for the paper `size`
+the config gives, so nothing prints past a narrower head than assumed. QZ Tray features that ESCPost does not
 offer (`qz.serial`, `qz.usb`, `qz.hid`, `qz.file`, `qz.socket` and printer
 status) reject with `UNSUPPORTED_FEATURE`.
 

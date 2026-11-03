@@ -37,6 +37,16 @@ const inventory = {
   ],
 };
 
+const profileCatalog = {
+  profiles: [
+    {
+      id: "TM-T88III", vendor: "Epson", model: "TM-T88III", source: "calibrated",
+      paper_width_mm: 80, printable_width_mm: 72.2, printable_width_dots: 512, dpi_x: 180, dpi_y: 180,
+      full_cut: true, partial_cut: true, barcode_function_a: true, barcode_function_b: true, qr_code: false,
+    },
+  ],
+};
+
 function response(body: unknown, status = 200): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), { status });
 }
@@ -107,6 +117,31 @@ test("does not rediscover after a list 4xx response", async () => {
   await expect(daemon.list()).rejects.toMatchObject({ code: "DAEMON_UNAVAILABLE" });
   expect(calls).toEqual(["http://127.0.0.1:9003/api/printers/list"]);
   await expect(ports.read()).resolves.toBe("http://127.0.0.1:9003");
+});
+
+test("returns the profile catalog with each profile's printable geometry", async () => {
+  // Break caught: without the catalog, the QZ shim cannot size a print for the
+  // printer's real width and resolution, and falls back to guessing.
+  const calls: string[] = [];
+  const { client: daemon, ports } = client(async (input) => {
+    calls.push(String(input));
+    return response(profileCatalog);
+  });
+  await ports.remember("http://127.0.0.1:9000");
+
+  await expect(daemon.profiles()).resolves.toEqual(profileCatalog);
+  expect(calls).toEqual(["http://127.0.0.1:9000/api/profiles/list"]);
+});
+
+test("rejects a profile catalog whose geometry is missing or not a positive whole number", async () => {
+  // Break caught: passing a malformed width or resolution on lets a page draw
+  // at zero or fractional dots instead of failing clearly.
+  const { printable_width_dots: _dropped, ...withoutWidth } = profileCatalog.profiles[0]!;
+  for (const profile of [withoutWidth, { ...profileCatalog.profiles[0], dpi_x: 0 }]) {
+    const { client: daemon, ports } = client(async () => response({ profiles: [profile] }));
+    await ports.remember("http://127.0.0.1:9000");
+    await expect(daemon.profiles()).rejects.toMatchObject({ code: "DAEMON_UNAVAILABLE" });
+  }
 });
 
 test("invalidates a cached port after a non-success health response without retrying", async () => {

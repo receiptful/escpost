@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { printableWidth, rasterToEscpos } from "../src/qz/render";
+import {
+  assertEscposLanguage,
+  imageDrawWidth,
+  pdfScale,
+  pixelDotsPerCssPixel,
+  printableWidth,
+  printerRows,
+  rasterToEscpos,
+  renderElements,
+  targetWidth,
+} from "../src/qz/render";
 
 /** RGBA pixels from rows of "#" (black) and "." (white). */
 function pixels(rows: string[]): Uint8ClampedArray {
@@ -59,17 +69,100 @@ describe("rasterToEscpos", () => {
   });
 });
 
-describe("printableWidth", () => {
-  it("is 72 mm (576 dots) when the page gives no paper size, the usual 80 mm roll", () => {
-    expect(printableWidth({})).toBe(576);
-    expect(printableWidth({ size: null })).toBe(576);
+describe("printer language of raw image, HTML and PDF jobs", () => {
+  it("accepts ESC/POS under QZ's names, or no language at all", () => {
+    for (const language of [undefined, "", "ESCPOS", "escpos", "ESC/POS"]) {
+      expect(() => assertEscposLanguage({ language })).not.toThrow();
+    }
   });
 
-  it("follows the paper size the page gives, minus the print head's margins", () => {
+  it("refuses the label printer languages ESCPost cannot draw in", () => {
+    for (const language of ["ZPL", "EPL", "CPCL", "SBPL", "EVOLIS", "PGL"]) {
+      expect(() => assertEscposLanguage({ language })).toThrow(
+        expect.objectContaining({ code: "UNSUPPORTED_FORMAT", message: expect.stringContaining(language) }),
+      );
+    }
+  });
+
+  it("refuses a ZPL image job before drawing it, instead of sending ESC/POS bytes", async () => {
+    const job = { type: "raw", format: "image", flavor: "base64", data: "iVBORw0KGgo=", options: { language: "ZPL" } };
+    await expect(renderElements([job], {})).rejects.toMatchObject({
+      code: "UNSUPPORTED_FORMAT",
+      message: expect.stringContaining("ZPL"),
+    });
+  });
+});
+
+describe("printableWidth", () => {
+  it("is the printer profile's printable width, whatever paper size the page gives", () => {
+    const tmT88iii = { printableWidthDots: 512, dpiX: 180, dpiY: 180 };
+    expect(printableWidth({}, tmT88iii)).toBe(512);
+    expect(printableWidth({ size: { width: 80 }, units: "mm" }, tmT88iii)).toBe(512);
+  });
+
+  it("is 384 dots (58 mm at 203 dpi) without a profile or a paper size, ESCPost's safe default", () => {
+    expect(printableWidth({})).toBe(384);
+    expect(printableWidth({ size: null })).toBe(384);
+  });
+
+  it("follows the paper size the page gives when the printer has no profile", () => {
     expect(printableWidth({ size: { width: 58 }, units: "mm" })).toBe(384);
     expect(printableWidth({ size: { width: 2.25 } })).toBe(384); // inches, QZ's default unit
     expect(printableWidth({ size: { width: 8 }, units: "cm" })).toBe(576);
     expect(printableWidth({ size: { width: 3.15 } })).toBe(576);
     expect(printableWidth({ size: { width: 104 }, units: "mm" })).toBe(767); // 96 mm printable
+  });
+});
+
+describe("sizing a job for the printer's profile", () => {
+  const profiles = [
+    { printableWidthDots: 384, dpiX: 203, dpiY: 203 },
+    { printableWidthDots: 512, dpiX: 180, dpiY: 180 },
+    { printableWidthDots: 576, dpiX: 203, dpiY: 203 },
+  ];
+
+  for (const profile of profiles) {
+    const name = `${profile.printableWidthDots} dots at ${profile.dpiX} dpi`;
+    const width = profile.printableWidthDots;
+
+    it(`fills ${name} with a pixel image when scaleContent is on, small or large`, () => {
+      expect(imageDrawWidth(targetWidth("pixel", {}, {}, profile), 300, true)).toBe(width);
+      expect(imageDrawWidth(targetWidth("pixel", {}, {}, profile), 1000, true)).toBe(width);
+    });
+
+    it(`prints an image one pixel per dot on ${name} when scaleContent is off, shrinking only what is too wide`, () => {
+      expect(imageDrawWidth(targetWidth("pixel", {}, { scaleContent: false }, profile), 300, false)).toBe(300);
+      expect(imageDrawWidth(targetWidth("pixel", {}, { scaleContent: false }, profile), 1000, false)).toBe(width);
+    });
+
+    it(`fits a PDF page to ${name} when scaleContent is on`, () => {
+      const pageWidth = 141.73; // 50 mm in points
+      expect(Math.round(pageWidth * pdfScale(width, pageWidth, true, profile))).toBe(width);
+    });
+
+    it(`keeps a PDF page's real size at ${profile.dpiX} dpi when scaleContent is off, capped to ${width} dots`, () => {
+      const pageWidth = 141.73; // 50 mm in points: 400 dots at 203 dpi, 354 at 180 dpi
+      const realSize = Math.round((50 / 25.4) * profile.dpiX);
+      expect(Math.round(pageWidth * pdfScale(width, pageWidth, false, profile))).toBe(Math.min(width, realSize));
+    });
+
+    it(`draws pixel HTML at ${profile.dpiX} dots per inch of CSS on ${name}`, () => {
+      expect(pixelDotsPerCssPixel(profile)).toBeCloseTo(profile.dpiX / 96);
+    });
+
+    it(`converts a pixel job's pageWidth at ${profile.dpiX} dpi, capped to ${width} dots`, () => {
+      expect(targetWidth("pixel", { pageWidth: 2 }, {}, profile)).toBe(Math.min(width, 2 * profile.dpiX));
+    });
+  }
+
+  it("uses 203 dpi for a printer without a profile", () => {
+    expect(pixelDotsPerCssPixel(undefined)).toBeCloseTo(203 / 96);
+    expect(pdfScale(384, 113.39, false, undefined)).toBeCloseTo(203 / 72); // a 40 mm page: 320 dots, under the cap
+  });
+
+  it("stretches a pixel job's rows by dpiY / dpiX, so a printer with oblong dots keeps the proportions", () => {
+    expect(printerRows(100, { printableWidthDots: 384, dpiX: 203, dpiY: 203 })).toBe(100);
+    expect(printerRows(100, { printableWidthDots: 384, dpiX: 180, dpiY: 360 })).toBe(200);
+    expect(printerRows(100, undefined)).toBe(100);
   });
 });

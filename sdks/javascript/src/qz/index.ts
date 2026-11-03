@@ -21,6 +21,10 @@
 import { createQzShim, installQzShim } from "./surface";
 
 export { createQzShim, installQzShim } from "./surface";
+export type { QzConnectOptions, ShimConfig } from "./surface";
+
+/** The type of the `qz` object, for a TypeScript page that passes it around. */
+export type QzShim = ReturnType<typeof createQzShim>;
 
 /** The same object `window.qz` is given, for a page that imports rather than
  *  reads a global. */
