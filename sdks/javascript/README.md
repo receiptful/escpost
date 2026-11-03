@@ -134,7 +134,8 @@ offline, and a page that prints no PDF never downloads it.
 `qz.security` calls are accepted and ignored, so no certificate is needed and no
 popup appears. Raw jobs are sent as they are, with plain text encoded in the
 config's `encoding`, as QZ Tray does. Image, HTML and PDF jobs are drawn in the
-browser and printed as an ESC/POS image. QZ Tray features that ESCPost does not
+browser and printed as an ESC/POS image; a raw one that asks for another printer
+language, such as ZPL or EPL, rejects with `UNSUPPORTED_FORMAT`. QZ Tray features that ESCPost does not
 offer (`qz.serial`, `qz.usb`, `qz.hid`, `qz.file`, `qz.socket` and printer
 status) reject with `UNSUPPORTED_FEATURE`.
 

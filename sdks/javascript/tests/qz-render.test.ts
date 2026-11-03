@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { printableWidth, rasterToEscpos } from "../src/qz/render";
+import { assertEscposLanguage, printableWidth, rasterToEscpos, renderElements } from "../src/qz/render";
 
 /** RGBA pixels from rows of "#" (black) and "." (white). */
 function pixels(rows: string[]): Uint8ClampedArray {
@@ -56,6 +56,30 @@ describe("rasterToEscpos", () => {
     const second = 8 + 256;
     expect(Array.from(bytes.slice(second, second + 8))).toEqual([0x1d, 0x76, 0x30, 0x00, 1, 0, 44, 0]);
     expect(bytes.length).toBe(8 + 256 + 8 + 44);
+  });
+});
+
+describe("printer language of raw image, HTML and PDF jobs", () => {
+  it("accepts ESC/POS under QZ's names, or no language at all", () => {
+    for (const language of [undefined, "", "ESCPOS", "escpos", "ESC/POS"]) {
+      expect(() => assertEscposLanguage({ language })).not.toThrow();
+    }
+  });
+
+  it("refuses the label printer languages ESCPost cannot draw in", () => {
+    for (const language of ["ZPL", "EPL", "CPCL", "SBPL", "EVOLIS", "PGL"]) {
+      expect(() => assertEscposLanguage({ language })).toThrow(
+        expect.objectContaining({ code: "UNSUPPORTED_FORMAT", message: expect.stringContaining(language) }),
+      );
+    }
+  });
+
+  it("refuses a ZPL image job before drawing it, instead of sending ESC/POS bytes", async () => {
+    const job = { type: "raw", format: "image", flavor: "base64", data: "iVBORw0KGgo=", options: { language: "ZPL" } };
+    await expect(renderElements([job], {})).rejects.toMatchObject({
+      code: "UNSUPPORTED_FORMAT",
+      message: expect.stringContaining("ZPL"),
+    });
   });
 });
 

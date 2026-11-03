@@ -39,6 +39,24 @@ const FEED_AND_CUT = [0x0a, 0x0a, 0x0a, 0x1d, 0x56, 0x41, 0x00];
 
 type Options = Record<string, unknown>;
 
+/**
+ * The shim draws raw image, HTML and PDF jobs as ESC/POS only. A page asking
+ * for another printer language (ZPL, EPL...) is refused rather than sent ESC/POS
+ * its printer would print as garbage. QZ Tray's names for ESC/POS are "ESCPOS",
+ * in any case, and "ESC/POS"; a job without a language is taken as ESC/POS,
+ * the only language ESCPost prints.
+ */
+export function assertEscposLanguage(options: Options): void {
+  const language = options["language"];
+  if (language === undefined || language === null || String(language).trim() === "") return;
+  const name = String(language).trim();
+  if (name.toUpperCase() === "ESCPOS" || name === "ESC/POS") return;
+  throw new EscpostError(
+    "UNSUPPORTED_FORMAT",
+    `ESCPost draws images, HTML and PDFs in ESC/POS only, not in the "${name}" printer language.`,
+  );
+}
+
 /** Replace every element that needs rendering by a raw base64 element; leave the rest alone. */
 export async function renderElements(elements: unknown[], configOptions: Options): Promise<unknown[]> {
   return Promise.all(elements.map((element) => renderElement(element, configOptions)));
@@ -61,6 +79,8 @@ async function renderElement(element: unknown, configOptions: Options): Promise<
   if (type !== "raw" && type !== "pixel") return element;
 
   const options = (job.options ?? {}) as Options;
+  // Pixel jobs have no printer language; a raw one is drawn for the language it names.
+  if (type === "raw") assertEscposLanguage(options);
   const scaleContent = configOptions["scaleContent"] !== false;
   // A raw job that sets QZ's image options gets QZ's own encoding (escpos-image.ts).
   const qzImage = type === "raw" ? qzImageOptions(options) : undefined;
