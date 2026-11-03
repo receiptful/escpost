@@ -188,3 +188,55 @@ test("rejects a malformed successful print result as a protocol mismatch", async
     message: "The extension returned an invalid print result.",
   });
 });
+
+test("lists the printer profiles with their printable geometry through the profiles operation", async () => {
+  // Break caught: without each profile's width and resolution, the QZ shim
+  // sizes every image, HTML or PDF job for a guessed printer.
+  const page = pageRelay();
+  const before = page.posted.length;
+  const catalog = escpost.profiles.list();
+  const request = page.posted[before];
+
+  expect(request.op).toBe("profiles.list");
+  expect(request.payload).toBeNull();
+
+  page.reply(request, {
+    ok: true,
+    data: {
+      profiles: [
+        {
+          id: "TM-T88III", vendor: "Epson", model: "TM-T88III", source: "calibrated",
+          paper_width_mm: 80, printable_width_mm: 72.2, printable_width_dots: 512, dpi_x: 180, dpi_y: 180,
+          full_cut: true, partial_cut: true, barcode_function_a: true, barcode_function_b: false, qr_code: false,
+        },
+      ],
+    },
+  });
+
+  await expect(catalog).resolves.toEqual({
+    profiles: [
+      {
+        id: "TM-T88III", vendor: "Epson", model: "TM-T88III", source: "calibrated",
+        paperWidthMm: 80, printableWidthMm: 72.2, printableWidthDots: 512, dpiX: 180, dpiY: 180,
+        fullCut: true, partialCut: true, barcodeFunctionA: true, barcodeFunctionB: false, qrCode: false,
+      },
+    ],
+  });
+});
+
+test("rejects a profile catalog without printable geometry as a protocol mismatch", async () => {
+  // Break caught: mapping a profile without its width hands the shim
+  // undefined dots instead of the SDK's documented typed protocol error.
+  const page = pageRelay();
+  const before = page.posted.length;
+  const catalog = escpost.profiles.list();
+  const request = page.posted[before];
+
+  page.reply(request, { ok: true, data: { profiles: [{ id: "TM-T88III", dpi_x: 180, dpi_y: 180 }] } });
+
+  await expect(catalog).rejects.toMatchObject({
+    name: "EscpostError",
+    code: "PROTOCOL_MISMATCH",
+    message: "The extension returned an invalid profile catalog.",
+  });
+});

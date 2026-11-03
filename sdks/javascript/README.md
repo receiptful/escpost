@@ -95,6 +95,20 @@ Each printer includes its configured `name`, `transport`, `availability`,
 optional `profile`, and connection details. Pass the configured printer name
 exactly to `print()`; the SDK does not derive another identifier.
 
+## Read printer profiles
+
+`profiles.list()` returns ESCPost's printer profile catalog. A printer's
+`profile` is the `id` of one of these profiles, or `null` when none is set
+(`escpost printers add --profile`). Each profile gives the printer's real
+geometry: `printableWidthDots` is the width the head can print, and `dpiX` and
+`dpiY` its resolution.
+
+```ts
+const [{ printers }, { profiles }] = await Promise.all([escpost.printers.list(), escpost.profiles.list()]);
+const profile = profiles.find(({ id }) => id === printers[0].profile);
+const width = profile?.printableWidthDots ?? 384;
+```
+
 ## Print raw bytes
 
 `print()` sends a raw print request and resolves with a `jobId`. `data` accepts
