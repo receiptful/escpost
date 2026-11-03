@@ -8,12 +8,24 @@ import { renderElements } from "./render";
 export type EscpostClient = Pick<typeof escpost, "isAvailable" | "printers" | "print">;
 
 /**
- * Match a requested name against the ESCPost printer names, ignoring case and
- * surrounding spaces, because QZ pages often type the name by hand.
+ * Match a requested name against the ESCPost printer names the way QZ Tray's
+ * `PrintServiceMatcher.matchPrinter` does: ignoring case, the exact name first,
+ * then a name that starts with the query, then one that contains it, so
+ * QZ's `find("zebra")` finds "Zebra LP2844". Like QZ, the last of several
+ * equally good matches wins. Surrounding spaces are ignored too, because QZ
+ * pages often type the name by hand.
  */
 function matchPrinter(requested: string, printers: Printer[]): Printer | undefined {
   const needle = requested.trim().toLowerCase();
-  return printers.find((printer) => printer.name.toLowerCase() === needle);
+  let begins: Printer | undefined;
+  let partial: Printer | undefined;
+  for (const printer of printers) {
+    const name = printer.name.toLowerCase();
+    if (name === needle) return printer;
+    if (name.startsWith(needle)) begins = printer;
+    else if (name.includes(needle)) partial = printer;
+  }
+  return begins ?? partial;
 }
 
 /** QZ functions ESCPost does not offer: each one rejects, naming itself. */

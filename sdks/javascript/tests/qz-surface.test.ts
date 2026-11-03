@@ -127,6 +127,21 @@ describe("finding printers", () => {
     await expect(qz.printers.find("kitchen")).resolves.toBe("Kitchen");
   });
 
+  it("finds a printer from part of its name, like QZ's find(\"zebra\") example", async () => {
+    const { qz } = await connectedShim({ printers: [printer("TM-T20"), printer("Zebra LP2844")] });
+    await expect(qz.printers.find("zebra")).resolves.toBe("Zebra LP2844");
+  });
+
+  it("prefers an exact name, then a name that starts with the query, as QZ does", async () => {
+    const { qz } = await connectedShim({
+      printers: [printer("Back Kitchen"), printer("Kitchen Printer"), printer("Kitchen")],
+    });
+    await expect(qz.printers.find("kitchen")).resolves.toBe("Kitchen");
+
+    const partial = await connectedShim({ printers: [printer("Back Kitchen"), printer("Kitchen Printer")] });
+    await expect(partial.qz.printers.find("kitchen")).resolves.toBe("Kitchen Printer");
+  });
+
   it("names the printers it does know when a query matches nothing (N1)", async () => {
     const { qz } = await connectedShim();
     await expect(qz.printers.find("Star TSP100")).rejects.toThrow(/TM-T20, Kitchen/);
@@ -154,6 +169,12 @@ describe("printing", () => {
     const { qz, printed } = await connectedShim();
     await qz.print(qz.configs.create("kitchen"), ["\x1b@"]);
     expect(printed()).toEqual([{ printer: "Kitchen", data: Uint8Array.from([0x1b, 0x40]) }]);
+  });
+
+  it("prints to a printer named by part of its name, as QZ does", async () => {
+    const { qz, printed } = await connectedShim({ printers: [printer("TM-T20"), printer("Zebra LP2844")] });
+    await qz.print(qz.configs.create("zebra"), ["\x1b@"]);
+    expect(printed()).toEqual([{ printer: "Zebra LP2844", data: Uint8Array.from([0x1b, 0x40]) }]);
   });
 
   it("refuses an unknown printer with the known names and sends nothing", async () => {
