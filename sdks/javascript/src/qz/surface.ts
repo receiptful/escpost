@@ -28,11 +28,28 @@ function matchPrinter(requested: string, printers: Printer[]): Printer | undefin
   return begins ?? partial;
 }
 
+/**
+ * The options of QZ's `qz.websocket.connect()` (qz.io/api/qz.websocket). There
+ * is no socket to open, so the shim accepts them and ignores them.
+ */
+export type QzConnectOptions = {
+  host?: string | string[];
+  port?: { secure?: number[]; insecure?: number[] };
+  usingSecure?: boolean;
+  keepAlive?: number;
+  retries?: number;
+  delay?: number;
+};
+
+/** A QZ callback setter the shim accepts and ignores, whatever QZ passes it. */
+type IgnoredSetter = (...calls: unknown[]) => void;
+const ignoredSetter: IgnoredSetter = () => {};
+
 /** QZ functions ESCPost does not offer: each one rejects, naming itself. */
 function unsupportedMethods<const Name extends string>(
   namespace: string,
   names: readonly Name[],
-): Record<Name, () => Promise<never>> {
+): Record<Name, (...args: unknown[]) => Promise<never>> {
   // The const type parameter keeps each name in the type, so `qz.usb.listDevices` type-checks.
   return Object.fromEntries(
     names.map((name) => [
@@ -42,7 +59,7 @@ function unsupportedMethods<const Name extends string>(
           new EscpostError("UNSUPPORTED_FEATURE", `qz.${namespace}.${name}() is a QZ Tray feature that ESCPost does not offer.`),
         ),
     ]),
-  ) as Record<Name, () => Promise<never>>;
+  ) as Record<Name, (...args: unknown[]) => Promise<never>>;
 }
 
 function unknownPrinter(requested: string, printers: Printer[]): EscpostError {
@@ -171,7 +188,7 @@ export function createQzShim(client: EscpostClient = escpost) {
     version: QZ_VERSION,
 
     websocket: {
-      async connect(): Promise<void> {
+      async connect(_options?: QzConnectOptions): Promise<void> {
         if (connected) throw new Error("An open connection with QZ Tray already exists");
         // QZ fails here when the QZ Tray app is not running, so fail the same way
         // when the extension, escpost serve or the site's permission is missing.
@@ -233,7 +250,8 @@ export function createQzShim(client: EscpostClient = escpost) {
     },
 
     printers: {
-      async find(query?: string | null): Promise<string[] | string> {
+      // QZ's optional signature and timestamp arguments are accepted and ignored.
+      async find(query?: string | null, ..._signing: unknown[]): Promise<string[] | string> {
         assertActive();
         const { printers } = await client.printers.list();
         if (query === undefined || query === null) return printers.map((printer) => printer.name);
@@ -244,7 +262,7 @@ export function createQzShim(client: EscpostClient = escpost) {
       },
 
       // ESCPost has no default printer, so the first connected one plays that role.
-      async getDefault(): Promise<string | null> {
+      async getDefault(..._signing: unknown[]): Promise<string | null> {
         assertActive();
         const { printers } = await client.printers.list();
         return printers.find((printer) => printer.availability === "connected")?.name ?? null;
@@ -253,7 +271,7 @@ export function createQzShim(client: EscpostClient = escpost) {
       // Printer details, status and job queues come from the OS print system,
       // which ESCPost does not use.
       ...unsupportedMethods("printers", ["details", "startListening", "stopListening", "getStatus", "clearQueue"]),
-      setPrinterCallbacks(): void {},
+      setPrinterCallbacks: ignoredSetter,
     },
 
     // QZ Tray also talks to serial ports, sockets, USB and HID devices, files and
@@ -262,29 +280,29 @@ export function createQzShim(client: EscpostClient = escpost) {
     // functions rejects with a clear message instead of crashing the page.
     serial: {
       ...unsupportedMethods("serial", ["findPorts", "openPort", "sendData", "closePort"]),
-      setSerialCallbacks(): void {},
+      setSerialCallbacks: ignoredSetter,
     },
     socket: {
       ...unsupportedMethods("socket", ["open", "close", "sendData"]),
-      setSocketCallbacks(): void {},
+      setSocketCallbacks: ignoredSetter,
     },
     usb: {
       ...unsupportedMethods("usb", [
         "listDevices", "listInterfaces", "listEndpoints", "claimDevice", "isClaimed",
         "sendData", "readData", "openStream", "closeStream", "releaseDevice",
       ]),
-      setUsbCallbacks(): void {},
+      setUsbCallbacks: ignoredSetter,
     },
     hid: {
       ...unsupportedMethods("hid", [
         "listDevices", "startListening", "stopListening", "claimDevice", "isClaimed", "sendData",
         "readData", "sendFeatureReport", "getFeatureReport", "openStream", "closeStream", "releaseDevice",
       ]),
-      setHidCallbacks(): void {},
+      setHidCallbacks: ignoredSetter,
     },
     file: {
       ...unsupportedMethods("file", ["list", "read", "write", "remove", "startListening", "stopListening"]),
-      setFileCallbacks(): void {},
+      setFileCallbacks: ignoredSetter,
     },
     networking: unsupportedMethods("networking", ["device", "hostname", "devices"]),
 
