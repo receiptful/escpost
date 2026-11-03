@@ -81,13 +81,25 @@ const DEFAULT_OPTIONS: QzOptions = {
   spool: null,
 };
 
+type PrintFunction = (configs: ShimConfig, data: unknown[] | unknown[][], ...rest: unknown[]) => Promise<null>;
+
 export class ShimConfig {
   printer: unknown;
   private options: QzOptions;
+  private readonly printWith: PrintFunction;
 
-  constructor(printer: unknown, options?: QzOptions) {
+  constructor(printer: unknown, options: QzOptions | undefined, print: PrintFunction) {
     this.printer = typeof printer === "string" ? { name: printer } : printer;
     this.options = { ...DEFAULT_OPTIONS, ...(options ?? {}) };
+    this.printWith = print;
+  }
+
+  /**
+   * QZ's shortcut for `qz.print(config, data, ...)` (qz-tray.js `Config.prototype.print`).
+   * QZ drops the promise; returning it lets the page wait for the job and catch its error.
+   */
+  print(data: unknown[] | unknown[][], ...rest: unknown[]): Promise<null> {
+    return this.printWith(this, data, ...rest);
   }
 
   setPrinter(printer: unknown): void {
@@ -131,6 +143,28 @@ export function createQzShim(client: EscpostClient = escpost) {
   function assertActive(): void {
     // The same words qz-tray.js:797 uses, so an integration matching on the message still matches.
     if (!connected) throw new Error("A connection to QZ has not been established yet");
+  }
+
+  // Resolves null, not undefined: qz-tray.js returns the last call's result
+  // (qz-tray.js:1688-1694), and a `print` result is null. QZ's optional
+  // resumeOnError and signature arguments are accepted and ignored.
+  async function print(
+    configs: ShimConfig | ShimConfig[],
+    data: unknown[] | unknown[][],
+    ..._ignored: unknown[]
+  ): Promise<null> {
+    assertActive();
+
+    // qz.print accepts one config or many, and one data array or an array of them.
+    const configList = Array.isArray(configs) ? configs : [configs];
+    const dataList = (Array.isArray(data[0]) ? data : [data]) as unknown[][];
+
+    for (let index = 0; index < Math.max(configList.length, dataList.length); index++) {
+      const config = configList[Math.min(index, configList.length - 1)]!;
+      const elements = dataList[Math.min(index, dataList.length - 1)]!;
+      await sendJob(client, config, elements);
+    }
+    return null;
   }
 
   const qz = {
@@ -256,29 +290,14 @@ export function createQzShim(client: EscpostClient = escpost) {
 
     configs: {
       create(printer: unknown, options?: QzOptions): ShimConfig {
-        return new ShimConfig(printer, options);
+        return new ShimConfig(printer, options, print);
       },
       setDefaults(options: QzOptions): void {
         Object.assign(DEFAULT_OPTIONS, options);
       },
     },
 
-    // Resolves null, not undefined: qz-tray.js returns the last call's result
-    // (qz-tray.js:1688-1694), and a `print` result is null.
-    async print(configs: ShimConfig | ShimConfig[], data: unknown[] | unknown[][]): Promise<null> {
-      assertActive();
-
-      // qz.print accepts one config or many, and one data array or an array of them.
-      const configList = Array.isArray(configs) ? configs : [configs];
-      const dataList = (Array.isArray(data[0]) ? data : [data]) as unknown[][];
-
-      for (let index = 0; index < Math.max(configList.length, dataList.length); index++) {
-        const config = configList[Math.min(index, configList.length - 1)]!;
-        const elements = dataList[Math.min(index, dataList.length - 1)]!;
-        await sendJob(client, config, elements);
-      }
-      return null;
-    },
+    print,
   };
 
   void errorCallbacks; // Registered for API parity; escpost has no socket to error on.

@@ -209,6 +209,21 @@ describe("printing", () => {
     expect(printed()).toHaveLength(0);
   });
 
+  it("prints through config.print(data), QZ's shortcut for qz.print(config, data)", async () => {
+    const { qz, printed } = await connectedShim();
+    await expect(qz.configs.create("TM-T20").print(["\x1b@"])).resolves.toBeNull();
+    expect(printed()).toEqual([{ printer: "TM-T20", data: Uint8Array.from([0x1b, 0x40]) }]);
+  });
+
+  it("rejects config.print(data) before connect(), as qz.print does", async () => {
+    const { client, printed } = fakeClient();
+    const qz = createQzShim(client);
+    await expect(qz.configs.create("TM-T20").print(["\x1b@"])).rejects.toThrow(
+      /connection to QZ has not been established/,
+    );
+    expect(printed()).toHaveLength(0);
+  });
+
   it("gives a config all of qz-tray.js's default options, not just the set ones", () => {
     const qz = createQzShim(fakeClient().client);
     const options = qz.configs.create("TM-T20", { copies: 2 }).getOptions();
