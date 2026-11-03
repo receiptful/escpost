@@ -2,10 +2,10 @@ import { EscpostError } from "../errors";
 import { escpost } from "../index";
 import type { Printer } from "../types";
 import { jobToBytes, printerNameFrom, QZ_VERSION } from "./jobs";
-import { renderElements } from "./render";
+import { renderElements, type PrinterGeometry } from "./render";
 
 /** The part of the ESCPost client the shim uses. Tests pass a fake one. */
-export type EscpostClient = Pick<typeof escpost, "isAvailable" | "printers" | "print">;
+export type EscpostClient = Pick<typeof escpost, "isAvailable" | "printers" | "profiles" | "print">;
 
 /**
  * Match a requested name against the ESCPost printer names the way QZ Tray's
@@ -137,17 +137,30 @@ export class ShimConfig {
 }
 
 /** Resolve the printer the page asked for, then send the job's bytes to ESCPost. */
+/**
+ * The printable width and resolution of `printer`, from its ESCPost profile, or
+ * undefined when it has none (or the catalog no longer holds it), in which case
+ * render.ts uses ESCPost's safe default. A printer without a profile costs no
+ * round trip.
+ */
+export async function printerGeometry(client: EscpostClient, printer: Printer): Promise<PrinterGeometry | undefined> {
+  if (printer.profile === null) return undefined;
+  const { profiles } = await client.profiles.list();
+  return profiles.find((profile) => profile.id === printer.profile);
+}
+
+/** Resolve the printer the page asked for, then draw the job for it and send its bytes. */
 async function sendJob(client: EscpostClient, config: ShimConfig, elements: unknown[]): Promise<void> {
   const requested = printerNameFrom(config.getPrinter());
-
-  // Images, HTML, PDF and files become raw ESC/POS first (see render.ts), then
-  // everything becomes bytes, before any round trip to the daemon.
-  const rendered = await renderElements(elements, config.getOptions());
-  const data = jobToBytes({ printer: config.getPrinter(), options: config.getOptions(), data: rendered });
-
   const { printers } = await client.printers.list();
   const resolved = matchPrinter(requested, printers);
   if (resolved === undefined) throw unknownPrinter(requested, printers);
+
+  // Images, HTML, PDF and files become raw ESC/POS first, drawn for this
+  // printer's width and resolution (see render.ts), then everything becomes bytes.
+  let geometry: Promise<PrinterGeometry | undefined> | undefined;
+  const rendered = await renderElements(elements, config.getOptions(), () => (geometry ??= printerGeometry(client, resolved)));
+  const data = jobToBytes({ printer: config.getPrinter(), options: config.getOptions(), data: rendered });
 
   await client.print({ printer: resolved.name, data });
 }

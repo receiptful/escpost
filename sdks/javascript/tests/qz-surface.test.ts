@@ -1,25 +1,31 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { createQzShim, installQzShim, type EscpostClient } from "../src/qz/surface";
-import type { Printer } from "../src/index";
+import { createQzShim, installQzShim, printerGeometry, type EscpostClient } from "../src/qz/surface";
+import type { Printer, PrinterProfile } from "../src/index";
 
-function printer(name: string, availability: Printer["availability"] = "connected"): Printer {
+function printer(name: string, availability: Printer["availability"] = "connected", profile: string | null = null): Printer {
   return {
     name,
     transport: "network",
     availability,
-    profile: null,
+    profile,
     connection: { type: "network", host: "10.0.0.2", port: 9100 },
   };
 }
 
 const PRINTERS = [printer("TM-T20"), printer("Kitchen")];
 
+const TM_T88III: PrinterProfile = {
+  id: "TM-T88III", vendor: "Epson", model: "TM-T88III", source: "calibrated",
+  paperWidthMm: 80, printableWidthMm: 72.2, printableWidthDots: 512, dpiX: 180, dpiY: 180,
+  fullCut: true, partialCut: true, barcodeFunctionA: true, barcodeFunctionB: true, qrCode: false,
+};
+
 /**
  * Stands in for the ESCPost client, so the shim is tested without a browser
  * extension or a daemon. It records every call the shim makes.
  */
-function fakeClient(options: { available?: boolean; printers?: Printer[] } = {}) {
+function fakeClient(options: { available?: boolean; printers?: Printer[]; profiles?: PrinterProfile[] } = {}) {
   const calls: Array<{ method: string; argument?: unknown }> = [];
   const printers = options.printers ?? PRINTERS;
   const client: EscpostClient = {
@@ -34,6 +40,12 @@ function fakeClient(options: { available?: boolean; printers?: Printer[] } = {})
       },
       subscribe() {
         return () => {};
+      },
+    },
+    profiles: {
+      async list() {
+        calls.push({ method: "profiles.list" });
+        return { profiles: options.profiles ?? [] };
       },
     },
     async print(request) {
@@ -231,6 +243,41 @@ describe("printing", () => {
     expect(options.units).toBe("in");
     expect(options.colorType).toBe("color");
     expect("spool" in options).toBe(true);
+  });
+});
+
+describe("printer geometry", () => {
+  it("reads the printer's profile from ESCPost's catalog", async () => {
+    const { client } = fakeClient({ profiles: [TM_T88III] });
+    await expect(printerGeometry(client, printer("Bar", "connected", "TM-T88III"))).resolves.toMatchObject({
+      printableWidthDots: 512,
+      dpiX: 180,
+      dpiY: 180,
+    });
+  });
+
+  it("is unknown, without asking ESCPost, for a printer with no profile", async () => {
+    const { client, calls } = fakeClient({ profiles: [TM_T88III] });
+    await expect(printerGeometry(client, printer("Bar"))).resolves.toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("is unknown for a profile the catalog does not hold", async () => {
+    const { client } = fakeClient({ profiles: [TM_T88III] });
+    await expect(printerGeometry(client, printer("Bar", "connected", "Gone"))).resolves.toBeUndefined();
+  });
+
+  it("finds the printer before drawing, so an unknown printer fails as one even for an image", async () => {
+    const { qz, printed } = await connectedShim();
+    const image = { type: "pixel", format: "image", flavor: "base64", data: "AAAA" };
+    await expect(qz.print(qz.configs.create("Nowhere"), [image])).rejects.toMatchObject({ code: "PRINTER_NOT_FOUND" });
+    expect(printed()).toHaveLength(0);
+  });
+
+  it("does not read the profiles for raw commands, which are not drawn", async () => {
+    const { qz, calls } = await connectedShim({ printers: [printer("TM-T20", "connected", "TM-T88III")] });
+    await qz.print(qz.configs.create("TM-T20"), ["\x1b@"]);
+    expect(calls.some((call) => call.method === "profiles.list")).toBe(false);
   });
 });
 

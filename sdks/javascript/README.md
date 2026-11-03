@@ -149,7 +149,11 @@ offline, and a page that prints no PDF never downloads it.
 popup appears. Raw jobs are sent as they are, with plain text encoded in the
 config's `encoding`, as QZ Tray does. Image, HTML and PDF jobs are drawn in the
 browser and printed as an ESC/POS image; a raw one that asks for another printer
-language, such as ZPL or EPL, rejects with `UNSUPPORTED_FORMAT`. QZ Tray features that ESCPost does not
+language, such as ZPL or EPL, rejects with `UNSUPPORTED_FORMAT`. They are drawn
+for the printer's profile: its printable width and resolution. Give each
+printer its profile (`escpost printers add --profile`); a printer without one
+is drawn for a 58 mm roll at 203 dpi (384 dots wide), or for the paper `size`
+the config gives, so nothing prints past a narrower head than assumed. QZ Tray features that ESCPost does not
 offer (`qz.serial`, `qz.usb`, `qz.hid`, `qz.file`, `qz.socket` and printer
 status) reject with `UNSUPPORTED_FEATURE`.
 

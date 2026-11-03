@@ -2,6 +2,7 @@ import { EscpostError } from "../errors";
 import { base64ToBytes, bytesToBase64, type QzPrintElement } from "./jobs";
 import { horizontalStretch, qzImageOptions, qzImageToEscpos } from "./escpos-image";
 import { importPdfJs } from "./pdfjs";
+import type { PrinterProfile } from "../types";
 
 /**
  * Turns the QZ jobs that need rendering (images, HTML, PDF, and the `file`
@@ -13,11 +14,20 @@ import { importPdfJs } from "./pdfjs";
  * in the browser. That only suits ESC/POS printers, which is ESCPost's target.
  */
 
-/** Printable width of an 80 mm roll at 203 dpi (72 mm): the default when the job gives no paper size. */
-const DEFAULT_WIDTH_DOTS = 576;
-/** Printable width of a 58 mm roll at 203 dpi (48 mm). */
+/**
+ * The printer's real geometry, from its ESCPost profile. It decides how wide a
+ * job is drawn and at what resolution. Without one, ESCPost's documented
+ * default applies: a 58 mm roll at 203 dpi (docs/PROFILE_SCHEMA.md), which
+ * wraps early rather than printing past a narrower head than assumed.
+ */
+export type PrinterGeometry = Pick<PrinterProfile, "printableWidthDots" | "dpiX" | "dpiY">;
+
+/** Printable width of a 58 mm roll at 203 dpi (48 mm): the default without a profile or a paper size. */
 const NARROW_WIDTH_DOTS = 384;
-const PRINTER_DPI = 203;
+/** Printable width of an 80 mm roll at 203 dpi (72 mm). */
+const WIDE_WIDTH_DOTS = 576;
+/** The resolution assumed for a printer without a profile, the usual thermal head. */
+const DEFAULT_DPI = 203;
 /** CSS defines 96 px per inch, so a pixel job's HTML keeps its real-world size. */
 const CSS_DPI = 96;
 /** PDF sizes are in points, 72 per inch. */
@@ -57,12 +67,24 @@ export function assertEscposLanguage(options: Options): void {
   );
 }
 
-/** Replace every element that needs rendering by a raw base64 element; leave the rest alone. */
-export async function renderElements(elements: unknown[], configOptions: Options): Promise<unknown[]> {
-  return Promise.all(elements.map((element) => renderElement(element, configOptions)));
+/**
+ * Replace every element that needs rendering by a raw base64 element; leave the
+ * rest alone. `geometry` is only asked for when something is drawn, so a job
+ * of raw commands costs no extra round trip to ESCPost.
+ */
+export async function renderElements(
+  elements: unknown[],
+  configOptions: Options,
+  geometry: () => Promise<PrinterGeometry | undefined> = async () => undefined,
+): Promise<unknown[]> {
+  return Promise.all(elements.map((element) => renderElement(element, configOptions, geometry)));
 }
 
-async function renderElement(element: unknown, configOptions: Options): Promise<unknown> {
+async function renderElement(
+  element: unknown,
+  configOptions: Options,
+  geometry: () => Promise<PrinterGeometry | undefined>,
+): Promise<unknown> {
   if (element === null || typeof element !== "object") return element;
   const job = element as QzPrintElement;
   const type = String(job.type ?? "raw").toLowerCase();
@@ -81,19 +103,23 @@ async function renderElement(element: unknown, configOptions: Options): Promise<
   const options = (job.options ?? {}) as Options;
   // Pixel jobs have no printer language; a raw one is drawn for the language it names.
   if (type === "raw") assertEscposLanguage(options);
+  const profile = await geometry();
   const scaleContent = configOptions["scaleContent"] !== false;
   // A raw job that sets QZ's image options gets QZ's own encoding (escpos-image.ts).
   const qzImage = type === "raw" ? qzImageOptions(options) : undefined;
   // `ESC *` single density prints every column two dots wide, so the picture
   // is drawn half as wide: once stretched, it still fits the printable width.
   const stretch = qzImage === undefined ? 1 : horizontalStretch(qzImage);
-  const width = Math.floor(targetWidth(type, options, configOptions) / stretch);
-  const canvases =
+  const width = Math.floor(targetWidth(type, options, configOptions, profile) / stretch);
+  const drawn =
     format === "image"
       ? [await imageToCanvas(job, width, type === "pixel" && scaleContent, qzImage !== undefined)]
       : format === "html"
-        ? [await htmlToCanvas(job, width, type === "pixel" ? PRINTER_DPI / CSS_DPI : rawDotsPerPixel(configOptions), scaleContent)]
-        : await pdfToCanvases(job, width, type === "raw" || scaleContent);
+        ? [await htmlToCanvas(job, width, type === "pixel" ? pixelDotsPerCssPixel(profile) : rawDotsPerPixel(configOptions), scaleContent)]
+        : await pdfToCanvases(job, width, type === "raw" || scaleContent, profile);
+  // A pixel job keeps its real proportions on a head whose dots are not square.
+  // A raw job is one image pixel per dot, as in QZ Tray.
+  const canvases = type === "pixel" ? drawn.map((canvas) => toPrinterRows(canvas, profile)) : drawn;
 
   const commands = canvases.flatMap((canvas) => {
     const { data } = canvas.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
@@ -115,33 +141,89 @@ function rawElement(bytes: Uint8Array): QzPrintElement {
 /**
  * The width to draw at, never wider than the printable width (see
  * `printableWidth`). Raw jobs may give `pageWidth` in dots; pixel jobs may give
- * it in the config's units, converted at the printer's 203 dpi. Without one,
- * the job fills the printable width.
+ * it in the config's units, converted at the printer's resolution. Without
+ * one, the job fills the printable width.
  */
-function targetWidth(type: string, options: Options, configOptions: Options): number {
-  const printable = printableWidth(configOptions);
+export function targetWidth(type: string, options: Options, configOptions: Options, profile?: PrinterGeometry): number {
+  const printable = printableWidth(configOptions, profile);
   const pageWidth = positive(options["pageWidth"]);
   if (pageWidth === undefined) return printable;
-  const dots = type === "raw" ? pageWidth : Math.round(toMillimetres(pageWidth, configOptions) * (PRINTER_DPI / 25.4));
+  const dpi = profile?.dpiX ?? DEFAULT_DPI;
+  const dots = type === "raw" ? pageWidth : Math.round(toMillimetres(pageWidth, configOptions) * (dpi / 25.4));
   return Math.min(printable, dots);
 }
 
 /**
- * The width the print head can actually print, in dots. ESC/POS heads leave
- * margins: 80 mm paper prints 72 mm (576 dots) and 58 mm paper prints 48 mm
- * (384 dots). A page that says its paper size (QZ's `size`) gets the matching
- * width; any other paper loses 8 mm. With no size, the paper is taken to be
- * 80 mm, the usual receipt roll.
+ * The width the print head can actually print, in dots. The printer's profile
+ * knows it, and it is not the paper width times the resolution: heads leave
+ * margins, so 80 mm paper prints 512 dots on a 180 dpi TM-T88III and 576 on a
+ * 203 dpi head.
+ *
+ * Without a profile, a page that says its paper size (QZ's `size`) gets the
+ * usual width at 203 dpi: 48 mm (384 dots) for a 58 mm roll, 72 mm (576 dots)
+ * for an 80 mm one, and 8 mm less for any other paper. With neither, the
+ * narrow roll is assumed, so nothing prints past a narrower head than assumed.
  */
-export function printableWidth(configOptions: Options): number {
+export function printableWidth(configOptions: Options, profile?: PrinterGeometry): number {
+  if (profile !== undefined) return profile.printableWidthDots;
+
   const size = configOptions["size"] as { width?: unknown } | null | undefined;
   const paper = positive(size?.width);
-  if (paper === undefined) return DEFAULT_WIDTH_DOTS;
+  if (paper === undefined) return NARROW_WIDTH_DOTS;
 
   const millimetres = toMillimetres(paper, configOptions);
   if (millimetres <= 60) return NARROW_WIDTH_DOTS;
-  if (millimetres <= 82) return DEFAULT_WIDTH_DOTS;
-  return Math.round(((millimetres - 8) * PRINTER_DPI) / 25.4);
+  if (millimetres <= 82) return WIDE_WIDTH_DOTS;
+  return Math.round(((millimetres - 8) * DEFAULT_DPI) / 25.4);
+}
+
+/**
+ * Dots per CSS pixel for pixel HTML: CSS has 96 px per inch, so a document
+ * keeps its real size at the printer's resolution (203 / 96 on a 203 dpi head).
+ */
+export function pixelDotsPerCssPixel(profile?: PrinterGeometry): number {
+  return (profile?.dpiX ?? DEFAULT_DPI) / CSS_DPI;
+}
+
+/**
+ * How many dots wide a picture of `sourceWidth` pixels is drawn. `fill` is
+ * QZ's `scaleContent` for a pixel image: QZ Tray stretches it, up or down, to
+ * the page width. Otherwise one image pixel is one dot, as QZ Tray prints at the
+ * printer's density, and only an image wider than the paper is shrunk to fit.
+ */
+export function imageDrawWidth(width: number, sourceWidth: number, fill: boolean): number {
+  return fill ? width : Math.min(width, sourceWidth);
+}
+
+/**
+ * The scale from a PDF page, in points, to dots. `fit` (QZ's `scaleContent`,
+ * and every raw PDF) fills the width. Otherwise the page keeps its real size,
+ * 72 points per inch at the printer's resolution, shrunk only if wider than
+ * the paper.
+ */
+export function pdfScale(width: number, pageWidth: number, fit: boolean, profile?: PrinterGeometry): number {
+  if (fit) return width / pageWidth;
+  return Math.min(width / pageWidth, (profile?.dpiX ?? DEFAULT_DPI) / PDF_DPI);
+}
+
+/**
+ * Rows to print for `rows` drawn at the horizontal resolution: a head whose
+ * vertical resolution differs prints `dpiY / dpiX` rows per row, so a circle
+ * stays round.
+ */
+export function printerRows(rows: number, profile?: PrinterGeometry): number {
+  if (profile === undefined || profile.dpiX === profile.dpiY) return rows;
+  return Math.max(1, Math.round((rows * profile.dpiY) / profile.dpiX));
+}
+
+/** The canvas resampled to `printerRows` rows; the same canvas when no change is needed. */
+function toPrinterRows(canvas: HTMLCanvasElement, profile?: PrinterGeometry): HTMLCanvasElement {
+  const rows = printerRows(canvas.height, profile);
+  if (rows === canvas.height) return canvas;
+  const { canvas: resampled, context } = whiteCanvas(canvas.width, rows);
+  context.imageSmoothingQuality = "high";
+  context.drawImage(canvas, 0, 0, canvas.width, rows);
+  return resampled;
 }
 
 function toMillimetres(value: number, configOptions: Options): number {
@@ -210,13 +292,7 @@ function whiteCanvas(
   return { canvas, context };
 }
 
-/**
- * Draw the image keeping its proportions. `fill` is QZ's `scaleContent` for a
- * pixel image: QZ Tray stretches it, up or down, to the page width, so it fills
- * the printable width here. Otherwise one image pixel is one dot, as QZ Tray
- * prints at the printer's density, and only an image wider than the paper is
- * shrunk to fit.
- */
+/** Draw the image keeping its proportions, `imageDrawWidth` dots wide. */
 async function imageToCanvas(job: QzPrintElement, width: number, fill: boolean, transparent: boolean): Promise<HTMLCanvasElement> {
   const bytes = await contentBytes(job);
   let bitmap: ImageBitmap;
@@ -225,7 +301,7 @@ async function imageToCanvas(job: QzPrintElement, width: number, fill: boolean, 
   } catch {
     throw new EscpostError("UNSUPPORTED_FORMAT", "The image could not be decoded (PNG, JPEG, GIF, WebP or BMP expected).");
   }
-  const drawWidth = fill ? width : Math.min(width, bitmap.width);
+  const drawWidth = imageDrawWidth(width, bitmap.width, fill);
   const height = Math.round((bitmap.height * drawWidth) / bitmap.width);
   const { canvas, context } = whiteCanvas(drawWidth, height, transparent);
   // Resized images keep thin lines and text edges instead of dropping pixels.
@@ -240,7 +316,7 @@ async function imageToCanvas(job: QzPrintElement, width: number, fill: boolean, 
  *
  * `dotsPerPixel` sets the size. A pixel job is a document, so its CSS sizes
  * are honoured: it is laid out at the paper width in CSS pixels (96 per inch),
- * then drawn enlarged to the printer's 203 dpi, so 12 px text prints about
+ * then drawn enlarged to the printer's resolution, so 12 px text prints about
  * 3 mm tall, as with QZ Tray. A raw job uses QZ Tray's raw density instead
  * (see `rawDotsPerPixel`).
  *
@@ -286,7 +362,7 @@ async function htmlToCanvas(
     const height = Math.round((layoutHeight * width) / contentWidth);
     const xhtml = new XMLSerializer().serializeToString(root);
     // The viewBox scales the whole content to the paper width as vectors, so
-    // text stays sharp at 203 dpi and nothing wider than the paper is cut off.
+    // text stays sharp at the printer's resolution and nothing wider than the paper is cut off.
     const svg =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
       `viewBox="0 0 ${contentWidth} ${layoutHeight}">` +
@@ -453,9 +529,14 @@ function loadPdfJs(): Promise<PdfJs> {
 /**
  * One canvas per page. `fit` scales each page to the target width, as QZ's
  * `scaleContent` and raw `pageWidth` do. Without it a page keeps its real size
- * (72 points per inch at the printer's 203 dpi), shrunk only if wider than the paper.
+ * (72 points per inch at the printer's resolution, see `pdfScale`), shrunk only if wider than the paper.
  */
-async function pdfToCanvases(job: QzPrintElement, width: number, fit: boolean): Promise<HTMLCanvasElement[]> {
+async function pdfToCanvases(
+  job: QzPrintElement,
+  width: number,
+  fit: boolean,
+  profile?: PrinterGeometry,
+): Promise<HTMLCanvasElement[]> {
   const bytes = await contentBytes(job);
   let pdf: Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>;
   try {
@@ -468,7 +549,7 @@ async function pdfToCanvases(job: QzPrintElement, width: number, fit: boolean): 
   for (let number = 1; number <= pdf.numPages; number++) {
     const page = await pdf.getPage(number);
     const pageWidth = page.getViewport({ scale: 1 }).width;
-    const scale = fit ? width / pageWidth : Math.min(width / pageWidth, PRINTER_DPI / PDF_DPI);
+    const scale = pdfScale(width, pageWidth, fit, profile);
     const viewport = page.getViewport({ scale });
     const { canvas, context } = whiteCanvas(Math.round(viewport.width), Math.round(viewport.height));
     await page.render({ canvasContext: context, viewport }).promise;
