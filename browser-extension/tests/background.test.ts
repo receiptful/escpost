@@ -12,6 +12,7 @@ function dependencies(granted = true) {
     daemon: {
       health: vi.fn(async () => true),
       list: vi.fn(async () => ({ printers: [] as string[] })),
+      profiles: vi.fn(async () => ({ profiles: [] as unknown[] })),
       print: vi.fn(async () => ({ job_id: "job-17" })),
     },
   };
@@ -74,6 +75,29 @@ test("returns the daemon inventory for the one-shot list operation", async () =>
     ok: true, data: { printers: ["network-printer"] },
   });
   expect(deps.daemon.list).toHaveBeenCalledWith("network");
+});
+
+test("returns the daemon profile catalog for the one-shot profiles operation", async () => {
+  // Break caught: a page that cannot read printer profiles sizes every QZ
+  // image, HTML or PDF job for a guessed printer width.
+  const deps = dependencies();
+  deps.daemon.profiles.mockResolvedValueOnce({ profiles: [{ id: "TM-T88III" }] });
+
+  await expect(handleRequest({ source: "escpost-page", protocol: 1, id: 7, op: "profiles.list", payload: null }, "https://shop.example", deps)).resolves.toEqual({
+    ok: true, data: { profiles: [{ id: "TM-T88III" }] },
+  });
+  expect(deps.daemon.profiles).toHaveBeenCalledOnce();
+});
+
+test("refuses a profiles operation that carries a payload", async () => {
+  // Break caught: accepting unexpected payloads widens the page-facing protocol
+  // without a decision, as for the health operation.
+  const deps = dependencies();
+
+  await expect(handleRequest({ source: "escpost-page", protocol: 1, id: 8, op: "profiles.list", payload: { vendor: "Epson" } }, "https://shop.example", deps)).resolves.toMatchObject({
+    ok: false, error: { code: "PROTOCOL_MISMATCH" },
+  });
+  expect(deps.daemon.profiles).not.toHaveBeenCalled();
 });
 
 test("decodes padded base64 into exact raw bytes and retains the daemon wire result", async () => {

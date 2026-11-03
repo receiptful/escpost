@@ -31,6 +31,27 @@ export type WirePrinterInventory = {
   printers: WirePrinter[];
 };
 
+type WireProfile = {
+  id: string;
+  vendor: string;
+  model: string;
+  source: "calibrated" | "synthesized" | "virtual";
+  paper_width_mm: number;
+  printable_width_mm: number;
+  printable_width_dots: number;
+  dpi_x: number;
+  dpi_y: number;
+  full_cut: boolean;
+  partial_cut: boolean;
+  barcode_function_a: boolean;
+  barcode_function_b: boolean;
+  qr_code: boolean;
+};
+
+export type WireProfileCatalog = {
+  profiles: WireProfile[];
+};
+
 export type InventoryStreamCallbacks = {
   onSnapshot: (snapshot: WirePrinterInventory) => void;
   onError: (error: Error) => void;
@@ -78,6 +99,14 @@ export class DaemonClient {
       throw new DaemonError("The daemon sent an invalid printer inventory.");
     }
     return snapshot;
+  }
+
+  async profiles(): Promise<WireProfileCatalog> {
+    const catalog = await json(await this.get("/api/profiles/list"));
+    if (!isWireProfileCatalog(catalog)) {
+      throw new DaemonError("The daemon sent an invalid profile catalog.");
+    }
+    return catalog;
   }
 
   async print(printer: string, bytes: Uint8Array): Promise<{ job_id: string }> {
@@ -309,6 +338,36 @@ function isWirePrinter(value: unknown): value is WirePrinter {
     && (value.availability === "connected" || value.availability === "unavailable")
     && isNullableString(value.profile)
     && (value.transport === "usb" ? isUsbConnection(value.connection) : isNetworkConnection(value.connection));
+}
+
+function isWireProfileCatalog(value: unknown): value is WireProfileCatalog {
+  return isRecord(value) && Array.isArray(value.profiles) && value.profiles.every(isWireProfile);
+}
+
+function isWireProfile(value: unknown): value is WireProfile {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.vendor === "string"
+    && typeof value.model === "string"
+    && (value.source === "calibrated" || value.source === "synthesized" || value.source === "virtual")
+    && isPositiveNumber(value.paper_width_mm)
+    && isPositiveNumber(value.printable_width_mm)
+    && isPositiveInteger(value.printable_width_dots)
+    && isPositiveInteger(value.dpi_x)
+    && isPositiveInteger(value.dpi_y)
+    && typeof value.full_cut === "boolean"
+    && typeof value.partial_cut === "boolean"
+    && typeof value.barcode_function_a === "boolean"
+    && typeof value.barcode_function_b === "boolean"
+    && typeof value.qr_code === "boolean";
+}
+
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 function isNetworkConnection(value: unknown): boolean {

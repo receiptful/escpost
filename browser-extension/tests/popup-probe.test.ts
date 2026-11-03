@@ -11,7 +11,7 @@ function stack(health: boolean, granted = true) {
     onMessage: { addListener: vi.fn((listener) => { workerListener = listener; }) },
   };
   const grants = { contains: vi.fn(async () => granted), onRemoved: vi.fn() };
-  installBackground(worker, { grants, daemon: { health: vi.fn(async () => health), list: vi.fn(), print: vi.fn() } });
+  installBackground(worker, { grants, daemon: { health: vi.fn(async () => health), list: vi.fn(), profiles: vi.fn(), print: vi.fn() } });
 
   let relayListener: MessageListener | undefined;
   const runtime = {
