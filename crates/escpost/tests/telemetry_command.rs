@@ -218,6 +218,91 @@ fn serve_reports_started_before_it_blocks() {
     assert!(body["properties"].get("duration_ms").is_none());
 }
 
+#[test]
+fn telemetry_off_keeps_the_installation_id_and_reports_itself_once() {
+    let directory = TemporaryDirectory::new("telemetry-off");
+    write_consent(&directory.path, true);
+    let listener = CaptureListener::start(1);
+
+    let output = escpost(&directory.path, Some(listener.endpoint()))
+        .args(["telemetry", "off"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert_success(&output);
+    let content = fs::read_to_string(directory.path.join("telemetry.toml"))
+        .expect("the decision file should exist");
+    assert!(content.contains("enabled = false"), "{content}");
+    assert!(
+        content.contains(INSTALLATION_ID),
+        "the ID must survive an opt-out:\n{content}"
+    );
+    // Consent was still on when this invocation started, so the opt-out
+    // itself is the last event this installation sends.
+    let bodies = listener.finish();
+    assert_eq!(bodies.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&bodies[0]).expect("JSON body");
+    assert_eq!(body["properties"]["command"], "telemetry off");
+}
+
+#[test]
+fn telemetry_on_after_an_opt_out_sends_nothing_for_that_invocation() {
+    let directory = TemporaryDirectory::new("telemetry-on");
+    write_consent(&directory.path, false);
+    let listener = CaptureListener::start(0);
+
+    let output = escpost(&directory.path, Some(listener.endpoint()))
+        .args(["telemetry", "on"])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert_success(&output);
+    assert!(listener.finish().is_empty());
+    let content = fs::read_to_string(directory.path.join("telemetry.toml"))
+        .expect("the decision file should exist");
+    assert!(content.contains("enabled = true"), "{content}");
+}
+
+#[test]
+fn telemetry_status_names_the_state_the_id_and_the_file() {
+    let directory = TemporaryDirectory::new("telemetry-status");
+    write_consent(&directory.path, true);
+
+    let enabled = escpost(&directory.path, None)
+        .env("DO_NOT_TRACK", "1")
+        .args(["telemetry", "status"])
+        .output()
+        .expect("the escpost command should finish");
+    assert_success(&enabled);
+    let stdout = String::from_utf8_lossy(&enabled.stdout);
+    assert!(
+        stdout.contains("Usage data: disabled by DO_NOT_TRACK"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("Installation ID: {INSTALLATION_ID}")),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&directory.path.join("telemetry.toml").display().to_string()),
+        "{stdout}"
+    );
+
+    let undecided_directory = TemporaryDirectory::new("telemetry-status-undecided");
+    let undecided = escpost(&undecided_directory.path, None)
+        .args(["telemetry", "status"])
+        .output()
+        .expect("the escpost command should finish");
+    assert_success(&undecided);
+    let stdout = String::from_utf8_lossy(&undecided.stdout);
+    assert!(stdout.contains("Usage data: undecided"), "{stdout}");
+    assert!(!stdout.contains("Installation ID"), "{stdout}");
+    assert!(
+        !undecided_directory.path.join("telemetry.toml").exists(),
+        "status must not write"
+    );
+}
+
 // ---- helpers ----
 
 fn escpost(config_directory: &Path, endpoint: Option<String>) -> Command {

@@ -68,5 +68,6 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Profiles(arguments) => {
             features::profiles::cli::run(arguments, cli.non_interactive)
         }
+        Command::Telemetry(arguments) => features::telemetry::cli::run(arguments),
     }
 }

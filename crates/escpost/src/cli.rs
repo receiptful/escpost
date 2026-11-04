@@ -7,6 +7,7 @@ use crate::features::printers::cli::PrintersArgs;
 use crate::features::printing::cli::PrintArgs;
 use crate::features::profiles::cli::ProfilesArgs;
 use crate::features::rendering::cli::RenderArgs;
+use crate::features::telemetry::cli::TelemetryArgs;
 
 pub(crate) mod web;
 
@@ -52,6 +53,9 @@ pub(crate) enum Command {
 
     /// Browse the embedded catalog of supported printer profiles.
     Profiles(ProfilesArgs),
+
+    /// Show or change whether anonymous usage data is shared.
+    Telemetry(TelemetryArgs),
 }
 
 #[cfg(test)]
@@ -81,5 +85,24 @@ mod tests {
         };
         assert_eq!(serve.listen, Some(Some(expected_raw)));
         assert_eq!(serve.web_listen, Some(Some(expected_web)));
+    }
+
+    #[test]
+    fn telemetry_takes_exactly_one_of_on_off_status() {
+        use crate::features::telemetry::cli::TelemetryCommand;
+
+        for (verb, expected) in [
+            ("on", TelemetryCommand::On),
+            ("off", TelemetryCommand::Off),
+            ("status", TelemetryCommand::Status),
+        ] {
+            let cli = Cli::try_parse_from(["escpost", "telemetry", verb])
+                .expect("telemetry verbs should parse");
+            let Command::Telemetry(arguments) = cli.command else {
+                panic!("telemetry should parse as the telemetry command");
+            };
+            assert_eq!(arguments.command, expected);
+        }
+        assert!(Cli::try_parse_from(["escpost", "telemetry"]).is_err());
     }
 }

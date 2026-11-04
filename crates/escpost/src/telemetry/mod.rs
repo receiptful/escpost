@@ -113,6 +113,7 @@ pub(crate) async fn report(
 fn can_prompt(cli: &Cli) -> bool {
     !cli.non_interactive
         && !reads_receipt_from_stdin(&cli.command)
+        && !matches!(cli.command, Command::Telemetry(_))
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
         && std::io::stderr().is_terminal()

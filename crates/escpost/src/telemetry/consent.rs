@@ -36,8 +36,6 @@ pub(crate) enum EnvironmentOverride {
 }
 
 impl EnvironmentOverride {
-    // Used by `telemetry status` once that command exists.
-    #[allow(dead_code)]
     pub(crate) fn variable(self) -> &'static str {
         match self {
             Self::DoNotTrack => DO_NOT_TRACK_ENV,

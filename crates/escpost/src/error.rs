@@ -1,5 +1,4 @@
 use std::fmt;
-#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -81,6 +80,12 @@ pub(crate) enum CliError {
 
     #[error("could not write command output: {0}")]
     WriteHumanOutput(#[source] std::io::Error),
+
+    #[error("could not write usage data settings to {path}: {source}")]
+    WriteTelemetrySettings {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("printer monitoring requires an interactive terminal; omit --non-interactive")]
     PrinterMonitorRequiresInteractive,
