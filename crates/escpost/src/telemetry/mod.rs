@@ -147,7 +147,8 @@ fn reads_receipt_from_stdin(command: &Command) -> bool {
 fn prompt_and_store(path: &Path) -> Decision {
     eprintln!(
         "\
-ESCPost can share anonymous usage data to help improve the tool.
+ESCPost is free and open source. Help us make it better: share anonymous
+usage data so we know which commands people use and where they fail.
 
   Sent:       command name, flag names, success or error kind, duration,
               CLI version, operating system, CPU architecture
