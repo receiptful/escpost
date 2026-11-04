@@ -123,6 +123,15 @@ from the source workspace and has not yet been published to PyPI.
 The virtual IP printer, browser workbench, and USB or RAW TCP printer management
 are currently CLI features; they are not yet exposed as reusable library APIs.
 
+## Usage data
+
+On the first interactive run the CLI asks whether it may share anonymous
+usage data: the command name, option names, success or error kind, duration,
+version, and platform. Never receipts, file names, printer names, addresses,
+or anything that identifies you. Switch it off at any time with
+`escpost telemetry off`, `DO_NOT_TRACK=1`, or `ESCPOST_TELEMETRY=0`. Details:
+<https://escpost.dev/dataprivacy>, reference: [`docs/CLI.md`](docs/CLI.md#usage-data).
+
 ## Development
 
 Docker Compose is the canonical development workflow and requires neither Rust

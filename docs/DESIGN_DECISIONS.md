@@ -1138,6 +1138,50 @@ failure signal, which carries no application payload.
 - Adding a second payload shape changes a snapshot stream into a named-event
   stream and therefore requires an explicit contract change.
 
+## DD-037 — Ask once, then report one anonymous event per command
+
+**Status:** Accepted
+
+### Context
+
+ESCPost is a free developer tool. Its maintainers need to know which commands
+are used, how often they fail, and on which platforms, both to prioritise work
+and to understand the path from the tool to receiptful.io. Telemetry in a
+developer tool is only acceptable when it is anonymous, asked for, visible,
+and trivially switched off, and when the user can verify in the source that
+nothing else is sent.
+
+### Decision
+
+The CLI asks once, on the first run with an interactive terminal, with yes as
+the default answer. The answer and a random installation ID live in
+`telemetry.toml`, separate from printer configuration. `DO_NOT_TRACK` and
+`ESCPOST_TELEMETRY=0` override the stored answer without touching it. Without
+a stored or prompted answer nothing is sent and nothing is written.
+
+One event per invocation is reported from the root dispatcher, never from a
+feature: the subcommand path, the long option names used, the outcome as a
+variant name, the duration, the CLI version, the operating system, and the
+architecture. Option values are structurally unavailable at that point, which
+is the guarantee that paths, hosts, printer names, and profile IDs cannot
+leak. Events are PostHog anonymous events (`$process_person_profile: false`)
+in the shared Receiptful project, tagged `source: escpost-cli`.
+
+Delivery is one `POST` with a two-second budget through `reqwest` with rustls.
+The official `posthog-rs` SDK was rejected: it adds a dozen transitive crates,
+a background worker, and a mandatory shutdown step for what is a single
+request.
+
+### Consequences
+
+- Adding a reported property that depends on feature-internal facts, such as
+  the printer transport, requires an explicit annotation API; there is no
+  back door from feature code into the event.
+- A broken network can add up to two seconds to a command's wall time.
+- `telemetry off` is itself reported, so opt-outs can be counted.
+- `escpost.dev/dataprivacy` is part of the contract: it lists exactly the
+  fields this decision allows and must change when they change.
+
 ## Open questions
 
 The following are intentionally not decided yet:
