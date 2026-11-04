@@ -4,3 +4,4 @@
 //! touch this module, so what is reported is decided in one place.
 
 pub(crate) mod consent;
+pub(crate) mod event;

@@ -227,6 +227,44 @@ impl CliError {
             _ => false,
         }
     }
+
+    /// The error's variant name in snake_case, for usage reporting. Only the
+    /// name is reported, never the message, so no path, host, or printer name
+    /// can leak. Application failures are prefixed so the two enums cannot
+    /// collide.
+    pub(crate) fn telemetry_kind(&self) -> String {
+        match self {
+            Self::Application(error) => {
+                format!("application_{}", snake_case(&variant_name(error)))
+            }
+            other => snake_case(&variant_name(other)),
+        }
+    }
+}
+
+/// The leading identifier of a `Debug` rendering, which for a `derive(Debug)`
+/// enum is the variant name. Deriving keeps this correct when variants are
+/// added, where a hand-written match would silently go stale.
+fn variant_name(value: &impl fmt::Debug) -> String {
+    format!("{value:?}")
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric())
+        .collect()
+}
+
+fn snake_case(name: &str) -> String {
+    let mut result = String::with_capacity(name.len() + 4);
+    for (index, character) in name.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                result.push('_');
+            }
+            result.push(character.to_ascii_lowercase());
+        } else {
+            result.push(character);
+        }
+    }
+    result
 }
 
 #[cfg(test)]
