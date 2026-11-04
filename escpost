@@ -5,6 +5,18 @@ set -eu
 project_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$project_directory"
 
+# Build the development image when it is missing or when the Dockerfile
+# changed since the last build here. A checkout that pulled a Dockerfile
+# change otherwise fails with a confusing "exec: watchexec: not found" from
+# the stale image. The stamp lives under target/, which git and the Docker
+# build context both ignore.
+stamp=target/.escpost-development-image
+if ! docker image inspect escpost-development >/dev/null 2>&1 \
+   || [ ! -f "$stamp" ] || [ Dockerfile -nt "$stamp" ]; then
+  docker compose build
+  mkdir -p target && touch "$stamp"
+fi
+
 if [ "$#" -eq 1 ] && [ "$1" = serve ]; then
   exec docker compose up
 fi
