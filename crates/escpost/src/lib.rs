@@ -28,6 +28,9 @@ pub async fn main() -> ExitCode {
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 
     let decision = telemetry::resolve(&cli);
+    if decision == telemetry::Decision::Interrupted {
+        return ExitCode::from(telemetry::INTERRUPTED_EXIT_CODE);
+    }
     let is_serve = matches!(cli.command, Command::Serve(_));
     if is_serve {
         telemetry::report(&decision, &matches, telemetry::Outcome::Started, None).await;

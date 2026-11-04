@@ -13,7 +13,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use clap::ArgMatches;
-use inquire::Confirm;
+use inquire::{Confirm, InquireError};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -32,6 +32,21 @@ pub(crate) enum Decision {
         /// Consent was given during this very invocation.
         first_run: bool,
     },
+    /// The user hit Ctrl+C or Escape at the prompt. The command must not run.
+    Interrupted,
+}
+
+/// Exit status for an interrupted prompt: 128 + SIGINT, the shell convention.
+pub(crate) const INTERRUPTED_EXIT_CODE: u8 = 130;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptAnswer {
+    Yes,
+    No,
+    /// Ctrl+C or Escape: the user wants out, not a default.
+    Interrupted,
+    /// No terminal or a broken one: ask again next time.
+    Unavailable,
 }
 
 pub(crate) enum Outcome<'a> {
@@ -146,9 +161,12 @@ ESCPost can share anonymous usage data to help improve the tool.
     let answer = Confirm::new("Share anonymous usage data?")
         .with_default(true)
         .prompt();
-    let Ok(enabled) = answer else {
-        // A closed terminal or Ctrl+C is not a "no"; ask again next time.
-        return Decision::Undecided;
+    let enabled = match classify_prompt(answer) {
+        PromptAnswer::Yes => true,
+        PromptAnswer::No => false,
+        PromptAnswer::Interrupted => return Decision::Interrupted,
+        // A closed terminal is not a "no"; ask again next time.
+        PromptAnswer::Unavailable => return Decision::Undecided,
     };
     match consent::store_at(path, enabled) {
         Ok(stored) => {
@@ -176,6 +194,59 @@ ESCPost can share anonymous usage data to help improve the tool.
     }
 }
 
+/// Every other prompt in the crate aborts the command on an interrupt; the
+/// consent prompt must not be the one place where Ctrl+C runs it anyway.
+fn classify_prompt(answer: Result<bool, InquireError>) -> PromptAnswer {
+    match answer {
+        Ok(true) => PromptAnswer::Yes,
+        Ok(false) => PromptAnswer::No,
+        Err(InquireError::OperationInterrupted | InquireError::OperationCanceled) => {
+            PromptAnswer::Interrupted
+        }
+        Err(_) => PromptAnswer::Unavailable,
+    }
+}
+
 fn debug_enabled() -> bool {
     env::var(DEBUG_ENV).is_ok_and(|value| value == "1")
+}
+
+#[cfg(test)]
+mod tests {
+    use inquire::InquireError;
+
+    use super::*;
+
+    #[test]
+    fn ctrl_c_and_escape_at_the_prompt_abort_instead_of_running_the_command() {
+        // Every other prompt in the crate aborts on an interrupt. A user who
+        // hits Ctrl+C on the first run of `escpost print` must not get a
+        // printed receipt as a side effect of declining to answer.
+        assert_eq!(
+            classify_prompt(Err(InquireError::OperationInterrupted)),
+            PromptAnswer::Interrupted
+        );
+        assert_eq!(
+            classify_prompt(Err(InquireError::OperationCanceled)),
+            PromptAnswer::Interrupted
+        );
+    }
+
+    #[test]
+    fn a_prompt_that_cannot_run_leaves_the_question_open() {
+        assert_eq!(
+            classify_prompt(Err(InquireError::NotTTY)),
+            PromptAnswer::Unavailable
+        );
+        assert_eq!(
+            classify_prompt(Err(InquireError::IO(std::io::Error::other("gone")))),
+            PromptAnswer::Unavailable
+        );
+    }
+
+    #[test]
+    fn answers_map_to_yes_and_no() {
+        assert_eq!(classify_prompt(Ok(true)), PromptAnswer::Yes);
+        assert_eq!(classify_prompt(Ok(false)), PromptAnswer::No);
+    }
 }

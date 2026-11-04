@@ -6,6 +6,8 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -348,9 +350,12 @@ fn unused_loopback_port() -> u16 {
 }
 
 /// A loopback HTTP/1.1 listener that answers every POST with 200 and keeps
-/// the bodies. `expected` bounds how long `finish` waits.
+/// the bodies. It stays open until `finish` is called, so an event the binary
+/// sends late still lands here and fails a "nothing was sent" assertion
+/// instead of hitting a closed port and being swallowed.
 struct CaptureListener {
     port: u16,
+    finished: Arc<AtomicBool>,
     handle: JoinHandle<Vec<String>>,
 }
 
@@ -365,11 +370,14 @@ impl CaptureListener {
             .local_addr()
             .expect("the listener should have an address")
             .port();
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_in_thread = Arc::clone(&finished);
         let handle = thread::spawn(move || {
             let mut bodies = Vec::new();
-            // Wait generously for the expected requests, but only briefly for
-            // unexpected extra ones so "zero requests" tests stay fast.
-            let deadline = Instant::now() + Duration::from_secs(10);
+            // Accept until the test says it is done, then keep accepting for
+            // the expected requests and a short settle window so a late or
+            // extra event is still caught. The deadline only guards a hang.
+            let deadline = Instant::now() + Duration::from_secs(30);
             let settle = Duration::from_millis(500);
             let mut last_activity = Instant::now();
             loop {
@@ -379,8 +387,9 @@ impl CaptureListener {
                         last_activity = Instant::now();
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        let done_waiting =
-                            bodies.len() >= expected && last_activity.elapsed() > settle;
+                        let done_waiting = finished_in_thread.load(Ordering::SeqCst)
+                            && bodies.len() >= expected
+                            && last_activity.elapsed() > settle;
                         if done_waiting || Instant::now() > deadline {
                             break;
                         }
@@ -391,7 +400,11 @@ impl CaptureListener {
             }
             bodies
         });
-        Self { port, handle }
+        Self {
+            port,
+            finished,
+            handle,
+        }
     }
 
     fn endpoint(&self) -> String {
@@ -399,6 +412,7 @@ impl CaptureListener {
     }
 
     fn finish(self) -> Vec<String> {
+        self.finished.store(true, Ordering::SeqCst);
         self.handle
             .join()
             .expect("the capture listener thread should finish")

@@ -1162,9 +1162,10 @@ a stored or prompted answer nothing is sent and nothing is written.
 One event per invocation is reported from the root dispatcher, never from a
 feature: the subcommand path, the long option names used, the outcome as a
 variant name, the duration, the CLI version, the operating system, and the
-architecture. Option values are structurally unavailable at that point, which
-is the guarantee that paths, hosts, printer names, and profile IDs cannot
-leak. Events are PostHog anonymous events (`$process_person_profile: false`)
+architecture. The dispatcher does hold the parsed values, so the guarantee
+that paths, hosts, printer names, and profile IDs cannot leak is a rule, not
+a structure: the event builder reads only clap's option names, and tests
+assert that typed values never appear in the body. Events are PostHog anonymous events (`$process_person_profile: false`)
 in the shared Receiptful project, tagged `source: escpost-cli`.
 
 Delivery is one `POST` with a two-second budget through `reqwest` with rustls.

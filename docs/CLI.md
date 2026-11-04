@@ -60,6 +60,11 @@ exactly these fields:
 
 | Field | Content |
 |---|---|
+| `distinct_id` | The installation ID |
+| `timestamp` | When the event was sent |
+| `api_key` | The public write-only PostHog project token |
+| `source` | Always `escpost-cli` |
+| `$process_person_profile` | Always `false`: an anonymous event, no person profile |
 | `command` | The subcommand path, for example `printers add` |
 | `flags` | The long option names given, never their values |
 | `outcome` | `ok`, `started` for `serve`, or the error kind such as `missing_profile` |
@@ -74,7 +79,7 @@ machine are never sent. Details: <https://escpost.dev/dataprivacy>.
 
 Precedence, highest first:
 
-1. `DO_NOT_TRACK` set to anything but `0`, or `ESCPOST_TELEMETRY` set to `0`,
+1. `DO_NOT_TRACK` set to a non-empty value other than `0`, or `ESCPOST_TELEMETRY` set to `0`,
    `false`, or `off`: nothing is shared and nothing is asked.
 2. The stored answer in `telemetry.toml`.
 3. The prompt, when `--non-interactive` is absent, the receipt does not come

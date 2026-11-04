@@ -112,6 +112,11 @@ services:
       # Keep configuration used by this checkout separate from any
       # host-installed ESCPost version.
       ESCPOST_CONFIG_DIR: /home/developer/.config/escpost
+      # Development runs are not usage. Without this, `docker compose run`
+      # has a TTY, the consent prompt defaults to yes, and every watchexec
+      # restart of `serve` would report a production event. Override with
+      # `-e ESCPOST_TELEMETRY=1` to test delivery deliberately.
+      ESCPOST_TELEMETRY: "0"
     volumes:
       - .:/workspace
       - escpost-config:/home/developer/.config/escpost
