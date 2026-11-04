@@ -10,6 +10,7 @@ mod net;
 mod output;
 mod profiles;
 mod source;
+mod telemetry;
 mod web;
 
 use std::process::ExitCode;
