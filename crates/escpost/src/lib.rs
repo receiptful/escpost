@@ -27,6 +27,13 @@ pub async fn main() -> ExitCode {
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 
+    // The delivery helper is the one invocation that must never be reported,
+    // or every event would spawn another helper.
+    if let Command::SendTelemetry(arguments) = &cli.command {
+        telemetry::deliver(&arguments.event).await;
+        return ExitCode::SUCCESS;
+    }
+
     let decision = telemetry::resolve(&cli);
     if decision == telemetry::Decision::Interrupted {
         return ExitCode::from(telemetry::INTERRUPTED_EXIT_CODE);
@@ -72,5 +79,6 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             features::profiles::cli::run(arguments, cli.non_interactive)
         }
         Command::Telemetry(arguments) => features::telemetry::cli::run(arguments),
+        Command::SendTelemetry(_) => unreachable!("handled before dispatch in main"),
     }
 }

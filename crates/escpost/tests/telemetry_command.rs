@@ -161,6 +161,49 @@ fn an_unreachable_endpoint_changes_neither_exit_code_nor_output() {
 }
 
 #[test]
+fn delivery_does_not_hold_the_command_for_the_send_budget() {
+    // A blackhole address makes the send run into its 2 second timeout. The
+    // command itself must be back at the shell long before that, because the
+    // event is posted by a detached child process.
+    let directory = TemporaryDirectory::new("detached-send");
+    write_consent(&directory.path, true);
+
+    let started = Instant::now();
+    let output = escpost(&directory.path, Some("http://10.255.255.1:9/".to_owned()))
+        .args(["--non-interactive", "profiles", "get", "REFERENCE"])
+        .output()
+        .expect("the escpost command should finish");
+    let elapsed = started.elapsed();
+
+    assert_success(&output);
+    assert!(
+        elapsed < Duration::from_millis(1500),
+        "the command waited on the send: {elapsed:?}"
+    );
+}
+
+#[test]
+fn the_delivery_helper_posts_the_body_it_was_given_exactly_once() {
+    // The helper is itself an escpost invocation. It must forward the one
+    // body and never report its own run, or every event would spawn another.
+    let directory = TemporaryDirectory::new("delivery-helper");
+    write_consent(&directory.path, true);
+    let listener = CaptureListener::start(1);
+    let body =
+        r#"{"event":"escpost_cli_command","distinct_id":"x","properties":{"command":"render"}}"#;
+
+    let output = escpost(&directory.path, Some(listener.endpoint()))
+        .args(["__send-telemetry", body])
+        .output()
+        .expect("the escpost command should finish");
+
+    assert_success(&output);
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
+    let bodies = listener.finish();
+    assert_eq!(bodies, [body.to_owned()]);
+}
+
+#[test]
 fn a_malformed_endpoint_is_swallowed_too() {
     // Review focus 5.
     let directory = TemporaryDirectory::new("malformed-endpoint");
@@ -378,7 +421,10 @@ impl CaptureListener {
             // the expected requests and a short settle window so a late or
             // extra event is still caught. The deadline only guards a hang.
             let deadline = Instant::now() + Duration::from_secs(30);
-            let settle = Duration::from_millis(500);
+            // The binary posts from a detached child that starts after the
+            // parent has already exited, so a stray event can arrive a little
+            // after `finish`. Keep listening long enough to catch it.
+            let settle = Duration::from_millis(1500);
             let mut last_activity = Instant::now();
             loop {
                 match listener.accept() {

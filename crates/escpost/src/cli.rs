@@ -8,6 +8,7 @@ use crate::features::printing::cli::PrintArgs;
 use crate::features::profiles::cli::ProfilesArgs;
 use crate::features::rendering::cli::RenderArgs;
 use crate::features::telemetry::cli::TelemetryArgs;
+use crate::telemetry::SendTelemetryArgs;
 
 pub(crate) mod web;
 
@@ -56,6 +57,11 @@ pub(crate) enum Command {
 
     /// Show or change whether anonymous usage data is shared.
     Telemetry(TelemetryArgs),
+
+    /// Deliver one usage event. The parent process spawns this detached so a
+    /// slow network never holds up the command the user typed.
+    #[command(name = "__send-telemetry", hide = true)]
+    SendTelemetry(SendTelemetryArgs),
 }
 
 #[cfg(test)]
@@ -104,5 +110,23 @@ mod tests {
             assert_eq!(arguments.command, expected);
         }
         assert!(Cli::try_parse_from(["escpost", "telemetry"]).is_err());
+    }
+
+    #[test]
+    fn the_delivery_helper_parses_but_stays_out_of_help() {
+        use clap::CommandFactory;
+
+        let cli = Cli::try_parse_from(["escpost", "__send-telemetry", "{\"event\":\"x\"}"])
+            .expect("the hidden delivery command should parse");
+        let Command::SendTelemetry(arguments) = cli.command else {
+            panic!("__send-telemetry should parse as the delivery command");
+        };
+        assert_eq!(arguments.event, "{\"event\":\"x\"}");
+
+        let help = Cli::command().render_long_help().to_string();
+        assert!(
+            !help.contains("send-telemetry"),
+            "the delivery helper is an implementation detail:\n{help}"
+        );
     }
 }

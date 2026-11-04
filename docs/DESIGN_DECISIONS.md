@@ -1168,8 +1168,13 @@ a structure: the event builder reads only clap's option names, and tests
 assert that typed values never appear in the body. Events are PostHog anonymous events (`$process_person_profile: false`)
 in the shared Receiptful project, tagged `source: escpost-cli`.
 
-Delivery is one `POST` with a two-second budget through `reqwest` with rustls.
-The official `posthog-rs` SDK was rejected: it adds a dozen transitive crates,
+Delivery is one `POST` with a two-second budget through `reqwest` with rustls,
+made by a detached child process (`escpost __send-telemetry <body>`) so the
+command the user typed returns at once. A cold HTTPS round trip to the EU
+ingress costs about six network round trips, which is 150 ms in Frankfurt and
+over a second from far away; waiting for it in the command was measured and
+rejected. `ESCPOST_TELEMETRY_DEBUG=1` sends in-process instead so the result
+can be printed. The official `posthog-rs` SDK was rejected: it adds a dozen transitive crates,
 a background worker, and a mandatory shutdown step for what is a single
 request.
 
@@ -1178,7 +1183,9 @@ request.
 - Adding a reported property that depends on feature-internal facts, such as
   the printer transport, requires an explicit annotation API; there is no
   back door from feature code into the event.
-- A broken network can add up to two seconds to a command's wall time.
+- The command pays only a fork and exec, a few milliseconds; the child owns
+  the two-second budget. An event is lost if the machine, or the container
+  the command is PID 1 of, goes away inside that budget.
 - `telemetry off` is itself reported, so opt-outs can be counted.
 - `escpost.dev/dataprivacy` is part of the contract: it lists exactly the
   fields this decision allows and must change when they change.

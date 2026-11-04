@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
-use clap::ArgMatches;
+use clap::{ArgMatches, Args};
 use inquire::{Confirm, InquireError};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -47,6 +47,13 @@ enum PromptAnswer {
     Interrupted,
     /// No terminal or a broken one: ask again next time.
     Unavailable,
+}
+
+/// Arguments of the hidden `__send-telemetry` delivery helper.
+#[derive(Debug, Args)]
+pub(crate) struct SendTelemetryArgs {
+    /// The serialised event body to post.
+    pub(crate) event: String,
 }
 
 pub(crate) enum Outcome<'a> {
@@ -84,8 +91,11 @@ pub(crate) fn resolve(cli: &Cli) -> Decision {
     prompt_and_store(&path)
 }
 
-/// Send the invocation's event when the decision allows it. Failures are
-/// swallowed; `ESCPOST_TELEMETRY_DEBUG=1` reports them on stderr.
+/// Report the invocation's event when the decision allows it, normally by
+/// handing it to a detached helper process so the command is not delayed.
+/// Failures are swallowed. With `ESCPOST_TELEMETRY_DEBUG=1` the send runs in
+/// this process instead and its result is printed on stderr, because a
+/// detached child has no terminal to report to.
 pub(crate) async fn report(
     decision: &Decision,
     matches: &ArgMatches,
@@ -115,14 +125,24 @@ pub(crate) async fn report(
         *first_run,
         timestamp,
     );
-    let endpoint = sink::endpoint();
-    let result = sink::send(&endpoint, &event).await;
+    let Ok(body) = serde_json::to_string(&event) else {
+        return;
+    };
     if debug_enabled() {
-        match result {
+        let endpoint = sink::endpoint();
+        match sink::send(&endpoint, &body).await {
             Ok(()) => eprintln!("telemetry: sent {} to {endpoint}", event::EVENT_NAME),
             Err(error) => eprintln!("telemetry: not sent to {endpoint}: {error}"),
         }
+        return;
     }
+    // Nothing to tell the user if the spawn fails: the event is simply lost.
+    let _ = sink::spawn_detached(&body);
+}
+
+/// The body of the hidden `__send-telemetry` helper: post and exit quietly.
+pub(crate) async fn deliver(body: &str) {
+    let _ = sink::send(&sink::endpoint(), body).await;
 }
 
 fn can_prompt(cli: &Cli) -> bool {
