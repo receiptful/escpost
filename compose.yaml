@@ -44,6 +44,10 @@ services:
     <<: *development-service
     profiles:
       - tools
+    # Binary tests that run without ESCPOST_CONFIG_DIR would otherwise read a
+    # developer's consented configuration and report test runs as real usage.
+    environment:
+      DO_NOT_TRACK: "1"
     depends_on:
       frontend-build:
         condition: service_completed_successfully
