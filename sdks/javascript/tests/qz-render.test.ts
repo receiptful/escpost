@@ -59,6 +59,35 @@ describe("rasterToEscpos", () => {
     expect(ones).toBeGreaterThan(0);
   });
 
+  it("prints a thin anti-aliased stroke as a solid line, as a printer driver draws text", () => {
+    // Small text drawn by the browser is mostly grey edges: here a stroke a
+    // little thinner than one dot, so it comes out grey 150, not black.
+    const size = 16;
+    const rgba = new Uint8ClampedArray(size * size * 4).fill(255);
+    for (let y = 0; y < size; y++) rgba.fill(150, (y * size + 8) * 4, (y * size + 8) * 4 + 3);
+    const bytes = rasterToEscpos(rgba, size, size);
+    for (let y = 0; y < size; y++) {
+      const row = Array.from(bytes.slice(8 + y * 2, 8 + y * 2 + 2));
+      expect(row).toEqual([0x00, 0x80]);
+    }
+  });
+
+  it("keeps a large grey shape shaded inside, with a solid outline", () => {
+    const size = 40;
+    const rgba = new Uint8ClampedArray(size * size * 4).fill(255);
+    for (let y = 4; y < 36; y++) rgba.fill(128, (y * size + 4) * 4, (y * size + 36) * 4);
+    const bytes = rasterToEscpos(rgba, size, size);
+    const bytesPerRow = size / 8;
+    const black = (x: number, y: number) => (bytes[8 + y * bytesPerRow + (x >> 3)]! >> (7 - (x & 7))) & 1;
+    // The outline is a sharp edge: solid black.
+    for (let y = 4; y < 36; y++) expect(black(4, y)).toBe(1);
+    // Away from the edge the grey is still dithered, not filled.
+    let ones = 0;
+    for (let y = 8; y < 32; y++) for (let x = 8; x < 32; x++) ones += black(x, y);
+    expect(ones / (24 * 24)).toBeGreaterThan(0.3);
+    expect(ones / (24 * 24)).toBeLessThan(0.55);
+  });
+
   it("splits a tall image into bands of at most 256 rows", () => {
     const height = 300;
     const bytes = rasterToEscpos(new Uint8ClampedArray(8 * height * 4).fill(255), 8, height);

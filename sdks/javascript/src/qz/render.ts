@@ -43,6 +43,18 @@ const BAND_HEIGHT = 256;
  * 1 turns the correction off. Tuned by printing a grey ramp (see the PR).
  */
 const DOT_GAIN_GAMMA = 0.8;
+/**
+ * The browser draws text anti-aliased: at receipt resolution a letter is mostly
+ * grey edge pixels, and dithering those greys scatters the letter into sparse
+ * dots. A printer driver draws text solid instead. So a pixel on a sharp edge,
+ * where its 3×3 neighbourhood spans at least `EDGE_CONTRAST` grey levels, is
+ * printed black below `EDGE_BLACK_BELOW` and white above, with no dithering.
+ * Flat areas, such as photos and shaded logos, are still dithered. Tuned on
+ * QZ Tray's sample PDF at 512 dots: 200 keeps thin Courier strokes whole,
+ * 220 starts to fill the counters of small serif text.
+ */
+const EDGE_CONTRAST = 64;
+const EDGE_BLACK_BELOW = 200;
 
 const ESC_INIT = [0x1b, 0x40];
 const FEED_AND_CUT = [0x0a, 0x0a, 0x0a, 0x1d, 0x56, 0x41, 0x00];
@@ -590,15 +602,26 @@ export function rasterToEscpos(rgba: ArrayLike<number>, width: number, height: n
 }
 
 /**
- * One entry per pixel, 1 for a black dot, using Floyd-Steinberg error diffusion
- * on greys lightened for dot gain (see `DOT_GAIN_GAMMA`).
+ * One entry per pixel, 1 for a black dot. Pixels on a sharp edge, such as text,
+ * are printed solid (see `EDGE_CONTRAST`); the others use Floyd-Steinberg error
+ * diffusion on greys lightened for dot gain (see `DOT_GAIN_GAMMA`).
  */
 function ditherToBlack(rgba: ArrayLike<number>, width: number, height: number): Uint8Array {
-  const grey = new Float32Array(width * height);
-  for (let index = 0; index < grey.length; index++) {
+  const luma = new Float32Array(width * height);
+  for (let index = 0; index < luma.length; index++) {
     const offset = index * 4;
-    const luma = (299 * rgba[offset]! + 587 * rgba[offset + 1]! + 114 * rgba[offset + 2]!) / 1000;
-    grey[index] = 255 * (luma / 255) ** DOT_GAIN_GAMMA;
+    luma[index] = (299 * rgba[offset]! + 587 * rgba[offset + 1]! + 114 * rgba[offset + 2]!) / 1000;
+  }
+
+  const grey = new Float32Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      const value = luma[index]!;
+      grey[index] = onSharpEdge(luma, width, height, x, y)
+        ? value < EDGE_BLACK_BELOW ? 0 : 255
+        : 255 * (value / 255) ** DOT_GAIN_GAMMA;
+    }
   }
 
   const black = new Uint8Array(width * height);
@@ -618,4 +641,18 @@ function ditherToBlack(rgba: ArrayLike<number>, width: number, height: number): 
     }
   }
   return black;
+}
+
+/** Whether the pixel's 3×3 neighbourhood spans at least `EDGE_CONTRAST` grey levels. */
+function onSharpEdge(luma: Float32Array, width: number, height: number, x: number, y: number): boolean {
+  let lightest = 0;
+  let darkest = 255;
+  for (let row = Math.max(0, y - 1); row <= Math.min(height - 1, y + 1); row++) {
+    for (let column = Math.max(0, x - 1); column <= Math.min(width - 1, x + 1); column++) {
+      const value = luma[row * width + column]!;
+      if (value > lightest) lightest = value;
+      if (value < darkest) darkest = value;
+    }
+  }
+  return lightest - darkest >= EDGE_CONTRAST;
 }
