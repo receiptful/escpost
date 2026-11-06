@@ -1,6 +1,7 @@
 import { EscpostError } from "../errors";
 import { base64ToBytes, bytesToBase64, type QzPrintElement } from "./jobs";
 import { horizontalStretch, qzImageOptions, qzImageToEscpos } from "./escpos-image";
+import { LABEL_DPI, labelImageOptions, printerLanguage, rasterToLabel, type LabelLanguage } from "./label-image";
 import { importPdfJs } from "./pdfjs";
 import type { PrinterProfile } from "../types";
 
@@ -62,24 +63,6 @@ const FEED_AND_CUT = [0x0a, 0x0a, 0x0a, 0x1d, 0x56, 0x41, 0x00];
 type Options = Record<string, unknown>;
 
 /**
- * The shim draws raw image, HTML and PDF jobs as ESC/POS only. A page asking
- * for another printer language (ZPL, EPL...) is refused rather than sent ESC/POS
- * its printer would print as garbage. QZ Tray's names for ESC/POS are "ESCPOS",
- * in any case, and "ESC/POS"; a job without a language is taken as ESC/POS,
- * the only language ESCPost prints.
- */
-export function assertEscposLanguage(options: Options): void {
-  const language = options["language"];
-  if (language === undefined || language === null || String(language).trim() === "") return;
-  const name = String(language).trim();
-  if (name.toUpperCase() === "ESCPOS" || name === "ESC/POS") return;
-  throw new EscpostError(
-    "UNSUPPORTED_FORMAT",
-    `ESCPost draws images, HTML and PDFs in ESC/POS only, not in the "${name}" printer language.`,
-  );
-}
-
-/**
  * Replace every element that needs rendering by a raw base64 element; leave the
  * rest alone. `geometry` is only asked for when something is drawn, so a job
  * of raw commands costs no extra round trip to ESCPost.
@@ -114,7 +97,8 @@ async function renderElement(
 
   const options = (job.options ?? {}) as Options;
   // Pixel jobs have no printer language; a raw one is drawn for the language it names.
-  if (type === "raw") assertEscposLanguage(options);
+  const language = type === "raw" ? printerLanguage(options["language"]) : "escpos";
+  if (language !== "escpos") return rawElement(await renderLabel(job, format, language, options, configOptions));
   const profile = await geometry();
   const scaleContent = configOptions["scaleContent"] !== false;
   // A raw job that sets QZ's image options gets QZ's own encoding (escpos-image.ts).
@@ -144,6 +128,43 @@ async function renderElement(
   // A pixel job is a whole document, which a driver would start and cut.
   const bytes = type === "pixel" ? [...ESC_INIT, ...commands, ...FEED_AND_CUT] : commands;
   return rawElement(Uint8Array.from(bytes));
+}
+
+/** A label is 4 inches wide at 203 dpi when a raw HTML job gives no `pageWidth`. */
+const DEFAULT_LABEL_WIDTH_DOTS = 4 * LABEL_DPI;
+
+/**
+ * A raw image, HTML or PDF job for a label printer (ZPL, EPL, CPCL or SBPL),
+ * drawn as QZ Tray draws it: one pixel per dot, black or white by QZ's
+ * `quantization` and `threshold`, at 203 dpi. ESCPost's printer profiles
+ * describe receipt printers, so the size comes from the job: a `pageWidth` in
+ * dots if it gives one; otherwise an image keeps its own size, a PDF its real
+ * size, and HTML is laid out on a 4 inch label.
+ */
+async function renderLabel(
+  job: QzPrintElement,
+  format: string,
+  language: LabelLanguage,
+  options: Options,
+  configOptions: Options,
+): Promise<Uint8Array> {
+  const pageWidth = positive(options["pageWidth"]);
+  const drawn =
+    format === "image"
+      ? [await imageToCanvas(job, pageWidth ?? Number.POSITIVE_INFINITY, false, true)]
+      : format === "html"
+        ? [await htmlToCanvas(job, pageWidth ?? DEFAULT_LABEL_WIDTH_DOTS, rawDotsPerPixel(configOptions, LABEL_DPI), configOptions["scaleContent"] !== false)]
+        : await pdfToCanvases(job, pageWidth ?? Number.POSITIVE_INFINITY, pageWidth !== undefined, {
+            printableWidthDots: Number.POSITIVE_INFINITY,
+            dpiX: LABEL_DPI,
+            dpiY: LABEL_DPI,
+          });
+  const imageOptions = labelImageOptions(options);
+  const commands = drawn.flatMap((canvas) => {
+    const { data } = canvas.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
+    return Array.from(rasterToLabel(data, canvas.width, canvas.height, language, imageOptions, ditherToBlack));
+  });
+  return Uint8Array.from(commands);
 }
 
 function rawElement(bytes: Uint8Array): QzPrintElement {
@@ -247,12 +268,13 @@ function toMillimetres(value: number, configOptions: Options): number {
  * Dots per CSS pixel for raw HTML. QZ Tray lays it out at 96 CSS px per inch of
  * the config's density, or of 180 dpi for ESC/POS when there is none, and
  * prints that at one dot per density pixel: 180 / 96 = 1.875 dots per CSS px.
+ * A label printer language uses 203 dpi instead, QZ Tray's density for it.
  */
-function rawDotsPerPixel(configOptions: Options): number {
+function rawDotsPerPixel(configOptions: Options, fallbackDpi = QZ_ESCPOS_DENSITY): number {
   const density = Number(configOptions["density"]);
   const units = String(configOptions["units"] ?? "in").toLowerCase();
   const perInch = units === "mm" ? 25.4 : units === "cm" ? 2.54 : 1;
-  const dpi = Number.isFinite(density) && density * perInch > 1 ? density * perInch : QZ_ESCPOS_DENSITY;
+  const dpi = Number.isFinite(density) && density * perInch > 1 ? density * perInch : fallbackDpi;
   return dpi / CSS_DPI;
 }
 

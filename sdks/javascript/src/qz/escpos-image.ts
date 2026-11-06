@@ -103,7 +103,7 @@ export function qzImageToEscpos(
 }
 
 /** QZ Tray pads the right side with transparent pixels, which every rule reads as white. */
-function padRight(rgba: ArrayLike<number>, width: number, height: number, paddedWidth: number): Uint8ClampedArray {
+export function padRight(rgba: ArrayLike<number>, width: number, height: number, paddedWidth: number): Uint8ClampedArray {
   const padded = new Uint8ClampedArray(paddedWidth * height * 4);
   for (let y = 0; y < height; y++) {
     for (let index = 0; index < width * 4; index++) {
@@ -114,7 +114,7 @@ function padRight(rgba: ArrayLike<number>, width: number, height: number, padded
 }
 
 /** Transparent pixels as paper, for the dithering, which only reads colours. */
-function whiteBehind(rgba: Uint8ClampedArray): Uint8ClampedArray {
+export function whiteBehind(rgba: Uint8ClampedArray): Uint8ClampedArray {
   const flat = new Uint8ClampedArray(rgba.length);
   for (let offset = 0; offset < rgba.length; offset += 4) {
     const alpha = rgba[offset + 3]! / 255;

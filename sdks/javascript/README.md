@@ -148,9 +148,13 @@ offline, and a page that prints no PDF never downloads it.
 `qz.security` calls are accepted and ignored, so no certificate is needed and no
 popup appears. Raw jobs are sent as they are, with plain text encoded in the
 config's `encoding`, as QZ Tray does. Image, HTML and PDF jobs are drawn in the
-browser and printed as an ESC/POS image; a raw one that asks for another printer
-language, such as ZPL or EPL, rejects with `UNSUPPORTED_FORMAT`. They are drawn
-for the printer's profile: its printable width and resolution. Give each
+browser and printed as an ESC/POS image. A raw one that asks for a label printer
+language (ZPL, EPL, CPCL or SBPL) gets that language's image command instead,
+encoded as QZ Tray does: the page wraps it in its own label commands, as with QZ
+Tray, and gives its size in dots with `pageWidth` (otherwise an image keeps its
+own size, a PDF its real size at 203 dpi, and HTML a 4 inch label). Other
+languages, such as Evolis or PGL, reject with `UNSUPPORTED_FORMAT`. ESC/POS
+images are drawn for the printer's profile: its printable width and resolution. Give each
 printer its profile (`escpost printers add --profile`); a printer without one
 is drawn for a 58 mm roll at 203 dpi (384 dots wide), or for the paper `size`
 the config gives, so nothing prints past a narrower head than assumed. QZ Tray features that ESCPost does not

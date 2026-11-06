@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jobToBytes } from "../src/qz/jobs";
+import { labelImageOptions, printerLanguage, rasterToLabel } from "../src/qz/label-image";
 import {
-  assertEscposLanguage,
   imageDrawWidth,
   pdfScale,
   pixelDotsPerCssPixel,
@@ -100,26 +100,81 @@ describe("rasterToEscpos", () => {
 });
 
 describe("printer language of raw image, HTML and PDF jobs", () => {
-  it("accepts ESC/POS under QZ's names, or no language at all", () => {
+  it("takes ESC/POS under QZ's names, or no language at all", () => {
     for (const language of [undefined, "", "ESCPOS", "escpos", "ESC/POS"]) {
-      expect(() => assertEscposLanguage({ language })).not.toThrow();
+      expect(printerLanguage(language)).toBe("escpos");
     }
   });
 
-  it("refuses the label printer languages ESCPost cannot draw in", () => {
-    for (const language of ["ZPL", "EPL", "CPCL", "SBPL", "EVOLIS", "PGL"]) {
-      expect(() => assertEscposLanguage({ language })).toThrow(
+  it("knows QZ Tray's label printer languages under all their names", () => {
+    expect(["ZPL", "zpl", "ZEBRA", "ZPL2", "ZPLII"].map(printerLanguage)).toEqual(Array(5).fill("zpl"));
+    expect(["EPL", "ELTRON", "EPL2", "EPLII"].map(printerLanguage)).toEqual(Array(4).fill("epl"));
+    expect(["CPCL", "COMTEC"].map(printerLanguage)).toEqual(["cpcl", "cpcl"]);
+    expect(["SBPL", "SATO"].map(printerLanguage)).toEqual(["sbpl", "sbpl"]);
+  });
+
+  it("refuses the printer languages ESCPost cannot draw in", () => {
+    for (const language of ["EVOLIS", "PGL", "DPL", "FGL"]) {
+      expect(() => printerLanguage(language)).toThrow(
         expect.objectContaining({ code: "UNSUPPORTED_FORMAT", message: expect.stringContaining(language) }),
       );
     }
   });
 
-  it("refuses a ZPL image job before drawing it, instead of sending ESC/POS bytes", async () => {
-    const job = { type: "raw", format: "image", flavor: "base64", data: "iVBORw0KGgo=", options: { language: "ZPL" } };
+  it("refuses an Evolis image job before drawing it, instead of sending commands the printer cannot read", async () => {
+    const job = { type: "raw", format: "image", flavor: "base64", data: "iVBORw0KGgo=", options: { language: "EVOLIS" } };
     await expect(renderElements([job], {})).rejects.toMatchObject({
       code: "UNSUPPORTED_FORMAT",
-      message: expect.stringContaining("ZPL"),
+      message: expect.stringContaining("EVOLIS"),
     });
+  });
+});
+
+describe("rasterToLabel, QZ Tray's label image commands", () => {
+  const text = (bytes: Uint8Array) => Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+  const defaults = labelImageOptions({});
+  const noDither = () => {
+    throw new Error("not dithered");
+  };
+
+  it("writes a ZPL graphic field, ^GFA with the byte counts and upper-case hex", () => {
+    const bytes = rasterToLabel(pixels(["#......#", "........"]), 8, 2, "zpl", defaults, noDither);
+    expect(text(bytes)).toBe("^GFA,2,2,1,8100");
+  });
+
+  it("pads a width that is not a multiple of 8 with white, as QZ Tray does", () => {
+    const bytes = rasterToLabel(pixels(["#########"]), 9, 1, "zpl", defaults, noDither);
+    expect(text(bytes)).toBe("^GFA,2,2,2,FF80");
+  });
+
+  it("writes EPL's GW with the position, in binary, where 0 is black", () => {
+    const options = labelImageOptions({ x: 10, y: 20 });
+    const bytes = rasterToLabel(pixels(["#......."]), 8, 1, "epl", options, noDither);
+    expect(Array.from(bytes)).toEqual([...Array.from("GW10,20,1,1,", (c) => c.charCodeAt(0)), 0x7f, 0x0a]);
+  });
+
+  it("writes CPCL's EG with the size, the position and hex", () => {
+    const options = labelImageOptions({ x: "5", y: "6" });
+    expect(text(rasterToLabel(pixels(["#......."]), 8, 1, "cpcl", options, noDither))).toBe("EG 1 1 5 6 80\r\n");
+  });
+
+  it("writes SBPL's ESC G H with three-digit sizes, the rows counted in eights", () => {
+    const rows = Array(8).fill("#.......");
+    expect(text(rasterToLabel(pixels(rows), 8, 8, "sbpl", defaults, noDither))).toBe("\x1bGH001001" + "80".repeat(8));
+  });
+
+  it("decides black by luma under QZ's threshold, 127 by default, with no dithering", () => {
+    const grey = new Uint8ClampedArray(8 * 4).fill(150);
+    for (let alpha = 3; alpha < grey.length; alpha += 4) grey[alpha] = 255;
+    expect(text(rasterToLabel(grey, 8, 1, "zpl", defaults, noDither))).toBe("^GFA,1,1,1,00");
+    expect(text(rasterToLabel(grey, 8, 1, "zpl", labelImageOptions({ threshold: 200 }), noDither))).toBe("^GFA,1,1,1,FF");
+  });
+
+  it("dithers only when the page asks for it", () => {
+    const dither = vi.fn(() => new Uint8Array(8).fill(1));
+    const bytes = rasterToLabel(pixels(["........"]), 8, 1, "zpl", labelImageOptions({ quantization: "dither" }), dither);
+    expect(dither).toHaveBeenCalledOnce();
+    expect(text(bytes)).toBe("^GFA,1,1,1,FF");
   });
 });
 
