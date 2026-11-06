@@ -26,6 +26,7 @@ escpost print        Send a known byte stream to a configured printer
 escpost serve        Capture RAW TCP print jobs and preview them in a browser
 escpost printers     List and register printers
 escpost profiles     Browse the embedded printer-profile catalog
+escpost telemetry    Show or change whether anonymous usage data is shared
 ```
 
 ## Global option
@@ -41,6 +42,63 @@ escpost render receipt.bin --profile REFERENCE -o receipt.png --non-interactive
 When a required value cannot be resolved without prompting, the command exits
 with an error. ESCPost also avoids prompting when standard input is not a
 terminal or is being used as receipt input.
+
+## Usage data
+
+ESCPost can share anonymous usage data. On the first run with an interactive
+terminal it asks once:
+
+```text
+? Share anonymous usage data? (Y/n)
+```
+
+Enter means yes. The answer and a random installation ID are stored in
+`telemetry.toml` next to `printers.toml`, so the question is asked once.
+
+With consent, each invocation sends one event to PostHog (EU region) with
+exactly these fields:
+
+| Field | Content |
+|---|---|
+| `distinct_id` | The installation ID |
+| `timestamp` | When the event was sent |
+| `api_key` | The public write-only PostHog project token |
+| `source` | Always `escpost-cli` |
+| `$process_person_profile` | Always `false`: an anonymous event, no person profile |
+| `command` | The subcommand path, for example `printers add` |
+| `flags` | The long option names given, never their values |
+| `outcome` | `ok`, `started` for `serve`, or the error kind such as `missing_profile` |
+| `duration_ms` | Wall time of the command; absent for `serve` |
+| `version`, `os`, `arch` | CLI version, operating system, CPU architecture |
+| `first_run` | Present once, on the invocation that gave consent |
+
+The installation ID is a random UUID that carries no information about the
+machine. Receipt data, file names, printer names, hosts, serial numbers,
+profile IDs, error messages, and anything that identifies the user or the
+machine are never sent. Details: <https://escpost.dev/dataprivacy>.
+
+Precedence, highest first:
+
+1. `DO_NOT_TRACK` set to a non-empty value other than `0`, or `ESCPOST_TELEMETRY` set to `0`,
+   `false`, or `off`: nothing is shared and nothing is asked.
+2. The stored answer in `telemetry.toml`.
+3. The prompt, when `--non-interactive` is absent, the receipt does not come
+   from standard input, and standard input, output, and error are terminals.
+4. Otherwise nothing is shared and nothing is written; the next interactive
+   run asks.
+
+```bash
+escpost telemetry status   # effective state, installation ID, settings file
+escpost telemetry off      # stop sharing; keeps the installation ID
+escpost telemetry on       # share again
+```
+
+`telemetry off` is reported as the last event of an installation, because
+consent is evaluated when an invocation starts. The event is posted by a
+detached helper process, so the command does not wait for the network.
+Sending never changes an exit code and never prints, except with
+`ESCPOST_TELEMETRY_DEBUG=1`, which sends from the command itself and logs
+the delivery result to standard error.
 
 ## Input sources
 
@@ -219,7 +277,8 @@ The platform default comes from the operating system through Rust's
 `directories` crate. Linux uses
 `$XDG_CONFIG_HOME/escpost/printers.toml`, falling back to
 `~/.config/escpost/printers.toml`. A missing implicit file means no configured
-printers. Read-only commands do not create the directory or file.
+printers. Read-only commands do not create the directory or file. The same
+directory holds `telemetry.toml`; see [Usage data](#usage-data).
 
 ### `printers add`
 
@@ -790,6 +849,17 @@ printer dots.
 
 Port 9100 has no authentication or encryption. Binding either listener to a
 non-loopback address can expose receipt data and should be deliberate.
+
+## `escpost telemetry`
+
+```text
+escpost telemetry on       Share anonymous usage data
+escpost telemetry off      Stop sharing; the installation ID is kept
+escpost telemetry status   Show the effective state, the installation ID, and the settings file
+```
+
+None of the three prompts. `status` never writes. See [Usage data](#usage-data)
+for what is sent and how the environment variables take precedence.
 
 ## Errors and output
 

@@ -44,6 +44,10 @@ services:
     <<: *development-service
     profiles:
       - tools
+    # Binary tests that run without ESCPOST_CONFIG_DIR would otherwise read a
+    # developer's consented configuration and report test runs as real usage.
+    environment:
+      DO_NOT_TRACK: "1"
     depends_on:
       frontend-build:
         condition: service_completed_successfully
@@ -110,6 +114,11 @@ services:
       # git-ignored .config/, so printers.toml and telemetry.toml are plain
       # files the developer can read and edit on the host.
       ESCPOST_CONFIG_DIR: /workspace/.config
+      # Development runs are not usage. Without this, `docker compose run`
+      # has a TTY, the consent prompt defaults to yes, and every watchexec
+      # restart of `serve` would report a production event. Override with
+      # `-e ESCPOST_TELEMETRY=1` to test delivery deliberately.
+      ESCPOST_TELEMETRY: "0"
     volumes:
       - .:/workspace
       - cargo-home:/home/developer/.cargo

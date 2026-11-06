@@ -365,7 +365,7 @@ where
 /// The temporary file lives beside the destination, so the final rename stays
 /// on one filesystem. An interrupted process may leave an unused temporary
 /// file, but the destination remains either the old or complete new document.
-fn write_atomically(path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
+pub(crate) fn write_atomically(path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -413,10 +413,17 @@ pub(crate) fn resolved_path(explicit_path: Option<&Path>) -> application::Result
 fn resolve_path(explicit_path: Option<&Path>) -> application::Result<(PathBuf, bool)> {
     match explicit_path {
         Some(path) => Ok((path.to_owned(), true)),
-        None => match config_directory_override() {
-            Some(directory) => Ok((directory.join(PRINTERS_FILE), false)),
-            None => Ok((platform_config_directory()?.join(PRINTERS_FILE), false)),
-        },
+        None => Ok((directory()?.join(PRINTERS_FILE), false)),
+    }
+}
+
+/// The directory that holds every ESCPost settings file. `ESCPOST_CONFIG_DIR`
+/// wins so tests and containers can isolate their state; otherwise the
+/// platform convention applies.
+pub(crate) fn directory() -> application::Result<PathBuf> {
+    match config_directory_override() {
+        Some(directory) => Ok(directory),
+        None => platform_config_directory(),
     }
 }
 

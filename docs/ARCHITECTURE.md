@@ -72,11 +72,17 @@ src/
 │   ├── profiles/{mod,cli}.rs
 │   ├── rendering/{mod,cli}.rs
 │   ├── printing/{mod,cli,http}.rs
-│   └── capture/{mod,cli}.rs
+│   ├── capture/{mod,cli}.rs
+│   └── telemetry/{mod,cli}.rs
 ├── configuration.rs
 ├── discovery.rs
 ├── net.rs
 ├── source.rs
+├── telemetry/
+│   ├── mod.rs                 resolve consent before dispatch, report after
+│   ├── consent.rs             telemetry.toml and environment overrides
+│   ├── event.rs               event body from ArgMatches, outcome, duration
+│   └── sink.rs                one bounded HTTP POST, from a detached helper
 └── web.rs
 ```
 
@@ -112,6 +118,18 @@ infrastructure, not mirrored copies of every operation. Low-level
 operating-system modules remain at the crate root until a concrete boundary
 warrants moving them. A separate application crate is justified only when a
 second executable or library host needs the service layer.
+
+Usage reporting is a dispatcher concern, not a feature concern. `lib.rs`
+resolves the consent decision before it calls a feature, and reports once
+after the feature returns, from the parsed `ArgMatches`, the `Result`, and a
+timer. Features therefore contain no reporting code and cannot leak values
+into events; only option names, the subcommand path, and the error variant
+name are derivable at the dispatcher, and only those are sent. `serve` is the
+one command reported at start, because it may never return. The report hands
+the serialised body to a detached `escpost __send-telemetry` child, which is
+the one invocation `main` never reports, so the command returns without
+waiting for the network. The `telemetry` feature is a thin CLI adapter over
+the same `telemetry::consent` storage.
 
 Application requests contain validated execution values. Clap argument types
 and HTTP request DTOs remain adapter-owned and convert explicitly into those
