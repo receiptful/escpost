@@ -3,6 +3,7 @@ import { jobToBytes } from "../src/qz/jobs";
 import { labelImageOptions, printerLanguage, rasterToLabel } from "../src/qz/label-image";
 import {
   imageDrawWidth,
+  labelPdfScale,
   pdfScale,
   pixelDotsPerCssPixel,
   printableWidth,
@@ -127,6 +128,22 @@ describe("printer language of raw image, HTML and PDF jobs", () => {
       code: "UNSUPPORTED_FORMAT",
       message: expect.stringContaining("EVOLIS"),
     });
+  });
+});
+
+describe("labelPdfScale, QZ Tray's raw PDF size for a label", () => {
+  it("prints one dot per point when the job gives no size", () => {
+    expect(labelPdfScale(240, 120)).toBe(1);
+  });
+
+  it("scales the page to the pageWidth in dots", () => {
+    expect(labelPdfScale(240, 120, 480)).toBe(2);
+  });
+
+  it("scales to the pageHeight when it is the only size, or when the page is taller than the box", () => {
+    expect(labelPdfScale(240, 120, undefined, 60)).toBe(0.5);
+    expect(labelPdfScale(240, 120, 480, 100)).toBeCloseTo(100 / 120);
+    expect(labelPdfScale(240, 120, 480, 480)).toBe(2);
   });
 });
 

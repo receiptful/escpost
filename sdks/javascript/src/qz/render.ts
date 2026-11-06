@@ -135,11 +135,12 @@ const DEFAULT_LABEL_WIDTH_DOTS = 4 * LABEL_DPI;
 
 /**
  * A raw image, HTML or PDF job for a label printer (ZPL, EPL, CPCL or SBPL),
- * drawn as QZ Tray draws it: one pixel per dot, black or white by QZ's
- * `quantization` and `threshold`, at 203 dpi. ESCPost's printer profiles
- * describe receipt printers, so the size comes from the job: a `pageWidth` in
- * dots if it gives one; otherwise an image keeps its own size, a PDF its real
- * size, and HTML is laid out on a 4 inch label.
+ * drawn as QZ Tray draws it, one pixel per dot, black or white by QZ's
+ * `quantization` and `threshold`. ESCPost's printer profiles describe receipt
+ * printers, so the size comes from the job, as in QZ Tray: an image keeps its
+ * own size; a PDF prints its first page, scaled to `pageWidth` or `pageHeight`
+ * in dots, else one point per dot; HTML is laid out `pageWidth` dots wide at
+ * 203 dpi, or on a 4 inch label where QZ Tray would print nothing.
  */
 async function renderLabel(
   job: QzPrintElement,
@@ -151,20 +152,37 @@ async function renderLabel(
   const pageWidth = positive(options["pageWidth"]);
   const drawn =
     format === "image"
-      ? [await imageToCanvas(job, pageWidth ?? Number.POSITIVE_INFINITY, false, true)]
+      ? [await imageToCanvas(job, Number.POSITIVE_INFINITY, false, true)]
       : format === "html"
         ? [await htmlToCanvas(job, pageWidth ?? DEFAULT_LABEL_WIDTH_DOTS, rawDotsPerPixel(configOptions, LABEL_DPI), configOptions["scaleContent"] !== false)]
-        : await pdfToCanvases(job, pageWidth ?? Number.POSITIVE_INFINITY, pageWidth !== undefined, {
-            printableWidthDots: Number.POSITIVE_INFINITY,
-            dpiX: LABEL_DPI,
-            dpiY: LABEL_DPI,
-          });
+        : [await pdfFirstPageForLabel(job, pageWidth, positive(options["pageHeight"]))];
   const imageOptions = labelImageOptions(options);
   const commands = drawn.flatMap((canvas) => {
     const { data } = canvas.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
     return Array.from(rasterToLabel(data, canvas.width, canvas.height, language, imageOptions, ditherToBlack));
   });
   return Uint8Array.from(commands);
+}
+
+/**
+ * QZ Tray's raw PDF for a label printer: the first page only, scaled to the
+ * `pageWidth` (or, for a page taller than that box, the `pageHeight`) in dots,
+ * else one dot per point.
+ */
+async function pdfFirstPageForLabel(job: QzPrintElement, pageWidth?: number, pageHeight?: number): Promise<HTMLCanvasElement> {
+  const pdf = await openPdf(job);
+  const page = await pdf.getPage(1);
+  const { width, height } = page.getViewport({ scale: 1 });
+  return renderPdfPage(page, labelPdfScale(width, height, pageWidth, pageHeight));
+}
+
+/** QZ Tray's `PrintPDF.createBufferedImage` scale, from points to dots. */
+export function labelPdfScale(width: number, height: number, pageWidth?: number, pageHeight?: number): number {
+  const scale =
+    pageHeight === undefined || (pageWidth !== undefined && width / height >= pageWidth / pageHeight)
+      ? (pageWidth ?? 0) / width
+      : pageHeight / height;
+  return scale > 0 ? scale : 1;
 }
 
 function rawElement(bytes: Uint8Array): QzPrintElement {
@@ -571,25 +589,33 @@ async function pdfToCanvases(
   fit: boolean,
   profile?: PrinterGeometry,
 ): Promise<HTMLCanvasElement[]> {
-  const bytes = await contentBytes(job);
-  let pdf: Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>;
-  try {
-    pdf = await (await loadPdfJs()).getDocument({ data: bytes }).promise;
-  } catch {
-    throw new EscpostError("PRINT_FAILED", "The PDF could not be opened, or pdf.js could not be loaded.");
-  }
-
+  const pdf = await openPdf(job);
   const canvases: HTMLCanvasElement[] = [];
   for (let number = 1; number <= pdf.numPages; number++) {
     const page = await pdf.getPage(number);
     const pageWidth = page.getViewport({ scale: 1 }).width;
-    const scale = pdfScale(width, pageWidth, fit, profile);
-    const viewport = page.getViewport({ scale });
-    const { canvas, context } = whiteCanvas(Math.round(viewport.width), Math.round(viewport.height));
-    await page.render({ canvasContext: context, viewport }).promise;
-    canvases.push(canvas);
+    canvases.push(await renderPdfPage(page, pdfScale(width, pageWidth, fit, profile)));
   }
   return canvases;
+}
+
+type PdfDocument = Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>;
+type PdfPage = Awaited<ReturnType<PdfDocument["getPage"]>>;
+
+async function openPdf(job: QzPrintElement): Promise<PdfDocument> {
+  const bytes = await contentBytes(job);
+  try {
+    return await (await loadPdfJs()).getDocument({ data: bytes }).promise;
+  } catch {
+    throw new EscpostError("PRINT_FAILED", "The PDF could not be opened, or pdf.js could not be loaded.");
+  }
+}
+
+async function renderPdfPage(page: PdfPage, scale: number): Promise<HTMLCanvasElement> {
+  const viewport = page.getViewport({ scale });
+  const { canvas, context } = whiteCanvas(Math.round(viewport.width), Math.round(viewport.height));
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas;
 }
 
 /**
