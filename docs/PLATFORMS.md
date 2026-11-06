@@ -125,10 +125,10 @@ precedence. Read-only commands accept a missing implicit file without creating
 anything.
 
 Docker development does not mount the host's installed ESCPost configuration.
-Compose stores configuration in a project-scoped named volume mounted at
-`/home/developer/.config/escpost`. The volume persists across one-off commands
-and `docker compose down`; `docker compose down --volumes` removes it.
-Commands report the factual container path.
+Compose points `ESCPOST_CONFIG_DIR` at the checkout's own git-ignored
+`.config/` directory, so `printers.toml` and `telemetry.toml` are ordinary
+files next to the sources. Commands report the container path,
+`/workspace/.config`.
 
 ## Transport strategy
 
