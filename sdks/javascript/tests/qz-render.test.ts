@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { jobToBytes } from "../src/qz/jobs";
 import {
   assertEscposLanguage,
   imageDrawWidth,
@@ -118,6 +119,41 @@ describe("printer language of raw image, HTML and PDF jobs", () => {
     await expect(renderElements([job], {})).rejects.toMatchObject({
       code: "UNSUPPORTED_FORMAT",
       message: expect.stringContaining("ZPL"),
+    });
+  });
+});
+
+describe("raw jobs with the file flavor", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const fileJob = (url: string) => ({ type: "raw", format: "command", flavor: "file", data: url });
+
+  it("downloads the file in the page and sends its bytes unchanged, as QZ Tray does", async () => {
+    const receipt = Uint8Array.from([0x1b, 0x40, 0x48, 0x69, 0x0a, 0x1d, 0x56, 0x00]);
+    const download = vi.fn(async () => new Response(receipt));
+    vi.stubGlobal("fetch", download);
+
+    const rendered = await renderElements([fileJob("https://shop.test/receipt.bin")], {});
+
+    expect(download).toHaveBeenCalledWith("https://shop.test/receipt.bin");
+    expect(Array.from(jobToBytes({ printer: "kitchen", options: {}, data: rendered }))).toEqual(Array.from(receipt));
+  });
+
+  it("names CORS when the browser blocks a file on another site", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    await expect(renderElements([fileJob("https://other.test/receipt.bin")], {})).rejects.toMatchObject({
+      code: "PRINT_FAILED",
+      message: expect.stringContaining("CORS"),
+    });
+  });
+
+  it("reports the HTTP status when the file cannot be downloaded", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+    await expect(renderElements([fileJob("https://shop.test/missing.bin")], {})).rejects.toMatchObject({
+      code: "PRINT_FAILED",
+      message: expect.stringContaining("404"),
     });
   });
 });
