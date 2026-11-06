@@ -1,4 +1,5 @@
 .git
+.config
 .venv
 dist
 local

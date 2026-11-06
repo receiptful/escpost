@@ -9,6 +9,9 @@
 # Generated test output
 /.test-output/
 
+# Printer and usage-data configuration of this checkout (Docker Compose)
+/.config/
+
 # Editors and operating systems
 .DS_Store
 *.swp
