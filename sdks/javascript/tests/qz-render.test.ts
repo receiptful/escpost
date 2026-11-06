@@ -158,6 +158,18 @@ describe("raw jobs with the file flavor", () => {
   });
 });
 
+describe("raw jobs in a label printer language", () => {
+  it("sends raw ZPL commands to the printer unchanged, as QZ Tray does", async () => {
+    // Label apps build their own ZPL (or TSPL, EPL) and send it as raw text;
+    // only images, HTML and PDF need ESCPost to draw in a printer language.
+    const zpl = "^XA^FO50,50^ADN,36,20^FDKitchen 12^FS^XZ";
+    const job = { type: "raw", format: "command", flavor: "plain", data: zpl, options: { language: "ZPL" } };
+    const rendered = await renderElements([job], {});
+    const bytes = jobToBytes({ printer: "labels", options: {}, data: rendered });
+    expect(new TextDecoder().decode(bytes)).toBe(zpl);
+  });
+});
+
 describe("printableWidth", () => {
   it("is the printer profile's printable width, whatever paper size the page gives", () => {
     const tmT88iii = { printableWidthDots: 512, dpiX: 180, dpiY: 180 };
