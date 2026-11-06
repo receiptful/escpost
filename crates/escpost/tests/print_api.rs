@@ -1,9 +1,7 @@
-use std::collections::HashSet;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,9 +14,8 @@ fn octet_stream_reaches_the_printer_without_reencoding() {
     let directory = TemporaryDirectory::new("exact-bytes");
     let (printer, printer_port) = fake_printer();
     let config = network_configuration(&directory, printer_port);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
     let received = receive_jobs(printer, 1);
 
     let payload = vec![0x1b, 0x40, 0x00, 0xff, 0xfe, 0x0a];
@@ -50,9 +47,8 @@ fn absent_origins_are_accepted_as_local_program_calls() {
     // programs, and other callers that legitimately omit Origin.
     let directory = TemporaryDirectory::new("absent-origin");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let response = raw_print(api_port, "missing", &[], b"local");
 
@@ -65,9 +61,8 @@ fn exact_extension_scheme_origins_are_accepted() {
     // accepts only ordinary local calls and blocks the extension bridge.
     let directory = TemporaryDirectory::new("extension-origins");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     for origin in [
         "chrome-extension://abcdefghijklmnop",
@@ -85,10 +80,9 @@ fn pinning_an_extension_id_accepts_only_that_exact_id() {
     // origin-less local programs along with other extensions.
     let directory = TemporaryDirectory::new("pinned-origin");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
     let pinned = "abcdefghijklmnop";
-    let mut api = start_api(api_port, &config, Some(pinned));
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, Some(pinned));
+    let api_port = api.port;
 
     let allowed = raw_print(
         api_port,
@@ -115,9 +109,8 @@ fn null_and_lookalike_origins_are_rejected() {
     // that merely resemble extension origins pass the negative filter.
     let directory = TemporaryDirectory::new("rejected-origins");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     for origin in [
         "null",
@@ -144,9 +137,8 @@ fn ordinary_web_origins_are_rejected_before_printer_io() {
         .set_nonblocking(true)
         .expect("the fake printer should become non-blocking");
     let config = network_configuration(&directory, printer_port);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let response = http_request(
         api_port,
@@ -173,9 +165,8 @@ fn an_unknown_printer_has_the_public_not_found_code() {
     // live contract consumed by the browser SDK.
     let directory = TemporaryDirectory::new("unknown-printer");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let response = raw_print(api_port, "missing", &[], b"job");
 
@@ -188,9 +179,8 @@ fn unsupported_or_missing_content_types_are_rejected() {
     // media type as a second raw-print contract.
     let directory = TemporaryDirectory::new("content-type");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     for headers in [
         vec!["Content-Type: text/plain".to_owned()],
@@ -218,9 +208,8 @@ fn blank_and_whitespace_printer_queries_are_bad_requests() {
     // query boundary and are reported as unknown printers instead of missing.
     let directory = TemporaryDirectory::new("blank-printer");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     for path in ["/api/print?printer=", "/api/print?printer=%20%20%20"] {
         let response = http_request(
@@ -242,9 +231,8 @@ fn configuration_failures_are_not_misreported_as_unknown_printers() {
     let config = directory.path.join("printers.toml");
     std::fs::write(&config, "this is not = valid = toml")
         .expect("the invalid configuration fixture should be writable");
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let response = raw_print(api_port, "counter", &[], b"job");
 
@@ -260,11 +248,10 @@ fn configured_path_is_shared_by_inventory_stream_and_printing() {
     // Defect caught: --config reaches only one of list, list/events, and print,
     // so the same server exposes incompatible configured-printer namespaces.
     let directory = TemporaryDirectory::new("shared-config");
-    let unavailable_printer_port = unused_loopback_port();
-    let config = network_configuration(&directory, unavailable_printer_port);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let (printer, printer_port) = fake_printer();
+    let config = network_configuration(&directory, printer_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let listing = http_request(api_port, "GET", "/api/printers/list", &[], b"");
     assert_eq!(response_status(&listing), "HTTP/1.1 200 OK");
@@ -285,8 +272,20 @@ fn configured_path_is_shared_by_inventory_stream_and_printing() {
         String::from_utf8_lossy(&event)
     );
 
+    // A job that reaches the configured printer proves the print route reads
+    // the same configuration; an unconfigured route would answer 404.
+    let received = receive_first_job(printer);
     let print = raw_print(api_port, "counter", &[], b"job");
-    assert_typed_error(&print, "HTTP/1.1 500 Internal Server Error", "PRINT_FAILED");
+    assert_eq!(
+        response_status(&print),
+        "HTTP/1.1 200 OK",
+        "{}",
+        String::from_utf8_lossy(response_body(&print))
+    );
+    assert_eq!(
+        received.join().expect("the printer should finish"),
+        b"job".to_vec()
+    );
 }
 
 #[test]
@@ -297,9 +296,8 @@ fn two_concurrent_jobs_to_one_printer_arrive_whole_and_serialized() {
     let directory = TemporaryDirectory::new("serialized");
     let (printer, printer_port) = fake_printer();
     let config = network_configuration(&directory, printer_port);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let first_payload = vec![b'A'; 8 * 1024 * 1024];
     let second_payload = vec![b'B'; 8 * 1024 * 1024];
@@ -331,9 +329,8 @@ fn bodies_larger_than_eight_mebibytes_use_a_no_store_api_failure() {
     // unbounded body, or returns Axum's cacheable plain-text rejection.
     let directory = TemporaryDirectory::new("body-limit");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let response = raw_print(api_port, "missing", &[], &vec![0u8; 8 * 1024 * 1024 + 1]);
 
@@ -350,9 +347,8 @@ fn malformed_query_rejections_use_the_no_store_api_envelope() {
     // framework's default cacheable plain-text response.
     let directory = TemporaryDirectory::new("bad-query");
     let config = empty_configuration(&directory);
-    let api_port = unused_loopback_port();
-    let mut api = start_api(api_port, &config, None);
-    wait_until_listening(&mut api.child, api_port);
+    let api = start_api(&config, None);
+    let api_port = api.port;
 
     let response = http_request(
         api_port,
@@ -387,6 +383,7 @@ fn assert_typed_error(response: &[u8], status: &str, code: &str) {
 
 struct RunningApi {
     child: Child,
+    port: u16,
 }
 
 impl Drop for RunningApi {
@@ -396,12 +393,22 @@ impl Drop for RunningApi {
     }
 }
 
-fn start_api(port: u16, config: &Path, extension_id: Option<&str>) -> RunningApi {
+/// Start `escpost serve` on an operating-system-selected port and return once
+/// the server has reported that port.
+///
+/// The server picks the port itself. Binding a listener to find a free port,
+/// closing it, and passing the number to the server is not safe here: tests
+/// run on parallel threads, and every `Command::spawn` on another thread
+/// copies this process's descriptor table. Until that child calls `execve`,
+/// its copy keeps the closed listener alive and accepting, and `execve` then
+/// resets every connection it queued. A probe connect cannot tell that ghost
+/// from the real server; the port in the server's own status line can.
+fn start_api(config: &Path, extension_id: Option<&str>) -> RunningApi {
     let mut command = Command::new(env!("CARGO_BIN_EXE_escpost"));
     command.args([
         "serve",
         "--web-listen",
-        &format!("127.0.0.1:{port}"),
+        "127.0.0.1:0",
         "--no-open",
         "--no-web-app",
         "--config",
@@ -411,84 +418,64 @@ fn start_api(port: u16, config: &Path, extension_id: Option<&str>) -> RunningApi
     if let Some(extension_id) = extension_id {
         command.args(["--extension-id", extension_id]);
     }
-    RunningApi {
-        child: command
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("the escpost command should start"),
-    }
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost command should start");
+    let port = read_api_port(&mut child);
+    RunningApi { child, port }
 }
 
-fn wait_until_listening(child: &mut Child, port: u16) {
-    let deadline = Instant::now() + REQUEST_TIMEOUT;
-    loop {
-        if TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_ok() {
-            return;
+/// Read the API port from the status the server prints after binding. The
+/// line proves the listener exists, so a request sent afterwards queues on it
+/// until Axum accepts.
+fn read_api_port(child: &mut Child) -> u16 {
+    let mut stderr = BufReader::new(child.stderr.take().expect("stderr should be piped"));
+    let mut output = String::new();
+    let port = loop {
+        let mut line = String::new();
+        let read = stderr
+            .read_line(&mut line)
+            .expect("the server status should be readable");
+        if read == 0 {
+            let status = child.wait().expect("the child status should be readable");
+            panic!("api command exited early with {status}:\n{output}");
         }
-        if let Some(status) = child
-            .try_wait()
-            .expect("the child status should be readable")
-        {
-            let mut stderr = String::new();
-            child
-                .stderr
-                .take()
-                .expect("stderr should be piped")
-                .read_to_string(&mut stderr)
-                .expect("stderr should be readable");
-            panic!("api command exited early with {status}:\n{stderr}");
+        if let Some(port) = api_port_in(&line) {
+            break port;
         }
-        assert!(
-            Instant::now() < deadline,
-            "the API did not listen on {port}"
-        );
-        thread::sleep(Duration::from_millis(25));
-    }
+        output.push_str(&line);
+    };
+    // Keep the pipe open and drained for the rest of the run: closing the read
+    // end would turn the server's next status line into a broken pipe.
+    thread::spawn(move || {
+        let mut discard = String::new();
+        let _ = stderr.read_to_string(&mut discard);
+    });
+    port
 }
 
-static ISSUED_PORTS: Mutex<Option<HashSet<u16>>> = Mutex::new(None);
-
-fn claim_port(port: u16) -> bool {
-    ISSUED_PORTS
-        .lock()
-        .expect("the issued-port registry should be usable")
-        .get_or_insert_with(HashSet::new)
-        .insert(port)
-}
-
-fn unused_loopback_port() -> u16 {
-    let mut held = Vec::new();
-    for _ in 0..64 {
-        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-            .expect("an ephemeral loopback port should be available");
-        let port = listener
-            .local_addr()
-            .expect("the listener should have an address")
-            .port();
-        if claim_port(port) {
-            return port;
-        }
-        held.push(listener);
-    }
-    panic!("no unissued loopback port was available");
+fn api_port_in(line: &str) -> Option<u16> {
+    line.trim()
+        .strip_prefix("API:")?
+        .trim_start()
+        .strip_prefix("http://127.0.0.1:")?
+        .strip_suffix("/api")?
+        .parse()
+        .ok()
 }
 
 fn fake_printer() -> (TcpListener, u16) {
-    let mut held = Vec::new();
-    for _ in 0..64 {
-        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-            .expect("a fake printer should bind");
-        let port = listener
-            .local_addr()
-            .expect("the fake printer should have an address")
-            .port();
-        if claim_port(port) {
-            return (listener, port);
-        }
-        held.push(listener);
-    }
-    panic!("no unissued loopback port was available for a fake printer");
+    // The listener stays bound for the whole test, so the kernel cannot hand
+    // its port to anyone else.
+    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+        .expect("a fake printer should bind");
+    let port = listener
+        .local_addr()
+        .expect("the fake printer should have an address")
+        .port();
+    (listener, port)
 }
 
 fn receive_jobs(listener: TcpListener, count: usize) -> thread::JoinHandle<Vec<Vec<u8>>> {
@@ -503,6 +490,24 @@ fn receive_jobs(listener: TcpListener, count: usize) -> thread::JoinHandle<Vec<V
                 bytes
             })
             .collect()
+    })
+}
+
+/// Accept until a connection carries data. The inventory routes check that a
+/// network printer is reachable by connecting and closing at once, so those
+/// empty connections arrive before the job and must not end the listener.
+fn receive_first_job(listener: TcpListener) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        loop {
+            let mut connection = accept_before_deadline(&listener);
+            let mut bytes = Vec::new();
+            connection
+                .read_to_end(&mut bytes)
+                .expect("the print connection should close cleanly");
+            if !bytes.is_empty() {
+                return bytes;
+            }
+        }
     })
 }
 
