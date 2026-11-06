@@ -40,6 +40,14 @@ pub(crate) enum Decision {
 pub(crate) const INTERRUPTED_EXIT_CODE: u8 = 130;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryMode {
+    /// Hand the body to a detached child and return at once.
+    Detached,
+    /// Post from this process, inside the send budget.
+    Inline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PromptAnswer {
     Yes,
     No,
@@ -128,16 +136,36 @@ pub(crate) async fn report(
     let Ok(body) = serde_json::to_string(&event) else {
         return;
     };
-    if debug_enabled() {
-        let endpoint = sink::endpoint();
-        match sink::send(&endpoint, &body).await {
-            Ok(()) => eprintln!("telemetry: sent {} to {endpoint}", event::EVENT_NAME),
-            Err(error) => eprintln!("telemetry: not sent to {endpoint}: {error}"),
+    let debug = debug_enabled();
+    match delivery_mode(std::process::id(), debug) {
+        DeliveryMode::Inline => {
+            let endpoint = sink::endpoint();
+            let result = sink::send(&endpoint, &body).await;
+            if debug {
+                match result {
+                    Ok(()) => eprintln!("telemetry: sent {} to {endpoint}", event::EVENT_NAME),
+                    Err(error) => eprintln!("telemetry: not sent to {endpoint}: {error}"),
+                }
+            }
         }
-        return;
+        DeliveryMode::Detached => {
+            // Nothing to tell the user if the spawn fails: the event is lost.
+            let _ = sink::spawn_detached(&body);
+        }
     }
-    // Nothing to tell the user if the spawn fails: the event is simply lost.
-    let _ = sink::spawn_detached(&body);
+}
+
+/// A detached child only helps when it can outlive the command. As PID 1 of
+/// a container the command's exit kills the whole pid namespace, child
+/// included, so there the send runs inline and pays the network round trip.
+/// Debug mode sends inline too, because a detached child has no terminal to
+/// report the result on.
+fn delivery_mode(pid: u32, debug: bool) -> DeliveryMode {
+    if debug || pid == 1 {
+        DeliveryMode::Inline
+    } else {
+        DeliveryMode::Detached
+    }
 }
 
 /// The body of the hidden `__send-telemetry` helper: post and exit quietly.
@@ -263,6 +291,21 @@ mod tests {
             classify_prompt(Err(InquireError::IO(std::io::Error::other("gone")))),
             PromptAnswer::Unavailable
         );
+    }
+
+    #[test]
+    fn pid_one_sends_inline_because_a_detached_child_would_die_with_it() {
+        // In a container the command is often PID 1. When it exits, the
+        // kernel kills every process left in the pid namespace, including a
+        // detached delivery child mid-request, so the event never arrives.
+        assert_eq!(delivery_mode(1, false), DeliveryMode::Inline);
+        assert_eq!(delivery_mode(4242, false), DeliveryMode::Detached);
+    }
+
+    #[test]
+    fn debug_mode_sends_inline_whatever_the_pid() {
+        assert_eq!(delivery_mode(4242, true), DeliveryMode::Inline);
+        assert_eq!(delivery_mode(1, true), DeliveryMode::Inline);
     }
 
     #[test]

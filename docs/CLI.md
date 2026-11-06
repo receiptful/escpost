@@ -95,7 +95,9 @@ escpost telemetry on       # share again
 
 `telemetry off` is reported as the last event of an installation, because
 consent is evaluated when an invocation starts. The event is posted by a
-detached helper process, so the command does not wait for the network.
+detached helper process, so the command does not wait for the network,
+except when it runs as PID 1 of a container, where the exit would kill the
+helper and the send therefore happens before the command returns.
 Sending never changes an exit code and never prints, except with
 `ESCPOST_TELEMETRY_DEBUG=1`, which sends from the command itself and logs
 the delivery result to standard error.

@@ -1184,8 +1184,11 @@ request.
   the printer transport, requires an explicit annotation API; there is no
   back door from feature code into the event.
 - The command pays only a fork and exec, a few milliseconds; the child owns
-  the two-second budget. An event is lost if the machine, or the container
-  the command is PID 1 of, goes away inside that budget.
+  the two-second budget. An event is lost if the machine goes away inside
+  that budget.
+- As PID 1 of a container the command's exit would kill a detached child, so
+  there the send runs inline and that one invocation shape pays the round
+  trip. `docker run` one-liners and CI containers are the common case.
 - `telemetry off` is itself reported, so opt-outs can be counted.
 - `escpost.dev/dataprivacy` is part of the contract: it lists exactly the
   fields this decision allows and must change when they change.
