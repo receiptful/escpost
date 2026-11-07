@@ -46,8 +46,7 @@ See [Development](#development) to build ESCPost from the source checkout.
 Render raw ESC/POS bytes, readable hexadecimal input, or stdin to PNG:
 
 ```bash
-escpost render receipt.bin \
-  --profile REFERENCE > receipt.png
+escpost render receipt.bin > receipt.png
 ```
 
 To preview jobs in the browser, start the virtual printer and workbench:

@@ -10,9 +10,6 @@ pub(crate) enum CliError {
     #[error("{}", format_application_error(.0))]
     Application(#[source] ApplicationError),
 
-    #[error("printer profile is required; pass --profile REFERENCE for generic rendering")]
-    MissingProfile,
-
     #[error("could not select a printer profile: {0}")]
     ProfilePrompt(String),
 
@@ -336,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_non_usb_open_error_is_never_treated_as_a_permission_denial() {
-        assert!(!CliError::MissingProfile.is_permission_denied_usb_open());
+        assert!(!CliError::NoListener.is_permission_denied_usb_open());
     }
 
     #[test]

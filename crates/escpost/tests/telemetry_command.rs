@@ -81,19 +81,23 @@ fn a_failed_command_reports_its_error_kind() {
     let listener = CaptureListener::start(1);
 
     let output = escpost(&directory.path, Some(listener.endpoint()))
-        .args(["--non-interactive", "render", EXAMPLE_JOB, "--output-dir"])
+        .args([
+            "--non-interactive",
+            "render",
+            EXAMPLE_JOB,
+            "--profile",
+            "DOES-NOT-EXIST",
+            "--output-dir",
+        ])
         .arg(directory.path.join("rendered-sheets"))
         .output()
         .expect("the escpost command should finish");
 
-    assert!(
-        !output.status.success(),
-        "render without a profile must fail"
-    );
+    assert!(!output.status.success(), "an unknown profile must fail");
     let bodies = listener.finish();
     assert_eq!(bodies.len(), 1);
     let body: serde_json::Value = serde_json::from_str(&bodies[0]).expect("JSON body");
-    assert_eq!(body["properties"]["outcome"], "missing_profile");
+    assert_eq!(body["properties"]["outcome"], "application_unknown_profile");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("telemetry"),

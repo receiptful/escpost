@@ -269,7 +269,7 @@ mod tests {
         use crate::application::ApplicationError;
         use crate::error::CliError;
 
-        assert_eq!(CliError::MissingProfile.telemetry_kind(), "missing_profile");
+        assert_eq!(CliError::NoListener.telemetry_kind(), "no_listener");
         assert_eq!(
             CliError::NoDiscoveredPrinters(9100).telemetry_kind(),
             "no_discovered_printers"

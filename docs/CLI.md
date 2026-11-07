@@ -35,8 +35,8 @@ escpost telemetry    Show or change whether anonymous usage data is shared
 appear before or after a subcommand:
 
 ```bash
-escpost --non-interactive render receipt.bin --profile REFERENCE -o receipt.png
-escpost render receipt.bin --profile REFERENCE -o receipt.png --non-interactive
+escpost --non-interactive render receipt.bin -o receipt.png
+escpost render receipt.bin -o receipt.png --non-interactive
 ```
 
 When a required value cannot be resolved without prompting, the command exits
@@ -143,13 +143,15 @@ output. It never starts a server or sends bytes to a printer.
 
 ```bash
 escpost render receipt.bin \
-  --profile REFERENCE \
   --output receipt.png \
   --non-interactive
 
 generate-receipt | \
-  escpost render - --format binary --profile REFERENCE >receipt.png
+  escpost render - --format binary >receipt.png
 ```
+
+The profile resolves in this order: explicit `--profile`, profile metadata in
+a conformance-case directory, then `REFERENCE`.
 
 If a job produces several sheets, use `--sheet <NUMBER>` to select a one-based
 sheet. Without a selection, single-PNG output fails rather than discarding
@@ -162,7 +164,6 @@ output and cannot be combined with `--output-dir`.
 
 ```bash
 escpost render receipt.hex \
-  --profile REFERENCE \
   --output-dir renderings \
   --non-interactive
 ```

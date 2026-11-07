@@ -6,7 +6,7 @@ PNG, provide a live browser preview, act as a virtual RAW TCP printer, and send
 jobs to USB or network printers.
 
 ```console
-escpost render receipt.hex --profile REFERENCE --output receipt.png
+escpost render receipt.hex --output receipt.png
 ```
 
 See the [CLI reference](https://github.com/receiptful/escpost/blob/main/docs/CLI.md)

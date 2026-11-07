@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
 use escpost_render::RenderScale;
-use inquire::Select;
 
 use crate::application::ApplicationError;
 use crate::error::CliError;
-use crate::{output, profiles, source};
+use crate::{output, source};
 
 use super::{Request, render};
 
@@ -22,7 +21,7 @@ pub(crate) struct RenderArgs {
     #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
     format: InputFormat,
 
-    /// Printer profile used to interpret the input.
+    /// Printer profile used to interpret the input. Defaults to REFERENCE.
     #[arg(long)]
     pub(crate) profile: Option<String>,
 
@@ -65,18 +64,13 @@ impl From<InputFormat> for source::InputFormat {
     }
 }
 
-pub(crate) fn run(arguments: RenderArgs, non_interactive: bool) -> Result<(), CliError> {
+pub(crate) fn run(arguments: RenderArgs) -> Result<(), CliError> {
     let binary_stdout = arguments.output.as_deref() == Some(Path::new("-"))
         || (arguments.output.is_none() && arguments.output_dir.is_none());
     let scale = RenderScale::new(arguments.scale).map_err(ApplicationError::from)?;
 
     let input = source::load(&arguments.source, arguments.format.into())?;
-    let can_prompt = !non_interactive
-        && !binary_stdout
-        && arguments.source != Path::new("-")
-        && io::stdin().is_terminal()
-        && io::stderr().is_terminal();
-    let requested_profile_id = resolve_profile(arguments.profile, input.profile, can_prompt)?;
+    let requested_profile_id = resolve_profile(arguments.profile, input.profile);
     let response = render(Request {
         bytes: input.bytes,
         profile_id: requested_profile_id,
@@ -119,22 +113,10 @@ fn write_stdout(
     output.write_all(png).map_err(CliError::WriteStdout)
 }
 
-fn resolve_profile(
-    explicit: Option<String>,
-    source_profile: Option<String>,
-    can_prompt: bool,
-) -> Result<String, CliError> {
-    if let Some(profile) = explicit.or(source_profile) {
-        return Ok(profile);
-    }
-    if !can_prompt {
-        return Err(CliError::MissingProfile);
-    }
-
-    Select::new("Printer profile", profiles::available_ids()?)
-        .with_help_message("Use REFERENCE when no physical printer is known")
-        .prompt()
-        .map_err(|error| CliError::ProfilePrompt(error.to_string()))
+fn resolve_profile(explicit: Option<String>, source_profile: Option<String>) -> String {
+    explicit
+        .or(source_profile)
+        .unwrap_or_else(|| "REFERENCE".to_owned())
 }
 
 #[cfg(test)]

@@ -65,7 +65,7 @@ pub async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
-        Command::Render(arguments) => features::rendering::cli::run(arguments, cli.non_interactive),
+        Command::Render(arguments) => features::rendering::cli::run(arguments),
         Command::Print(arguments) => {
             features::printing::cli::run(arguments, cli.non_interactive).await
         }

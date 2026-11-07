@@ -25,7 +25,7 @@ Arguments:
 Options:
       --format <FORMAT>          Input representation [default: auto] [possible values: auto, binary, hex]
       --non-interactive          Never prompt for missing values
-      --profile <PROFILE>        Printer profile used to interpret the input
+      --profile <PROFILE>        Printer profile used to interpret the input. Defaults to REFERENCE
   -o, --output <OUTPUT>          Write one PNG to this path, or - for stdout. Defaults to stdout
       --output-dir <OUTPUT_DIR>  Write every rendered sheet and a manifest to this directory
       --sheet <SHEET>            Select one one-based sheet for single-PNG output
@@ -685,8 +685,8 @@ fn single_png_destination_rejects_an_unselected_multi_sheet_job() {
 }
 
 #[test]
-fn non_interactive_mode_reports_a_missing_profile_without_prompting() {
-    let temporary_directory = temporary_directory("missing-profile");
+fn non_interactive_file_render_defaults_to_the_reference_profile() {
+    let temporary_directory = temporary_directory("default-profile");
     let input_path = temporary_directory.join("receipt.bin");
     let output_path = temporary_directory.join("receipt.png");
     fs::write(&input_path, b"Profile\n").expect("the fixture should be writable");
@@ -704,21 +704,29 @@ fn non_interactive_mode_reports_a_missing_profile_without_prompting() {
         .output()
         .expect("the escpost command should finish without prompting");
 
-    assert!(!output.status.success());
     assert!(
+        output.status.success(),
+        "render failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
-            .contains("printer profile is required; pass --profile REFERENCE")
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Profile: REFERENCE"),
+        "file output should report the default profile on stderr"
+    );
+    assert_eq!(
+        &fs::read(&output_path).expect("the output PNG should exist")[..8],
+        b"\x89PNG\r\n\x1a\n"
     );
 
     fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");
 }
 
 #[test]
-fn piped_stdin_policy_reports_a_missing_profile_without_an_explicit_flag() {
-    let temporary_directory = temporary_directory("effective-non-interactive");
+fn piped_stdin_render_defaults_to_the_reference_profile() {
+    let temporary_directory = temporary_directory("stdin-default-profile");
     let output_path = temporary_directory.join("receipt.png");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args([
             "render",
             "-",
@@ -727,14 +735,33 @@ fn piped_stdin_policy_reports_a_missing_profile_without_an_explicit_flag() {
                 .to_str()
                 .expect("the output path should be UTF-8"),
         ])
-        .stdin(Stdio::null())
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the escpost command should start");
+    child
+        .stdin
+        .take()
+        .expect("stdin should be piped")
+        .write_all(b"Profile\n")
+        .expect("the receipt should reach stdin");
+    let output = child
+        .wait_with_output()
         .expect("the escpost command should finish without prompting");
 
-    assert!(!output.status.success());
     assert!(
+        output.status.success(),
+        "render failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
-            .contains("printer profile is required; pass --profile REFERENCE")
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Profile: REFERENCE"),
+        "file output should report the default profile on stderr"
+    );
+    assert_eq!(
+        &fs::read(&output_path).expect("the output PNG should exist")[..8],
+        b"\x89PNG\r\n\x1a\n"
     );
 
     fs::remove_dir_all(temporary_directory).expect("the test directory should be removable");

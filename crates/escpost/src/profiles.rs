@@ -9,10 +9,3 @@ pub(crate) fn load(profile_id: &str) -> application::Result<&'static PrinterProf
         ResolveError::LoadPack(message) => ApplicationError::LoadProfiles(message),
     })
 }
-
-pub(crate) fn available_ids() -> application::Result<Vec<String>> {
-    resolver::available_ids().map_err(|error| match error {
-        ResolveError::UnknownProfile(id) => ApplicationError::UnknownProfile(id),
-        ResolveError::LoadPack(message) => ApplicationError::LoadProfiles(message),
-    })
-}
