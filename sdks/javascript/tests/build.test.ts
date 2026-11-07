@@ -9,7 +9,11 @@ test("the package exports the raw browser entry and the QZ Tray shim", () => {
 
   expect(Object.keys(manifest.exports)).toEqual([".", "./qz"]);
   expect(manifest.exports["."]).toEqual({ types: "./dist/index.d.ts", import: "./dist/index.js" });
-  expect(manifest.exports["./qz"]).toEqual({ types: "./dist/qz/index.d.ts", import: "./dist/qz.js" });
+  expect(manifest.exports["./qz"]).toEqual({
+    types: "./dist/qz/index.d.ts",
+    import: "./dist/qz.js",
+    require: "./dist/qz.cjs",
+  });
 });
 
 test("the package publishes publicly from the canonical repository", () => {
