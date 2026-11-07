@@ -188,7 +188,7 @@ mod tests {
                         .map(|score| (score, choice.clone().into_profile_id().unwrap()))
                 })
                 .collect();
-            matches.sort_by(|left, right| right.0.cmp(&left.0));
+            matches.sort_by_key(|entry| std::cmp::Reverse(entry.0));
             matches.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
         };
 
