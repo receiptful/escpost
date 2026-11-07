@@ -60,21 +60,6 @@ function defaultInEndpoint(usb: UsbConnection | null) {
   return usb && usb.in_endpoints.length === 1 ? endpointHex(usb.in_endpoints[0]!) : "";
 }
 
-function profileChoiceLabel(profile: Profile) {
-  return `${profile.vendor} · ${profile.model} — ${profile.id}`;
-}
-
-function compareProfileChoices(left: Profile, right: Profile) {
-  const compare = (leftValue: string, rightValue: string) => {
-    const leftLower = leftValue.toLowerCase();
-    const rightLower = rightValue.toLowerCase();
-    return leftLower < rightLower ? -1 : leftLower > rightLower ? 1 : 0;
-  };
-  return compare(left.vendor, right.vendor)
-    || compare(left.model, right.model)
-    || compare(left.id, right.id);
-}
-
 // Which device the open dialog is registering, by the facts that make it that
 // device rather than by object identity: an owner re-rendering with an equal
 // but freshly built printer must not wipe a route the reader chose, while an
@@ -432,4 +417,19 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
       </div>
     </dialog>
   );
+}
+
+function profileChoiceLabel(profile: Profile) {
+  return `${profile.vendor} · ${profile.model} — ${profile.id}`;
+}
+
+function compareProfileChoices(left: Profile, right: Profile) {
+  const compare = (leftValue: string, rightValue: string) => {
+    const leftLower = leftValue.toLowerCase();
+    const rightLower = rightValue.toLowerCase();
+    return leftLower < rightLower ? -1 : leftLower > rightLower ? 1 : 0;
+  };
+  return compare(left.vendor, right.vendor)
+    || compare(left.model, right.model)
+    || compare(left.id, right.id);
 }
