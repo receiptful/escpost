@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
+import type { AddPrinterBody, DiscoveredPrinter, Profile, UsbConnection } from "../../api/types";
 import { PrinterInventoryProvider } from "../../app/printer-inventory-data";
 import { ProfileDataProvider } from "../../app/profile-data";
 import { ServerStatusProvider } from "../../app/server-status-data";
@@ -51,11 +51,11 @@ function configured(name: string) {
   };
 }
 
-function catalogued(id: string) {
+function catalogued(id: string, vendor = "Epson", model = id): Profile {
   return {
     id,
-    vendor: "Epson",
-    model: id,
+    vendor,
+    model,
     source: "calibrated",
     paper_width_mm: 80,
     printable_width_mm: 72,
@@ -115,7 +115,7 @@ function gone(element: Element | null) {
 
 function renderDialog(printer: DiscoveredPrinter | null, options: {
   printers?: string[];
-  profiles?: string[];
+  profiles?: Profile[];
   add?: (body: AddPrinterBody) => Response;
   configPath?: string;
 } = {}) {
@@ -128,7 +128,7 @@ function renderDialog(printer: DiscoveredPrinter | null, options: {
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path === "/api/profiles/list") {
-      return Promise.resolve(json({ profiles: (options.profiles ?? []).map(catalogued) }));
+      return Promise.resolve(json({ profiles: options.profiles ?? [] }));
     }
     if (path === "/api/printers/add") {
       const body = JSON.parse(String(init?.body)) as AddPrinterBody;
@@ -316,7 +316,7 @@ describe("AddPrinterDialog", () => {
   test("a USB device offering several routes lets the browser choose the one the terminal would ask for", async () => {
     const { posted } = renderDialog(
       usbPrinter({ out_endpoints: [0x01, 0x02], in_endpoints: [0x81] }),
-      { printers: [], profiles: ["TM-T88V"] },
+      { printers: [], profiles: [catalogued("TM-T88V")] },
     );
 
     const out = screen.getByLabelText("OUT endpoint") as HTMLSelectElement;
@@ -328,7 +328,7 @@ describe("AddPrinterDialog", () => {
     fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
     fireEvent.change(out, { target: { value: "0x02" } });
     fireEvent.change(inbound, { target: { value: "" } });
-    await screen.findByRole("option", { name: "TM-T88V" });
+    await screen.findByRole("option", { name: "Epson · TM-T88V — TM-T88V" });
     fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "TM-T88V" } });
     fireEvent.click(addButton());
 
@@ -346,6 +346,34 @@ describe("AddPrinterDialog", () => {
         in_endpoint: null,
       },
     });
+  });
+
+  test("orders and labels profile choices by vendor, model, then id", async () => {
+    const { posted } = renderDialog(usbPrinter(), {
+      profiles: [
+        catalogued("A-ID", "Zebra", "Z-model"),
+        catalogued("B-ID", "Epson", "TM-T88"),
+        catalogued("C-ID", "epson", "tm-t88"),
+        catalogued("Z-ID", "Brother", "QL-800"),
+      ],
+    });
+
+    await screen.findByRole("option", { name: "Brother · QL-800 — Z-ID" });
+    const profile = screen.getByLabelText("Profile") as HTMLSelectElement;
+    expect(Array.from(profile.options).map((option) => option.textContent)).toEqual([
+      "No profile",
+      "Brother · QL-800 — Z-ID",
+      "Epson · TM-T88 — B-ID",
+      "epson · tm-t88 — C-ID",
+      "Zebra · Z-model — A-ID",
+    ]);
+
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "counter" } });
+    fireEvent.change(profile, { target: { value: "C-ID" } });
+    fireEvent.click(addButton());
+
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]?.profile).toBe("C-ID");
   });
 
   // `usb_add_targets` assumes an IN endpoint only when the device exposes

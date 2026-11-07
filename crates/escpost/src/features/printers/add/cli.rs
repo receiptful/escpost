@@ -8,6 +8,10 @@ use std::time::Duration;
 use crate::application::ApplicationError;
 use crate::configuration::{self, PrinterConfiguration};
 use crate::error::CliError;
+use crate::features::profiles::{
+    ListRequest, list,
+    selection::{optional_profile_choices, substring_scorer},
+};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use inquire::validator::Validation;
 use inquire::{CustomType, Select, Text};
@@ -408,11 +412,20 @@ impl AddPrompter for InquireAddPrompter {
     }
 
     fn profile(&mut self) -> Result<Option<String>, CliError> {
-        let profile = Text::new("Printer profile (optional)")
-            .with_help_message("Leave empty when the printer has not been calibrated yet")
-            .prompt()
-            .map_err(|error| CliError::PrinterPrompt(error.to_string()))?;
-        Ok((!profile.trim().is_empty()).then(|| profile.trim().to_owned()))
+        let response = list(ListRequest {
+            vendor: None,
+            source: None,
+            search: None,
+        })?;
+        let chosen = Select::new(
+            "Printer profile",
+            optional_profile_choices(&response.profiles),
+        )
+        .with_page_size(10)
+        .with_scorer(&substring_scorer)
+        .prompt()
+        .map_err(|error| CliError::PrinterPrompt(error.to_string()))?;
+        Ok(chosen.into_profile_id())
     }
 }
 

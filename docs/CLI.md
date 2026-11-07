@@ -301,10 +301,12 @@ escpost printers add kitchen \
 At an interactive terminal, selecting `usb` reads attached USB printer-class
 descriptors and offers every unconfigured interface with a bulk OUT endpoint.
 The developer selects a concrete route, supplies a local name, and may assign
-a profile. ESCPost stores VID/PID, an available serial number, interface, bulk
-OUT endpoint, and the bulk IN endpoint only when exactly one exists. A device
-with several OUT endpoints appears once per endpoint so the route is never
-guessed. USB bus and address appear in the menu only; they are unstable across
+a profile. The profile picker shows `Vendor · Model — PROFILE` choices sorted
+by vendor and model; typing filters across the vendor, model, and profile ID.
+ESCPost stores VID/PID, an available serial number, interface, bulk OUT
+endpoint, and the bulk IN endpoint only when exactly one exists. A device with
+several OUT endpoints appears once per endpoint so the route is never guessed.
+USB bus and address appear in the menu only; they are unstable across
 reconnections and are not stored.
 
 Already configured USB identities are omitted. When otherwise identical
@@ -316,10 +318,11 @@ For a network printer, host is required. When `--port` is omitted at an
 interactive terminal, ESCPost prompts for it with `9100` as the default;
 pressing Enter accepts that value. An explicit `--port` skips the prompt.
 Non-interactive registration silently uses `9100` when the option is omitted.
-In both transports an empty optional profile answer leaves the printer
-unprofiled. Sending an existing ESC/POS stream does not require a rendering
-profile, and no profile—including `REFERENCE`—is inferred for an unknown
-printer.
+In both transports, choosing `No profile` leaves the printer unprofiled.
+Supplying `--profile ID` bypasses the picker and remains the direct and
+non-interactive path. Sending an existing ESC/POS stream does not require a
+rendering profile, and no profile—including `REFERENCE`—is inferred for an
+unknown printer.
 
 `--discover` finds the host instead of requiring an already-known `--host`:
 it runs the same scan as `printers discover` and feeds the chosen result into
@@ -795,7 +798,10 @@ escpost profiles find
 ```
 
 The command requires an interactive terminal and is unavailable with
-`--non-interactive`. For scripts, use `profiles list --search <TEXT>`.
+`--non-interactive`. Choices are shown as `Vendor · Model — PROFILE`, sorted
+by vendor and model. Type to filter case-insensitively across the vendor,
+model, or profile ID; selecting a choice prints only its profile ID. For
+scripts, use `profiles list --search <TEXT>`.
 
 ## `escpost serve`
 
