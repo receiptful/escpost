@@ -95,6 +95,20 @@ Each printer includes its configured `name`, `transport`, `availability`,
 optional `profile`, and connection details. Pass the configured printer name
 exactly to `print()`; the SDK does not derive another identifier.
 
+## Read printer profiles
+
+`profiles.list()` returns ESCPost's printer profile catalog. A printer's
+`profile` is the `id` of one of these profiles, or `null` when none is set
+(`escpost printers add --profile`). Each profile gives the printer's real
+geometry: `printableWidthDots` is the width the head can print, and `dpiX` and
+`dpiY` its resolution.
+
+```ts
+const [{ printers }, { profiles }] = await Promise.all([escpost.printers.list(), escpost.profiles.list()]);
+const profile = profiles.find(({ id }) => id === printers[0].profile);
+const width = profile?.printableWidthDots ?? 384;
+```
+
 ## Print raw bytes
 
 `print()` sends a raw print request and resolves with a `jobId`. `data` accepts
@@ -106,6 +120,54 @@ const receiptBytes = new Uint8Array([0x1b, 0x40, 0x1b, 0x64, 0x03]);
 const result = await escpost.print({ printer: "counter", data: receiptBytes });
 console.log(result.jobId);
 ```
+
+## Migrate from QZ Tray
+
+The package includes a QZ Tray compatibility shim: a `qz` object with the same
+API as QZ Tray's `qz-tray.js`, which prints through ESCPost instead. A page keeps
+its `qz.*` calls and only changes where `qz` comes from:
+
+```ts
+// before: import qz from "qz-tray";
+import qz from "@receiptful.io/escpost/qz";
+```
+
+CommonJS applications change the required package in the same way:
+
+```js
+// before: const qz = require("qz-tray");
+const qz = require("@receiptful.io/escpost/qz");
+```
+
+A page that loads `qz-tray.js` with a script tag loads `escpost-qz.js` instead,
+which defines `window.qz`:
+
+```html
+<!-- before: <script src="qz-tray.js"></script> -->
+<script src="escpost-qz.js"></script>
+```
+
+`escpost-qz.js` is published in the package's `dist/` folder. To print PDFs,
+also serve the `dist/pdfjs/` folder next to it: the shim loads pdf.js from
+there on the first PDF. pdf.js ships in the package, so PDF printing works
+offline, and a page that prints no PDF never downloads it.
+
+`qz.security` calls are accepted and ignored, so no certificate is needed and no
+popup appears. Raw jobs are sent as they are, with plain text encoded in the
+config's `encoding`, as QZ Tray does. Image, HTML and PDF jobs are drawn in the
+browser and printed as an ESC/POS image. A raw one that asks for a label printer
+language (ZPL, EPL, CPCL or SBPL) gets that language's image command instead,
+encoded as QZ Tray does: the page wraps it in its own label commands, as with QZ
+Tray. As in QZ Tray, an image keeps its own size, a PDF prints its first page
+scaled to `pageWidth` or `pageHeight` in dots (else one dot per point), and HTML
+is laid out `pageWidth` dots wide (a 4 inch label if it gives none). Other
+languages, such as Evolis or PGL, reject with `UNSUPPORTED_FORMAT`. ESC/POS
+images are drawn for the printer's profile: its printable width and resolution. Give each
+printer its profile (`escpost printers add --profile`); a printer without one
+is drawn for a 58 mm roll at 203 dpi (384 dots wide), or for the paper `size`
+the config gives, so nothing prints past a narrower head than assumed. QZ Tray features that ESCPost does not
+offer (`qz.serial`, `qz.usb`, `qz.hid`, `qz.file`, `qz.socket` and printer
+status) reject with `UNSUPPORTED_FEATURE`.
 
 ## Errors
 
@@ -119,6 +181,8 @@ Operations may reject with `EscpostError`, whose `code` identifies the failure:
 | `PRINTER_NOT_FOUND` | No configured printer has the requested exact name. |
 | `PRINT_FAILED` | The daemon could not complete the raw print job. |
 | `PROTOCOL_MISMATCH` | A response did not match the SDK protocol. |
+| `UNSUPPORTED_FORMAT` | The QZ shim cannot print this kind of data. |
+| `UNSUPPORTED_FEATURE` | The QZ shim was asked for a QZ Tray feature that ESCPost does not offer. |
 
 ```ts
 import { EscpostError, escpost } from "@receiptful.io/escpost";

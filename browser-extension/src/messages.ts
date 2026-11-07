@@ -9,6 +9,7 @@ const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123
 type OneShotDaemon = {
   health(): Promise<unknown>;
   list(transport?: "usb" | "network"): Promise<unknown>;
+  profiles(): Promise<unknown>;
   print(printer: string, bytes: Uint8Array): Promise<unknown>;
 };
 
@@ -35,6 +36,8 @@ export async function handleRequest(
       return request.payload === null ? daemonCall(() => deps.daemon.health()) : protocolFailure();
     case "printers.list":
       return listRequest(request, deps);
+    case "profiles.list":
+      return request.payload === null ? daemonCall(() => deps.daemon.profiles()) : protocolFailure();
     case "print.raw":
       return printRequest(request, deps);
     default:

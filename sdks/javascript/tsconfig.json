@@ -10,5 +10,5 @@
     "noEmit": true,
     "tsBuildInfoFile": "./browser.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts", "vite.qz-script.config.ts"]
 }

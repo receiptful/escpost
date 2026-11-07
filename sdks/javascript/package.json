@@ -29,16 +29,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./qz": {
+      "types": "./dist/qz/index.d.ts",
+      "import": "./dist/qz.js",
+      "require": "./dist/qz.cjs"
     }
   },
   "scripts": {
-    "build": "vite build && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/index.ts",
+    "build": "vite build && vite build --config vite.qz-script.config.ts && vite build --config vite.qz-commonjs.config.ts && tsc --declaration --emitDeclarationOnly --module ESNext --moduleResolution Bundler --target ES2022 --outDir dist src/index.ts src/qz/index.ts && bun tests/qz-commonjs.cjs",
     "prepack": "bun run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "happy-dom": "20.0.0",
+    "pdfjs-dist": "4.10.38",
     "typescript": "5.9.2",
     "vite": "7.3.6",
     "vitest": "3.2.4"

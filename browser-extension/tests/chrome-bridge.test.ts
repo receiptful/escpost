@@ -9,7 +9,7 @@ test("the framed Chrome bridge authorizes the browser-reported parent origin", a
     addEventListener: vi.fn((_type: string, listener: (event: MessageEvent) => void) => { receive = listener; }),
   };
   const grants = { contains: vi.fn(async () => true), onRemoved: vi.fn() };
-  const daemon = { health: vi.fn(async () => true), list: vi.fn(), print: vi.fn(), openInventoryStream: vi.fn() };
+  const daemon = { health: vi.fn(async () => true), list: vi.fn(), profiles: vi.fn(), print: vi.fn(), openInventoryStream: vi.fn() };
   installChromeBridge(page, { grants, daemon });
 
   receive?.({
@@ -32,7 +32,7 @@ test("the framed Chrome bridge ignores non-parent and non-web origins", async ()
   const page = { parent, addEventListener: vi.fn((_type: string, listener: (event: MessageEvent) => void) => { receive = listener; }) };
   const deps = {
     grants: { contains: vi.fn(async () => true), onRemoved: vi.fn() },
-    daemon: { health: vi.fn(async () => true), list: vi.fn(), print: vi.fn(), openInventoryStream: vi.fn() },
+    daemon: { health: vi.fn(async () => true), list: vi.fn(), profiles: vi.fn(), print: vi.fn(), openInventoryStream: vi.fn() },
   };
   installChromeBridge(page, deps);
   const data = { source: "escpost-page", protocol: 1, id: 7, op: "daemon.health", payload: null };
@@ -53,7 +53,7 @@ test("the framed Chrome bridge carries live printer snapshots without a content 
   const deps = {
     grants: { contains: vi.fn(async () => true), onRemoved: vi.fn() },
     daemon: {
-      health: vi.fn(), list: vi.fn(), print: vi.fn(),
+      health: vi.fn(), list: vi.fn(), profiles: vi.fn(), print: vi.fn(),
       openInventoryStream: vi.fn(async (next: { onSnapshot(snapshot: unknown): void }, signal: AbortSignal) => {
         callbacks = next;
         await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));

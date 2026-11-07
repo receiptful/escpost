@@ -4,7 +4,9 @@ export type ErrorCode =
   | "DAEMON_UNAVAILABLE"
   | "PRINTER_NOT_FOUND"
   | "PRINT_FAILED"
-  | "PROTOCOL_MISMATCH";
+  | "PROTOCOL_MISMATCH"
+  | "UNSUPPORTED_FORMAT"
+  | "UNSUPPORTED_FEATURE";
 
 const errorCodes: ReadonlySet<ErrorCode> = new Set([
   "EXTENSION_UNAVAILABLE",
@@ -13,6 +15,8 @@ const errorCodes: ReadonlySet<ErrorCode> = new Set([
   "PRINTER_NOT_FOUND",
   "PRINT_FAILED",
   "PROTOCOL_MISMATCH",
+  "UNSUPPORTED_FORMAT",
+  "UNSUPPORTED_FEATURE",
 ]);
 
 export class EscpostError extends Error {
