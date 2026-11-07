@@ -9,6 +9,7 @@ use crate::application::{self, ApplicationError};
 
 pub(crate) mod cli;
 pub(crate) mod http;
+pub(crate) mod selection;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProfileSourceFilter {

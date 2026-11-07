@@ -12,6 +12,7 @@ use crate::error::CliError;
 use super::{
     BarcodeFacts, FeaturesFacts, GetRequest, ListRequest, ProfileFacts, ProfileSourceFilter, get,
     list,
+    selection::{profile_choices, substring_scorer},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -135,28 +136,16 @@ fn run_find(_arguments: FindProfileArgs, non_interactive: bool) -> Result<(), Cl
         source: None,
         search: None,
     })?;
-    let options: Vec<(String, String)> = response
-        .profiles
-        .into_iter()
-        .map(|profile| {
-            (
-                format!("{} — {} · {}", profile.id, profile.vendor, profile.model),
-                profile.id,
-            )
-        })
-        .collect();
-    let labels: Vec<String> = options.iter().map(|(label, _)| label.clone()).collect();
-
-    let chosen = Select::new("Find a printer profile", labels)
+    let choices = profile_choices(&response.profiles);
+    let chosen = Select::new("Find a printer profile", choices)
         .with_page_size(10)
+        .with_scorer(&substring_scorer)
         .prompt()
         .map_err(|error| CliError::ProfilePrompt(error.to_string()))?;
 
-    let id = options
-        .into_iter()
-        .find(|(label, _)| *label == chosen)
-        .map(|(_, id)| id)
-        .expect("inquire returns one of the supplied labels");
+    let id = chosen
+        .into_profile_id()
+        .expect("every profile finder choice contains a profile id");
     println!("{id}");
     Ok(())
 }
