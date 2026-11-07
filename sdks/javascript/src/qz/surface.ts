@@ -177,23 +177,32 @@ export function createQzShim(client: EscpostClient = escpost) {
 
   // Resolves null, not undefined: qz-tray.js returns the last call's result
   // (qz-tray.js:1688-1694), and a `print` result is null. QZ's optional
-  // resumeOnError and signature arguments are accepted and ignored.
+  // resumeOnError controls whether a batch continues after a failure; signature
+  // arguments are accepted and ignored because ESCPost has nothing to sign.
   async function print(
     configs: ShimConfig | ShimConfig[],
     data: unknown[] | unknown[][],
-    ..._ignored: unknown[]
+    ...optional: unknown[]
   ): Promise<null> {
     assertActive();
+    const resumeOnError = typeof optional[0] === "boolean" && optional[0];
 
     // qz.print accepts one config or many, and one data array or an array of them.
     const configList = Array.isArray(configs) ? configs : [configs];
     const dataList = (Array.isArray(data[0]) ? data : [data]) as unknown[][];
+    const errors: unknown[] = [];
 
     for (let index = 0; index < Math.max(configList.length, dataList.length); index++) {
       const config = configList[Math.min(index, configList.length - 1)]!;
       const elements = dataList[Math.min(index, dataList.length - 1)]!;
-      await sendJob(client, config, elements);
+      try {
+        await sendJob(client, config, elements);
+      } catch (error) {
+        if (!resumeOnError) throw error;
+        errors.push(error);
+      }
     }
+    if (errors.length > 0) throw errors;
     return null;
   }
 

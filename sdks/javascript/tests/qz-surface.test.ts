@@ -25,7 +25,12 @@ const TM_T88III: PrinterProfile = {
  * Stands in for the ESCPost client, so the shim is tested without a browser
  * extension or a daemon. It records every call the shim makes.
  */
-function fakeClient(options: { available?: boolean; printers?: Printer[]; profiles?: PrinterProfile[] } = {}) {
+function fakeClient(options: {
+  available?: boolean;
+  printers?: Printer[];
+  profiles?: PrinterProfile[];
+  printErrors?: Record<string, Error>;
+} = {}) {
   const calls: Array<{ method: string; argument?: unknown }> = [];
   const printers = options.printers ?? PRINTERS;
   const client: EscpostClient = {
@@ -50,6 +55,8 @@ function fakeClient(options: { available?: boolean; printers?: Printer[]; profil
     },
     async print(request) {
       calls.push({ method: "print", argument: request });
+      const error = options.printErrors?.[request.printer];
+      if (error !== undefined) throw error;
       return { jobId: "job-1" };
     },
   };
@@ -210,6 +217,28 @@ describe("printing", () => {
     expect(printed()).toEqual([
       { printer: "TM-T20", data: Uint8Array.from([0x41]) },
       { printer: "Kitchen", data: Uint8Array.from([0x41 + 1]) },
+    ]);
+  });
+
+  it("continues a batch after failures when resumeOnError is true, then rejects with every error in order", async () => {
+    const firstError = new Error("TM-T20 is out of paper");
+    const lastError = new Error("Bar printer is offline");
+    const { qz, printed } = await connectedShim({
+      printers: [printer("TM-T20"), printer("Kitchen"), printer("Bar")],
+      printErrors: { "TM-T20": firstError, Bar: lastError },
+    });
+
+    const printing = qz.print(
+      [qz.configs.create("TM-T20"), qz.configs.create("Kitchen"), qz.configs.create("Bar")],
+      [["A"], ["B"], ["C"]],
+      true,
+    );
+
+    await expect(printing).rejects.toEqual([firstError, lastError]);
+    expect(printed()).toEqual([
+      { printer: "TM-T20", data: Uint8Array.from([0x41]) },
+      { printer: "Kitchen", data: Uint8Array.from([0x42]) },
+      { printer: "Bar", data: Uint8Array.from([0x43]) },
     ]);
   });
 
