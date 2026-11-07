@@ -4,7 +4,7 @@ use super::ProfileFacts;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProfileChoice {
-    profile_id: String,
+    profile_id: Option<String>,
     vendor: String,
     model: String,
 }
@@ -12,24 +12,35 @@ pub(crate) struct ProfileChoice {
 impl ProfileChoice {
     pub(crate) fn from_profile(profile: &ProfileFacts) -> Self {
         Self {
-            profile_id: profile.id.clone(),
+            profile_id: Some(profile.id.clone()),
             vendor: profile.vendor.clone(),
             model: profile.model.clone(),
         }
     }
 
+    pub(crate) fn no_profile() -> Self {
+        Self {
+            profile_id: None,
+            vendor: String::new(),
+            model: String::new(),
+        }
+    }
+
     pub(crate) fn into_profile_id(self) -> Option<String> {
-        Some(self.profile_id)
+        self.profile_id
     }
 }
 
 impl fmt::Display for ProfileChoice {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{} · {} — {}",
-            self.vendor, self.model, self.profile_id
-        )
+        match &self.profile_id {
+            Some(profile_id) => write!(
+                formatter,
+                "{} · {} — {}",
+                self.vendor, self.model, profile_id
+            ),
+            None => formatter.write_str("No profile"),
+        }
     }
 }
 
@@ -40,9 +51,19 @@ pub(crate) fn profile_choices(profiles: &[ProfileFacts]) -> Vec<ProfileChoice> {
         (
             choice.vendor.to_lowercase(),
             choice.model.to_lowercase(),
-            choice.profile_id.to_lowercase(),
+            choice
+                .profile_id
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase(),
         )
     });
+    choices
+}
+
+pub(crate) fn optional_profile_choices(profiles: &[ProfileFacts]) -> Vec<ProfileChoice> {
+    let mut choices = vec![ProfileChoice::no_profile()];
+    choices.extend(profile_choices(profiles));
     choices
 }
 
@@ -65,7 +86,7 @@ mod tests {
 
     use escpost_profiles::ProfileSource;
 
-    use super::{profile_choices, substring_scorer};
+    use super::{optional_profile_choices, profile_choices, substring_scorer};
     use crate::features::profiles::{
         BarcodeFacts, FeaturesFacts, FontFacts, FontsFacts, ProfileFacts,
     };
@@ -174,5 +195,27 @@ mod tests {
         assert_eq!(matching_ids("Epson"), ["ALPHA", "zeta", "OMEGA"]);
         assert_eq!(matching_ids("TM-T88"), ["ALPHA", "zeta"]);
         assert_eq!(matching_ids("ZETA"), ["zeta"]);
+    }
+
+    #[test]
+    fn optional_choices_put_exactly_one_no_profile_choice_first() {
+        let choices = optional_profile_choices(&profiles());
+        let labels: Vec<String> = choices.iter().map(ToString::to_string).collect();
+
+        assert_eq!(labels[0], "No profile");
+        assert_eq!(
+            labels.iter().filter(|label| *label == "No profile").count(),
+            1
+        );
+        assert_eq!(
+            &labels[1..],
+            [
+                "Brother · QL-800 — BROTHER",
+                "epson · tm-t88 — ALPHA",
+                "Epson · TM-T88 — zeta",
+                "Epson · TM-T90 — OMEGA",
+            ]
+        );
+        assert_eq!(choices.into_iter().next().unwrap().into_profile_id(), None);
     }
 }
