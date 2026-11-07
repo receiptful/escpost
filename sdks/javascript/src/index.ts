@@ -7,7 +7,9 @@ import type {
   NetworkConnection,
   Printer,
   PrinterInventory,
+  PrinterProfile,
   PrintResult,
+  ProfileCatalog,
   RawPrintRequest,
   UsbConnection,
 } from "./types";
@@ -18,7 +20,9 @@ export type {
   NetworkConnection,
   Printer,
   PrinterInventory,
+  PrinterProfile,
   PrintResult,
+  ProfileCatalog,
   RawPrintRequest,
   UsbConnection,
 } from "./types";
@@ -56,6 +60,23 @@ type WirePrinterInventory = {
   updated_at: string;
   warning: string | null;
   printers: WirePrinter[];
+};
+
+type WireProfile = {
+  id: string;
+  vendor: string;
+  model: string;
+  source: "calibrated" | "synthesized" | "virtual";
+  paper_width_mm: number;
+  printable_width_mm: number;
+  printable_width_dots: number;
+  dpi_x: number;
+  dpi_y: number;
+  full_cut: boolean;
+  partial_cut: boolean;
+  barcode_function_a: boolean;
+  barcode_function_b: boolean;
+  qr_code: boolean;
 };
 
 type WirePrintResult = { job_id: string };
@@ -103,6 +124,16 @@ function createEscpostClient(page?: PageWindow) {
       },
     },
 
+    profiles: {
+      async list(): Promise<ProfileCatalog> {
+        const catalog = await transport.request<unknown>("profiles.list", null, listTimeoutMs);
+        if (!isRecord(catalog) || !Array.isArray(catalog.profiles) || !catalog.profiles.every(isWireProfile)) {
+          throw protocolMismatch("profile catalog");
+        }
+        return { profiles: catalog.profiles.map(mapProfile) };
+      },
+    },
+
     async print(request: RawPrintRequest): Promise<PrintResult> {
       const payload: RawPrintPayload = {
         printer: request.printer,
@@ -135,6 +166,51 @@ function isWirePrinterInventory(value: unknown): value is WirePrinterInventory {
     Array.isArray(value.printers) &&
     value.printers.every(isWirePrinter)
   );
+}
+
+function isWireProfile(value: unknown): value is WireProfile {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.vendor === "string"
+    && typeof value.model === "string"
+    && (value.source === "calibrated" || value.source === "synthesized" || value.source === "virtual")
+    && isPositiveNumber(value.paper_width_mm)
+    && isPositiveNumber(value.printable_width_mm)
+    && isPositiveInteger(value.printable_width_dots)
+    && isPositiveInteger(value.dpi_x)
+    && isPositiveInteger(value.dpi_y)
+    && typeof value.full_cut === "boolean"
+    && typeof value.partial_cut === "boolean"
+    && typeof value.barcode_function_a === "boolean"
+    && typeof value.barcode_function_b === "boolean"
+    && typeof value.qr_code === "boolean";
+}
+
+function mapProfile(profile: WireProfile): PrinterProfile {
+  return {
+    id: profile.id,
+    vendor: profile.vendor,
+    model: profile.model,
+    source: profile.source,
+    paperWidthMm: profile.paper_width_mm,
+    printableWidthMm: profile.printable_width_mm,
+    printableWidthDots: profile.printable_width_dots,
+    dpiX: profile.dpi_x,
+    dpiY: profile.dpi_y,
+    fullCut: profile.full_cut,
+    partialCut: profile.partial_cut,
+    barcodeFunctionA: profile.barcode_function_a,
+    barcodeFunctionB: profile.barcode_function_b,
+    qrCode: profile.qr_code,
+  };
+}
+
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 function isWirePrintResult(value: unknown): value is WirePrintResult {

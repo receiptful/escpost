@@ -29,13 +29,13 @@ WHAT YOU GET
 
 WHO IT IS FOR
 
-Anyone whose counter runs on a web app: shops, restaurants, cafés, bakeries, market stalls, pharmacies, workshops, warehouses. If your point of sale, order system or label tool runs in a browser tab, it can print with ESCPost.
+Anyone whose counter or stockroom runs on a web app. If your point of sale, order system or label tool runs in a browser tab, it can print with ESCPost.
 
 If you build that software, the page-side library is @receiptful.io/escpost. Two lines of code print a receipt, and printers can be listed and watched live.
 
 HOW IT WORKS
 
-1. Install ESCPost on the computer the printer is attached to, from https://escpost.dev. The extension points you there on first use.
+1. Install ESCPost on the computer the printer is attached to, from https://escpost.dev. It runs on macOS and Linux; Windows is not verified yet.
 2. Open your web app and allow it to print. You do this once per website.
 3. Print. That is the whole setup.
 
@@ -43,7 +43,7 @@ WHAT IT IS ALLOWED TO DO
 
 ESCPost prints for the websites you approve, and for no others. Each website is approved by you, by name, in the extension's popup, and you can withdraw that approval at any time. An unapproved site gets nothing: no printer list, no printing, no answer at all.
 
-Your receipts stay on your own computer. They go from the page to the extension to the ESCPost app on the same machine, and from there to the printer. Nothing is uploaded, no account is needed, and the extension collects no analytics.
+Your receipts stay on your own computer. They go from the page to the extension to the ESCPost app on the same machine, and from there to the printer. Your receipts are never uploaded, no account is needed, and the extension collects no analytics.
 
 OPEN SOURCE
 

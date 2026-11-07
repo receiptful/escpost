@@ -2,7 +2,7 @@ import type { ErrorCode } from "./errors";
 
 export const protocolVersion = 1;
 
-export type PageOperation = "daemon.health" | "printers.list" | "print.raw";
+export type PageOperation = "daemon.health" | "printers.list" | "profiles.list" | "print.raw";
 
 export type PageRequest = {
   source: "escpost-page";
