@@ -132,6 +132,13 @@ its `qz.*` calls and only changes where `qz` comes from:
 import qz from "@receiptful.io/escpost/qz";
 ```
 
+CommonJS applications change the required package in the same way:
+
+```js
+// before: const qz = require("qz-tray");
+const qz = require("@receiptful.io/escpost/qz");
+```
+
 A page that loads `qz-tray.js` with a script tag loads `escpost-qz.js` instead,
 which defines `window.qz`:
 
