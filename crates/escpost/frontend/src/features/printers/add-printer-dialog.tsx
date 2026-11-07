@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { addPrinter } from "../../api/client";
-import type { AddPrinterBody, DiscoveredPrinter, UsbConnection } from "../../api/types";
+import type { AddPrinterBody, DiscoveredPrinter, Profile, UsbConnection } from "../../api/types";
 import { useProfileData } from "../../app/profile-data";
 import { usePrinterInventory } from "../../app/printer-inventory-data";
 import { useServerStatus } from "../../app/server-status-data";
@@ -58,6 +58,21 @@ function defaultOutEndpoint(usb: UsbConnection | null) {
 
 function defaultInEndpoint(usb: UsbConnection | null) {
   return usb && usb.in_endpoints.length === 1 ? endpointHex(usb.in_endpoints[0]!) : "";
+}
+
+function profileChoiceLabel(profile: Profile) {
+  return `${profile.vendor} · ${profile.model} — ${profile.id}`;
+}
+
+function compareProfileChoices(left: Profile, right: Profile) {
+  const compare = (leftValue: string, rightValue: string) => {
+    const leftLower = leftValue.toLowerCase();
+    const rightLower = rightValue.toLowerCase();
+    return leftLower < rightLower ? -1 : leftLower > rightLower ? 1 : 0;
+  };
+  return compare(left.vendor, right.vendor)
+    || compare(left.model, right.model)
+    || compare(left.id, right.id);
 }
 
 // Which device the open dialog is registering, by the facts that make it that
@@ -198,6 +213,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
   // the interface outright, which is why this only guards the request shape
   // rather than explaining itself on screen.
   const routed = !usb || outEndpoint !== "";
+  const profileChoices = [...(profiles.data?.profiles ?? [])].sort(compareProfileChoices);
   const submittable = name.trim().length > 0
     && !collision
     && routed
@@ -299,12 +315,6 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
             <label class={FIELD_LABEL} for="add-printer-profile">Profile</label>
             <span class="text-xs text-base-content/60">optional</span>
           </div>
-          {/* The catalog's ids and nothing else, where `printers add
-              --profile` takes free text. It is the one input where the
-              browser accepts strictly less than the terminal, which the spec
-              and the study both call for: a profile is chosen from the
-              catalog here, and an id that is in neither would only fail later
-              as `UnknownProfile` at print time. */}
           <select
             id="add-printer-profile"
             class="select select-sm w-full"
@@ -312,7 +322,7 @@ export function AddPrinterDialog({ printer, onClose, onAdded }: {
             onChange={(event) => setProfile(event.currentTarget.value)}
           >
             <option value="">No profile</option>
-            {(profiles.data?.profiles ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
+            {profileChoices.map((entry) => <option key={entry.id} value={entry.id}>{profileChoiceLabel(entry)}</option>)}
           </select>
           <p class="text-xs text-base-content/60">From the profile catalog. Can be assigned later during calibration.</p>
         </div>
