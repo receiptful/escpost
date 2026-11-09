@@ -1,4 +1,25 @@
-//! Native ESCPost developer command-line interface.
+//! ESCPost is a command-line toolbox for developing and debugging ESC/POS
+//! printer integrations. Use it to render print data as PNG images, capture
+//! and preview jobs through a virtual network printer, or send jobs to
+//! physical USB and network printers.
+//!
+//! # Installation
+//!
+//! With Homebrew:
+//!
+//! ```sh
+//! brew install receiptful/tap/escpost
+//! ```
+//!
+//! Or from crates.io with Cargo:
+//!
+//! ```sh
+//! cargo install escpost
+//! ```
+//!
+//! See the [project README] for usage examples and complete documentation.
+//!
+//! [project README]: https://github.com/receiptful/escpost/blob/main/README.md
 
 mod application;
 mod cli;
