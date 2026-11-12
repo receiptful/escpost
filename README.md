@@ -162,7 +162,7 @@ Use the root wrapper to run the containerized CLI with USB access:
 
 ```bash
 ./escpost printers list
-echo hello | ./escpost print -
+echo hello | ./escpost print
 ```
 
 For piped printing in a terminal, the wrapper keeps receipt data on a separate

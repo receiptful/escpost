@@ -185,7 +185,7 @@ physical printer.
 Send the source bytes unchanged to a configured printer or direct RAW TCP endpoint:
 
 ```text
-escpost print [OPTIONS] <SOURCE>
+escpost print [OPTIONS] [SOURCE]
 
 Options:
     --format auto|binary|hex
@@ -218,7 +218,29 @@ configured printer:
 ```bash
 escpost print receipt.hex
 echo hello | escpost print -
+echo hello | escpost print
 ```
+
+An omitted source reads stdin when it is redirected, including a pipe whose
+producer has not written yet. With terminal stdin, a source is required; use
+`-` explicitly to enter input there. An explicit file path always takes precedence
+over redirected stdin.
+
+Raw stdin (`--format auto` or `binary`) streams over one printer connection as
+bytes arrive, without waiting for EOF. The producer must flush its own output.
+ESCPost uses a bounded buffer and slows reading when the printer cannot keep up.
+EOF finishes the stream; Ctrl+C stops a continuously running producer/command.
+For example:
+
+```bash
+while printf 'Hello\n\n\n'; do sleep 2; done | escpost print
+```
+
+Chunks are not receipt boundaries: the producer supplies any initialization,
+line feeds, or cuts. The printer may buffer data until it receives those commands.
+An input or printer error stops the stream without replaying bytes already sent.
+Files and `--format hex` stdin remain buffered, so decoding errors are reported
+before any bytes are printed.
 
 `--network` sends directly to a RAW TCP endpoint: a bare port uses
 `127.0.0.1`, a bare host uses port `9100`, and IPv6 addresses need brackets.

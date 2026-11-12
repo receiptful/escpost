@@ -10,22 +10,136 @@ const PAYLOAD: &[u8] = b"\x1b@Receipt\x00\xff\n\n";
 const DEADLINE: Duration = Duration::from_secs(10);
 
 #[test]
+fn raw_stdin_streams_successive_chunks_before_eof_on_one_connection() {
+    for explicit_stdin in [false, true] {
+        let fixture = Fixture::new(false);
+        let mut command = fixture.command();
+        if explicit_stdin {
+            command.args(["-", "--format", "binary"]);
+        }
+        let mut child = command.spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let deadline = Instant::now() + DEADLINE;
+        let mut stream = loop {
+            match fixture.printer.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        panic!("printing waited for stdin EOF before connecting");
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        // Windows accepted sockets inherit the listener's nonblocking mode.
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(DEADLINE)).unwrap();
+        // The connection is established while stdin is still empty. Whether
+        // bytes are already available must not decide which source is used.
+        stdin.write_all(PAYLOAD).unwrap();
+        let mut bytes = vec![0; PAYLOAD.len()];
+        stream.read_exact(&mut bytes).unwrap();
+        assert_eq!(bytes, PAYLOAD);
+        assert!(child.try_wait().unwrap().is_none());
+        stdin.write_all(b"second\x1dV\0").unwrap();
+        let mut second = [0; 9];
+        stream.read_exact(&mut second).unwrap();
+        assert_eq!(&second, b"second\x1dV\0");
+        drop(stdin);
+        wait_for_exit(&mut child);
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(stream.read(&mut bytes).unwrap(), 0);
+        fixture.assert_no_transfer();
+    }
+}
+
+#[test]
+fn empty_stdin_finishes_without_sending_bytes() {
+    let fixture = Fixture::new(false);
+    let mut child = fixture.command().spawn().unwrap();
+    drop(child.stdin.take());
+    wait_for_exit(&mut child);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Bytes sent: 0"));
+    assert!(fixture.received().is_empty());
+}
+
+#[test]
+fn valid_hex_stdin_is_decoded_only_after_eof() {
+    let fixture = Fixture::new(false);
+    let mut child = fixture.command().args(["--format", "hex"]).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"1b 40 ").unwrap();
+    thread::sleep(Duration::from_millis(30));
+    fixture.assert_no_transfer();
+    stdin.write_all(b"ff 00 0a").unwrap();
+    drop(stdin);
+    wait_for_exit(&mut child);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fixture.received(), [27, 64, 255, 0, 10]);
+}
+
+#[test]
+fn malformed_hex_stdin_is_rejected_without_sending_a_valid_prefix() {
+    let fixture = Fixture::new(false);
+    let mut child = fixture.command().args(["--format", "hex"]).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"1b 40 ").unwrap();
+    thread::sleep(Duration::from_millis(30));
+    fixture.assert_no_transfer();
+    stdin.write_all(b"zz").unwrap();
+    drop(stdin);
+    wait_for_exit(&mut child);
+    assert!(!child.wait_with_output().unwrap().status.success());
+    fixture.assert_no_transfer();
+}
+
+#[test]
 fn sole_printer_is_used_for_files_and_pipes_with_or_without_non_interactive() {
-    for stdin_source in [false, true] {
+    for source in ["file", "stdin", "implicit-stdin"] {
         for non_interactive in [false, true] {
             let fixture = Fixture::new(false);
             let mut command = fixture.command();
-            command.arg(if stdin_source {
-                PathBuf::from("-")
-            } else {
-                fixture.source()
-            });
+            match source {
+                "file" => {
+                    command.arg(fixture.source());
+                }
+                "stdin" => {
+                    command.arg("-");
+                }
+                _ => {}
+            }
             if non_interactive {
                 command.arg("--non-interactive");
             }
             let mut child = command.spawn().expect("print should start");
-            if stdin_source {
+            if source != "file" {
                 child.stdin.as_mut().unwrap().write_all(PAYLOAD).unwrap();
+            } else {
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(b"ignored stdin")
+                    .unwrap();
             }
             drop(child.stdin.take());
             wait_for_exit(&mut child);
@@ -39,6 +153,35 @@ fn sole_printer_is_used_for_files_and_pipes_with_or_without_non_interactive() {
             assert_eq!(fixture.received(), PAYLOAD);
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn missing_source_at_a_terminal_fails_before_printer_selection() {
+    let fixture = Fixture::new(true);
+    let mut child = Command::new("script")
+        .args([
+            "--quiet",
+            "--return",
+            "--command",
+            "\"$ESCPOST\" print --config \"$CONFIG\"",
+            "/dev/null",
+        ])
+        .env("ESCPOST", env!("CARGO_BIN_EXE_escpost"))
+        .env("CONFIG", fixture.config())
+        .env("DO_NOT_TRACK", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_exit(&mut child);
+    let output = child.wait_with_output().unwrap();
+    let screen = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success());
+    assert!(screen.contains("source is required"), "{screen}");
+    assert!(!screen.contains("Add a printer"), "{screen}");
+    fixture.assert_no_transfer();
 }
 
 #[test]
@@ -210,6 +353,7 @@ impl Fixture {
             .printer
             .accept()
             .expect("the selected printer should receive the job");
+        stream.set_nonblocking(false).unwrap();
         stream.set_read_timeout(Some(DEADLINE)).unwrap();
         let mut bytes = Vec::new();
         stream.read_to_end(&mut bytes).unwrap();

@@ -15,7 +15,7 @@ use crate::source;
 
 use super::{
     NetworkTarget, Request, ResolveRequest, ResolvedPrinter, Target, UsbTarget, print,
-    resolve_target,
+    resolve_target, stream_stdin,
 };
 
 const DEFAULT_NETWORK_HOST: &str = "127.0.0.1";
@@ -23,8 +23,8 @@ const DEFAULT_NETWORK_PORT: u16 = 9100;
 
 #[derive(Debug, Args)]
 pub(crate) struct PrintArgs {
-    /// Raw ESC/POS file, hexadecimal file, case directory, or - for stdin.
-    pub(crate) source: PathBuf,
+    /// Raw ESC/POS file, hexadecimal file, case directory, or - for stdin; defaults to redirected stdin.
+    pub(crate) source: Option<PathBuf>,
 
     /// Input representation.
     #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
@@ -161,6 +161,11 @@ trait PrinterAdder {
     fn add(&mut self, config_path: Option<&Path>) -> Result<String, CliError>;
 }
 
+enum PreparedPrint {
+    Buffered(Request),
+    Stdin(ResolvedPrinter),
+}
+
 pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(), CliError> {
     let can_prompt = can_prompt_for_input(non_interactive);
     let request = prepare_request(
@@ -169,7 +174,23 @@ pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(
         &mut InquirePrinterSelector,
         &mut InquirePrinterAdder,
     )?;
-    let response = print(request).await?;
+    let response = match request {
+        PreparedPrint::Buffered(request) => print(request).await?,
+        PreparedPrint::Stdin(printer) => {
+            eprintln!("Streaming stdin; Ctrl+C to stop.");
+            tokio::select! {
+                // Install the handler before starting transfers. Container
+                // PID 1 ignores a default SIGINT disposition, and dropping a
+                // blocking stdin task would leave runtime shutdown waiting.
+                biased;
+                signal = tokio::signal::ctrl_c() => {
+                    signal.map_err(CliError::PrintInterruptSignal)?;
+                    std::process::exit(130);
+                }
+                result = stream_stdin(printer, io::stdin()) => result?,
+            }
+        }
+    };
 
     present(&response);
     Ok(())
@@ -197,7 +218,7 @@ fn prepare_request(
     can_prompt: bool,
     selector: &mut impl PrinterSelector,
     adder: &mut impl PrinterAdder,
-) -> Result<Request, CliError> {
+) -> Result<PreparedPrint, CliError> {
     let PrintArgs {
         source,
         format,
@@ -205,6 +226,11 @@ fn prepare_request(
         config,
         network,
     } = arguments;
+    let source = match source {
+        Some(source) => source,
+        None if !io::stdin().is_terminal() => PathBuf::from("-"),
+        None => return Err(CliError::MissingPrintSource),
+    };
     let printer = match network {
         Some(target) => ResolvedPrinter::direct_network(target),
         None => {
@@ -216,11 +242,14 @@ fn prepare_request(
             })?
         }
     };
+    if source == Path::new("-") && !matches!(format, InputFormat::Hex) {
+        return Ok(PreparedPrint::Stdin(printer));
+    }
     let input = source::load(&source, format.into())?;
-    Ok(Request {
+    Ok(PreparedPrint::Buffered(Request {
         bytes: input.bytes,
         printer,
-    })
+    }))
 }
 
 fn present(response: &super::Response) {
@@ -346,8 +375,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, format_usb_target,
-        parse_network_target, prepare_request, resolve_printer_name,
+        InputFormat, PreparedPrint, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector,
+        format_usb_target, parse_network_target, prepare_request, resolve_printer_name,
     };
     use crate::application::ApplicationError;
     use crate::cli::Cli;
@@ -464,7 +493,7 @@ port = 9100
         .expect("the printer configuration should be writable");
         let request = prepare_request(
             PrintArgs {
-                source,
+                source: Some(source),
                 format: InputFormat::Auto,
                 printer: None,
                 config: Some(configuration),
@@ -475,6 +504,9 @@ port = 9100
             &mut UnexpectedAdder,
         )
         .expect("the selected printer request should be prepared");
+        let PreparedPrint::Buffered(request) = request else {
+            panic!("file input should be buffered");
+        };
 
         assert_eq!(request.bytes, vec![0x1b, 0x40, 0x0a]);
         assert_eq!(request.printer.printer_name, Some("counter".to_owned()));
@@ -505,7 +537,7 @@ port = 9100
 
         let request = prepare_request(
             PrintArgs {
-                source,
+                source: Some(source),
                 format: InputFormat::Auto,
                 printer: None,
                 config: Some(configuration),
@@ -516,6 +548,9 @@ port = 9100
             &mut adder,
         )
         .expect("the newly added printer request should be prepared");
+        let PreparedPrint::Buffered(request) = request else {
+            panic!("file input should be buffered");
+        };
 
         assert_eq!(request.bytes, expected);
         assert_eq!(request.printer.printer_name, Some("new-printer".to_owned()));
@@ -546,7 +581,7 @@ port = 9100
 
         let error = prepare_request(
             PrintArgs {
-                source: directory.join("missing.hex"),
+                source: Some(directory.join("missing.hex")),
                 format: InputFormat::Auto,
                 printer: Some("missing".to_owned()),
                 config: Some(configuration),

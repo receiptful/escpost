@@ -72,6 +72,14 @@ pub(crate) enum CliError {
     )]
     AmbiguousDiscoveredPrinters(Vec<String>),
 
+    #[error(
+        "source is required; pass a file path, pipe data into `escpost print`, or use `escpost print -` to read stdin explicitly"
+    )]
+    MissingPrintSource,
+
+    #[error("could not listen for Ctrl+C while printing: {0}")]
+    PrintInterruptSignal(#[source] std::io::Error),
+
     #[error("no printers configured; add one with `escpost printers add`")]
     NoConfiguredPrintPrinters,
 

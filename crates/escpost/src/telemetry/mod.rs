@@ -182,12 +182,14 @@ fn can_prompt(cli: &Cli) -> bool {
         && std::io::stderr().is_terminal()
 }
 
-/// `render -` and `print -` take the receipt from stdin; a prompt would
-/// swallow receipt bytes as its answer.
+/// Explicit or implicit stdin sources must never be consumed by a consent prompt.
 fn reads_receipt_from_stdin(command: &Command) -> bool {
     match command {
         Command::Render(arguments) => arguments.source == Path::new("-"),
-        Command::Print(arguments) => arguments.source == Path::new("-"),
+        Command::Print(arguments) => arguments
+            .source
+            .as_deref()
+            .is_none_or(|source| source == Path::new("-")),
         _ => false,
     }
 }

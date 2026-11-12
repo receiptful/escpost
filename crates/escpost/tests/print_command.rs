@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
-fn print_help_contract_is_unchanged() {
+fn print_help_describes_optional_source_and_stdin_fallback() {
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args(["print", "--help"])
         .output()
@@ -19,10 +19,10 @@ fn print_help_contract_is_unchanged() {
         "\
 Send a known ESC/POS byte stream unchanged to a printer
 
-Usage: escpost print [OPTIONS] <SOURCE>
+Usage: escpost print [OPTIONS] [SOURCE]
 
 Arguments:
-  <SOURCE>  Raw ESC/POS file, hexadecimal file, case directory, or - for stdin
+  [SOURCE]  Raw ESC/POS file, hexadecimal file, case directory, or - for stdin; defaults to redirected stdin
 
 Options:
       --format <FORMAT>                Input representation [default: auto] [possible values: auto, binary, hex]

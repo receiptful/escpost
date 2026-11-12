@@ -1,12 +1,12 @@
-//! Typed physical-printer operation for already-loaded ESC/POS bytes.
+//! Physical-printer operations for complete jobs and continuous raw input.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use nusb::MaybeFuture;
 use nusb::transfer::{Bulk, Out};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -17,6 +17,7 @@ pub(crate) mod cli;
 pub(crate) mod http;
 
 const USB_WRITE_BUFFER_BYTES: usize = 16 * 1024;
+const STREAM_READ_BUFFER_BYTES: usize = 16 * 1024;
 const USB_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
 const NETWORK_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const NETWORK_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -158,6 +159,73 @@ where
         .map_err(ApplicationError::UsbTransferTaskJoinFailed)?
 }
 
+/// Forward raw stdin over one connection, with bounded memory and backpressure.
+/// Blocking input reads stay off the async worker. No retry can replay bytes
+/// after a partial write: any input or transport failure ends the operation.
+pub(crate) async fn stream_stdin(
+    printer: ResolvedPrinter,
+    mut input: impl Read + Send + 'static,
+) -> application::Result<Response> {
+    let ResolvedPrinter {
+        printer_name,
+        target,
+    } = printer;
+    let bytes_sent = match &target {
+        Target::Usb(target) => {
+            let target = target.clone();
+            run_blocking_usb(move || {
+                let mut writer = open_usb_writer(&target)?;
+                forward_stdin(&mut input, |bytes| {
+                    write_usb_chunk(&mut writer, &target, bytes)
+                })
+            })
+            .await?
+        }
+        Target::Network(target) => {
+            let mut connection = connect_network(target).await?;
+            let endpoint = target.endpoint();
+            let runtime = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || -> application::Result<usize> {
+                let count = forward_stdin(&mut input, |bytes| {
+                    runtime.block_on(write_network_chunk(
+                        &mut connection,
+                        &endpoint,
+                        bytes,
+                        false,
+                    ))
+                })?;
+                runtime.block_on(write_network_chunk(&mut connection, &endpoint, &[], true))?;
+                Ok(count)
+            })
+            .await
+            .map_err(ApplicationError::PrintTaskFailed)??
+        }
+    };
+    Ok(Response {
+        printer_name,
+        bytes_sent,
+        target,
+    })
+}
+
+fn forward_stdin(
+    input: &mut impl Read,
+    mut send: impl FnMut(&[u8]) -> application::Result<()>,
+) -> application::Result<usize> {
+    let mut buffer = [0; STREAM_READ_BUFFER_BYTES];
+    let mut bytes_sent = 0;
+    loop {
+        let count = match input.read(&mut buffer) {
+            Ok(0) => return Ok(bytes_sent),
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(ApplicationError::ReadStdin(error)),
+        };
+        send(&buffer[..count])?;
+        bytes_sent += count;
+    }
+}
+
 #[cfg(test)]
 async fn print_with_transport(
     request: Request,
@@ -181,8 +249,13 @@ async fn print_with_transport(
 }
 
 async fn send_network(target: &NetworkTarget, data: &[u8]) -> application::Result<()> {
+    let mut stream = connect_network(target).await?;
+    write_network_chunk(&mut stream, &target.endpoint(), data, true).await
+}
+
+async fn connect_network(target: &NetworkTarget) -> application::Result<TcpStream> {
     let endpoint = target.endpoint();
-    let mut stream = timeout(
+    timeout(
         NETWORK_CONNECT_TIMEOUT,
         TcpStream::connect((target.host.as_str(), target.port)),
     )
@@ -191,16 +264,26 @@ async fn send_network(target: &NetworkTarget, data: &[u8]) -> application::Resul
     .map_err(|source| ApplicationError::ConnectNetworkPrinter {
         target: endpoint.clone(),
         source,
-    })?;
+    })
+}
 
+async fn write_network_chunk(
+    stream: &mut (impl AsyncWrite + Unpin),
+    endpoint: &str,
+    data: &[u8],
+    close: bool,
+) -> application::Result<()> {
     timeout(NETWORK_WRITE_TIMEOUT, async {
         stream.write_all(data).await?;
-        stream.shutdown().await
+        if close {
+            stream.shutdown().await?;
+        }
+        Ok(())
     })
     .await
-    .map_err(|_| ApplicationError::WriteNetworkPrinterTimeout(endpoint.clone()))?
+    .map_err(|_| ApplicationError::WriteNetworkPrinterTimeout(endpoint.to_owned()))?
     .map_err(|source| ApplicationError::WriteNetworkPrinter {
-        target: endpoint,
+        target: endpoint.to_owned(),
         source,
     })
 }
@@ -209,59 +292,69 @@ struct NusbTransport;
 
 impl UsbTransport for NusbTransport {
     fn send(&mut self, target: &UsbTarget, data: &[u8]) -> application::Result<()> {
-        let matches: Vec<_> = nusb::list_devices()
-            .wait()
-            .map_err(ApplicationError::EnumerateUsb)?
-            .filter(|device| {
-                device.vendor_id() == target.vendor_id
-                    && device.product_id() == target.product_id
-                    && target
-                        .serial_number
-                        .as_deref()
-                        .is_none_or(|serial_number| device.serial_number() == Some(serial_number))
-            })
-            .collect();
-        let device_info = require_unique_device(matches, target)?;
-        let device =
-            device_info
-                .open()
-                .wait()
-                .map_err(|source| ApplicationError::OpenUsbDevice {
-                    vendor_id: target.vendor_id,
-                    product_id: target.product_id,
-                    source: source.into(),
-                })?;
-        // On Linux this temporarily detaches a kernel driver such as usblp.
-        // nusb reattaches that driver when the claimed interface is dropped.
-        let interface = device
-            .detach_and_claim_interface(target.interface)
-            .wait()
-            .map_err(|source| ApplicationError::ClaimUsbInterface {
-                interface: target.interface,
-                source: source.into(),
-            })?;
-        let endpoint = interface
-            .endpoint::<Bulk, Out>(target.out_endpoint)
-            .map_err(|source| ApplicationError::OpenUsbOutEndpoint {
-                interface: target.interface,
-                endpoint: target.out_endpoint,
-                source: source.into(),
-            })?;
-        let mut writer = endpoint
-            .writer(USB_WRITE_BUFFER_BYTES)
-            .with_write_timeout(USB_TRANSFER_TIMEOUT);
+        let mut writer = open_usb_writer(target)?;
+        write_usb_chunk(&mut writer, target, data)
+    }
+}
 
-        writer
-            .write_all(data)
-            .map_err(|source| ApplicationError::WriteUsb {
-                endpoint: target.out_endpoint,
-                source,
-            })?;
-        writer.flush().map_err(|source| ApplicationError::FlushUsb {
+fn open_usb_writer(target: &UsbTarget) -> application::Result<nusb::io::EndpointWrite<Bulk>> {
+    let matches: Vec<_> = nusb::list_devices()
+        .wait()
+        .map_err(ApplicationError::EnumerateUsb)?
+        .filter(|device| {
+            device.vendor_id() == target.vendor_id
+                && device.product_id() == target.product_id
+                && target
+                    .serial_number
+                    .as_deref()
+                    .is_none_or(|serial_number| device.serial_number() == Some(serial_number))
+        })
+        .collect();
+    let device_info = require_unique_device(matches, target)?;
+    let device = device_info
+        .open()
+        .wait()
+        .map_err(|source| ApplicationError::OpenUsbDevice {
+            vendor_id: target.vendor_id,
+            product_id: target.product_id,
+            source: source.into(),
+        })?;
+    // On Linux this temporarily detaches a kernel driver such as usblp.
+    // nusb reattaches that driver when the claimed interface is dropped.
+    let interface = device
+        .detach_and_claim_interface(target.interface)
+        .wait()
+        .map_err(|source| ApplicationError::ClaimUsbInterface {
+            interface: target.interface,
+            source: source.into(),
+        })?;
+    let endpoint = interface
+        .endpoint::<Bulk, Out>(target.out_endpoint)
+        .map_err(|source| ApplicationError::OpenUsbOutEndpoint {
+            interface: target.interface,
+            endpoint: target.out_endpoint,
+            source: source.into(),
+        })?;
+    Ok(endpoint
+        .writer(USB_WRITE_BUFFER_BYTES)
+        .with_write_timeout(USB_TRANSFER_TIMEOUT))
+}
+
+fn write_usb_chunk(
+    writer: &mut impl Write,
+    target: &UsbTarget,
+    data: &[u8],
+) -> application::Result<()> {
+    writer
+        .write_all(data)
+        .map_err(|source| ApplicationError::WriteUsb {
             endpoint: target.out_endpoint,
             source,
-        })
-    }
+        })?;
+    writer.flush().map_err(|source| ApplicationError::FlushUsb {
+        endpoint: target.out_endpoint,
+        source,
+    })
 }
 
 fn require_unique_device<T>(mut matches: Vec<T>, target: &UsbTarget) -> application::Result<T> {
@@ -289,9 +382,185 @@ mod tests {
 
     use super::{
         NetworkTarget, Request, ResolveRequest, ResolvedPrinter, Target, UsbTarget, UsbTransport,
-        print, print_with_transport, require_unique_device, resolve_target, run_blocking_usb,
+        forward_stdin, print, print_with_transport, require_unique_device, resolve_target,
+        run_blocking_usb, write_usb_chunk,
     };
     use crate::application::ApplicationError;
+
+    #[test]
+    fn streaming_flushes_small_usb_chunks_before_reading_more_input() {
+        use std::cell::RefCell;
+        use std::io::{self, Read, Write};
+        use std::rc::Rc;
+        let delivered = Rc::new(RefCell::new(Vec::new()));
+        struct Input {
+            delivered: Rc<RefCell<Vec<u8>>>,
+            next: u8,
+        }
+        impl Read for Input {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                assert_eq!(self.delivered.borrow().len(), usize::from(self.next));
+                if self.next == 3 {
+                    return Ok(0);
+                }
+                buffer[0] = self.next;
+                self.next += 1;
+                Ok(1)
+            }
+        }
+        struct Writer {
+            delivered: Rc<RefCell<Vec<u8>>>,
+            pending: Vec<u8>,
+        }
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.pending.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.delivered.borrow_mut().append(&mut self.pending);
+                Ok(())
+            }
+        }
+        let mut input = Input {
+            delivered: Rc::clone(&delivered),
+            next: 0,
+        };
+        let mut writer = Writer {
+            delivered: Rc::clone(&delivered),
+            pending: Vec::new(),
+        };
+        let count = forward_stdin(&mut input, |bytes| {
+            write_usb_chunk(&mut writer, &usb_target(), bytes)
+        })
+        .unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(*delivered.borrow(), [0, 1, 2]);
+    }
+
+    #[test]
+    fn streaming_stops_at_the_first_transport_failure_without_retrying() {
+        let mut input = std::io::Cursor::new(vec![0; super::STREAM_READ_BUFFER_BYTES * 2]);
+        let mut calls = 0;
+        let error = forward_stdin(&mut input, |_| {
+            calls += 1;
+            Err(ApplicationError::WriteUsb {
+                endpoint: 1,
+                source: std::io::Error::from(std::io::ErrorKind::BrokenPipe),
+            })
+        })
+        .unwrap_err();
+        assert!(matches!(error, ApplicationError::WriteUsb { .. }));
+        assert_eq!(calls, 1);
+        assert_eq!(input.position(), super::STREAM_READ_BUFFER_BYTES as u64);
+    }
+
+    #[test]
+    fn streaming_retries_interrupted_reads_but_stops_on_a_real_input_error() {
+        use std::io;
+        struct Input(u8);
+        impl Read for Input {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.0 += 1;
+                match self.0 {
+                    1 => Err(io::ErrorKind::Interrupted.into()),
+                    2 => {
+                        buffer[..3].copy_from_slice(&[0, 255, 10]);
+                        Ok(3)
+                    }
+                    3 => Err(io::Error::other("producer failed")),
+                    _ => panic!("a failed producer must not be read again"),
+                }
+            }
+        }
+        let mut delivered = Vec::new();
+        let error = forward_stdin(&mut Input(0), |bytes| {
+            delivered.extend_from_slice(bytes);
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(delivered, [0, 255, 10]);
+        assert!(
+            matches!(error, ApplicationError::ReadStdin(source) if source.to_string() == "producer failed")
+        );
+    }
+
+    #[test]
+    fn usb_streaming_handles_short_writes_and_propagates_flush_failure() {
+        use std::io::{self, Write};
+        struct Writer {
+            bytes: Vec<u8>,
+            flushes: usize,
+            fail_flush: bool,
+        }
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let count = bytes.len().min(2);
+                self.bytes.extend_from_slice(&bytes[..count]);
+                Ok(count)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.flushes += 1;
+                if self.fail_flush {
+                    Err(io::ErrorKind::BrokenPipe.into())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        for fail_flush in [false, true] {
+            let mut writer = Writer {
+                bytes: Vec::new(),
+                flushes: 0,
+                fail_flush,
+            };
+            let mut input = io::Cursor::new(vec![0, 255, 27, 64, 10]);
+            let result = forward_stdin(&mut input, |bytes| {
+                write_usb_chunk(&mut writer, &usb_target(), bytes)
+            });
+            assert_eq!(writer.bytes, [0, 255, 27, 64, 10]);
+            assert_eq!(writer.flushes, 1);
+            if fail_flush {
+                assert!(
+                    matches!(result, Err(ApplicationError::FlushUsb { source, .. }) if source.kind() == io::ErrorKind::BrokenPipe)
+                );
+            } else {
+                assert_eq!(result.unwrap(), 5);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn streaming_network_write_times_out_after_partial_delivery() {
+        use tokio::io::AsyncReadExt;
+        // A four-byte buffer with an idle reader forces the write to stall.
+        // Mock time exercises the real timeout without a ten-second test.
+        let (mut writer, mut reader) = tokio::io::duplex(4);
+        let error =
+            super::write_network_chunk(&mut writer, "printer:9100", &[0, 1, 2, 3, 4, 5], false)
+                .await
+                .unwrap_err();
+        assert!(
+            matches!(error, ApplicationError::WriteNetworkPrinterTimeout(endpoint) if endpoint == "printer:9100")
+        );
+        drop(writer);
+        let mut delivered = Vec::new();
+        reader.read_to_end(&mut delivered).await.unwrap();
+        assert_eq!(delivered, [0, 1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn streaming_network_write_reports_a_disconnected_printer() {
+        let (mut writer, reader) = tokio::io::duplex(4);
+        drop(reader);
+        let error = super::write_network_chunk(&mut writer, "printer:9100", b"receipt", false)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ApplicationError::WriteNetworkPrinter { target, source }
+            if target == "printer:9100" && source.kind() == std::io::ErrorKind::BrokenPipe)
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn synchronous_usb_work_runs_off_the_async_worker() {
