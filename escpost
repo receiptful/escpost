@@ -21,4 +21,54 @@ if [ "$#" -eq 1 ] && [ "$1" = serve ]; then
   exec docker compose up
 fi
 
+# Compose disables the terminal when stdin is a pipe. For interactive printing,
+# keep the receipt on a FIFO while Docker attaches keyboard input to /dev/tty.
+# Never send receipt bytes through a PTY: terminal processing can change them.
+interactive=true
+for argument in "$@"; do
+  case "$argument" in
+    --) break ;;
+    --non-interactive) interactive=false ;;
+  esac
+done
+if [ "${1:-}" = print ] && [ "$interactive" = true ] \
+   && [ ! -t 0 ] && [ -t 1 ] && [ -t 2 ] \
+   && (exec 4</dev/tty) 2>/dev/null; then
+  mkdir -p target
+  input_directory=$(mktemp -d target/escpost-stdin.XXXXXX)
+  container_name="escpost-stdin-${input_directory##*.}"
+  input_writer=''
+  container_runner=''
+  cleanup() {
+    if [ -n "$container_runner" ]; then
+      kill "$container_runner" 2>/dev/null || true
+      # Compose's attached TTY can keep waiting after SIGTERM. Remove only
+      # this invocation's container so both the client and FIFO reader exit.
+      docker rm -f "$container_name" >/dev/null 2>&1 || true
+      wait "$container_runner" 2>/dev/null || true
+    fi
+    if [ -n "$input_writer" ]; then
+      kill "$input_writer" 2>/dev/null || true
+      wait "$input_writer" 2>/dev/null || true
+    fi
+    rm -rf "$input_directory"
+  }
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  mkfifo "$input_directory/input"
+  exec 3<&0
+  cat <&3 >"$input_directory/input" &
+  input_writer=$!
+  exec 3<&-
+  docker compose run --rm --interactive --tty --name "$container_name" \
+    -e "ESCPOST_STDIN_PATH=/workspace/$input_directory/input" \
+    escpost "$@" </dev/tty &
+  container_runner=$!
+  result=0
+  wait "$container_runner" || result=$?
+  container_runner=''
+  exit "$result"
+fi
+
 exec docker compose run --rm escpost "$@"

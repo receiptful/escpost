@@ -157,6 +157,13 @@ services:
             cargo run --quiet --locked --package escpost -- "$$@"
         fi
         cargo build --quiet --locked --package escpost
+        # The ./escpost wrapper keeps piped receipt bytes in a separate FIFO
+        # so the Docker terminal remains available for interactive prompts.
+        # Redirect only the executable's stdin; receipt bytes must not pass
+        # through the terminal, which can interpret or alter them.
+        if [ -n "$${ESCPOST_STDIN_PATH:-}" ]; then
+          exec "$${CARGO_TARGET_DIR}/debug/escpost" "$$@" <"$$ESCPOST_STDIN_PATH"
+        fi
         exec "$${CARGO_TARGET_DIR}/debug/escpost" "$$@"
       - escpost
     command:

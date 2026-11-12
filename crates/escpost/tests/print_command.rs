@@ -179,9 +179,11 @@ port = {port}
 }
 
 #[test]
-fn non_interactive_print_requires_a_named_printer() {
+fn non_interactive_print_without_configured_printers_explains_registration() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/cases/single-sheet/input.hex");
+    let directory = temporary_directory("no-configured-printers");
+    fs::create_dir_all(&directory).expect("the test directory should be creatable");
 
     let output = Command::new(env!("CARGO_BIN_EXE_escpost"))
         .args([
@@ -189,15 +191,17 @@ fn non_interactive_print_requires_a_named_printer() {
             source.to_str().expect("the source path should be UTF-8"),
             "--non-interactive",
         ])
+        .env("ESCPOST_CONFIG_DIR", &directory)
         .output()
         .expect("the escpost command should finish");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success());
     assert!(
-        stderr.contains("printer is required; pass --printer <NAME>"),
-        "the missing named target should be actionable:\n{stderr}"
+        stderr.contains("no printers configured; add one with `escpost printers add`"),
+        "the empty registry should be actionable:\n{stderr}"
     );
+    fs::remove_dir_all(directory).expect("the test directory should be removable");
 }
 
 #[test]

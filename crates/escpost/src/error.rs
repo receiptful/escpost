@@ -72,8 +72,13 @@ pub(crate) enum CliError {
     )]
     AmbiguousDiscoveredPrinters(Vec<String>),
 
-    #[error("printer is required; pass --printer <NAME>")]
-    MissingPrintPrinter,
+    #[error("no printers configured; add one with `escpost printers add`")]
+    NoConfiguredPrintPrinters,
+
+    #[error(
+        "multiple printers configured; pass --printer <NAME> or run with an interactive terminal"
+    )]
+    AmbiguousPrintPrinter,
 
     #[error("could not write command output: {0}")]
     WriteHumanOutput(#[source] std::io::Error),
@@ -124,8 +129,13 @@ pub(crate) enum CliError {
     #[error("--port is only valid for network printers")]
     NetworkPortForUsbPrinter,
 
-    #[error("no unconfigured connected USB printers were found")]
-    NoUnconfiguredUsbPrinters,
+    #[error("no connected USB printers were found")]
+    NoConnectedUsbPrinters,
+
+    #[error(
+        "all connected USB printers are already configured; use `escpost print <SOURCE>` to print"
+    )]
+    AllUsbPrintersConfigured,
 
     #[error("network printer host is required")]
     MissingPrinterHost,

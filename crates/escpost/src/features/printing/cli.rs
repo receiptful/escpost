@@ -1,6 +1,7 @@
 //! Terminal adapter for physical printing.
 
 use std::fmt;
+use std::fs::OpenOptions;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
@@ -161,7 +162,7 @@ trait PrinterAdder {
 }
 
 pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(), CliError> {
-    let can_prompt = !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal();
+    let can_prompt = can_prompt_for_input(non_interactive);
     let request = prepare_request(
         arguments,
         can_prompt,
@@ -172,6 +173,23 @@ pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(
 
     present(&response);
     Ok(())
+}
+
+fn can_prompt_for_input(non_interactive: bool) -> bool {
+    if non_interactive || !io::stderr().is_terminal() {
+        return false;
+    }
+    if io::stdin().is_terminal() {
+        return true;
+    }
+    // Inquire/Crossterm reads keys from the console when stdin is redirected.
+    // Probe that same input without reading it or replacing the receipt pipe.
+    let terminal = if cfg!(windows) { "CONIN$" } else { "/dev/tty" };
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(terminal)
+        .is_ok_and(|input| input.is_terminal())
 }
 
 fn prepare_request(
@@ -244,10 +262,6 @@ fn resolve_printer_name(
     if let Some(name) = explicit_name {
         return Ok(name);
     }
-    if !can_prompt {
-        return Err(CliError::MissingPrintPrinter);
-    }
-
     let configuration = configuration::load_for_update(config_path)?;
     let mut choices: Vec<_> = configuration
         .printers()
@@ -257,6 +271,16 @@ fn resolve_printer_name(
             profile: printer.profile().map(str::to_owned),
         })
         .collect();
+    if choices.len() == 1 {
+        return Ok(choice_name(&choices[0]).to_owned());
+    }
+    if !can_prompt {
+        return Err(if choices.is_empty() {
+            CliError::NoConfiguredPrintPrinters
+        } else {
+            CliError::AmbiguousPrintPrinter
+        });
+    }
     choices.sort_by(|left, right| {
         choice_name(left)
             .to_lowercase()
@@ -323,7 +347,7 @@ mod tests {
 
     use super::{
         InputFormat, PrintArgs, PrinterAdder, PrinterChoice, PrinterSelector, format_usb_target,
-        parse_network_target, prepare_request,
+        parse_network_target, prepare_request, resolve_printer_name,
     };
     use crate::application::ApplicationError;
     use crate::cli::Cli;
@@ -430,6 +454,11 @@ vendor_id = \"0x0416\"
 product_id = \"0x5011\"
 interface_number = 0
 out_endpoint = \"0x01\"
+
+[kitchen]
+transport = \"network\"
+host = \"127.0.0.1\"
+port = 9100
 ",
         )
         .expect("the printer configuration should be writable");
@@ -552,6 +581,59 @@ port = 9100
         );
     }
 
+    #[test]
+    fn one_configured_printer_is_selected_without_a_prompt_in_either_mode() {
+        let directory = temporary_directory("single-printer");
+        let configuration = directory.join("printers.toml");
+        fs::write(
+            &configuration,
+            "[only]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = 9100\n",
+        )
+        .expect("the printer configuration should be writable");
+        for can_prompt in [true, false] {
+            assert_eq!(
+                resolve_printer_name(
+                    None,
+                    Some(&configuration),
+                    can_prompt,
+                    &mut UnexpectedSelector,
+                    &mut UnexpectedAdder
+                )
+                .expect("one configured printer is unambiguous"),
+                "only"
+            );
+        }
+        fs::remove_dir_all(directory).expect("the test directory should be removable");
+    }
+
+    #[test]
+    fn non_interactive_selection_distinguishes_empty_and_ambiguous_configuration() {
+        let directory = temporary_directory("unresolved-printer");
+        let configuration = directory.join("printers.toml");
+        fs::write(&configuration, "").expect("the printer configuration should be writable");
+        let error = resolve_printer_name(
+            None,
+            Some(&configuration),
+            false,
+            &mut UnexpectedSelector,
+            &mut UnexpectedAdder,
+        )
+        .expect_err("an empty configuration needs registration");
+        assert!(matches!(error, CliError::NoConfiguredPrintPrinters));
+        fs::write(&configuration, "[first]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = 9100\n[second]\ntransport = \"network\"\nhost = \"127.0.0.1\"\nport = 9101\n")
+            .expect("the printer configuration should be writable");
+        let error = resolve_printer_name(
+            None,
+            Some(&configuration),
+            false,
+            &mut UnexpectedSelector,
+            &mut UnexpectedAdder,
+        )
+        .expect_err("multiple printers need an explicit choice");
+        assert!(matches!(error, CliError::AmbiguousPrintPrinter));
+        fs::remove_dir_all(directory).expect("the test directory should be removable");
+    }
+
     struct FixedSelector;
     struct AddSelector;
     struct UnexpectedSelector;
@@ -570,6 +652,11 @@ port = 9100
                         name: "counter".to_owned(),
                         transport: "usb",
                         profile: Some("REFERENCE".to_owned()),
+                    },
+                    PrinterChoice::Printer {
+                        name: "kitchen".to_owned(),
+                        transport: "network",
+                        profile: None,
                     },
                     PrinterChoice::Add,
                 ]
@@ -593,7 +680,7 @@ port = 9100
 
     impl PrinterSelector for UnexpectedSelector {
         fn select(&mut self, _choices: Vec<PrinterChoice>) -> Result<PrinterChoice, CliError> {
-            panic!("an explicit printer should not prompt for selection")
+            panic!("an unambiguous or non-interactive printer should not prompt for selection")
         }
     }
 

@@ -8,6 +8,19 @@ The automated suite protects behavior on every development machine and in CI.
 Physical printing establishes and checks model-specific behavior that cannot
 be proven from documentation alone.
 
+## Docker wrapper terminal checks
+
+On a Linux development host with Docker Compose and util-linux `script`, run:
+
+```bash
+bash scripts/tests/print-pipe.sh
+```
+
+This exercises the actual `./escpost` wrapper inside a terminal while piping
+receipt bytes into it. A Compose-hosted loopback printer checks exact binary
+delivery. Other cases check cancellation and errors without waiting for stdin
+EOF. Python and ESCPost run inside Compose; no physical printer is used.
+
 ## Principles
 
 1. Test observable behavior through the public rendering interface.

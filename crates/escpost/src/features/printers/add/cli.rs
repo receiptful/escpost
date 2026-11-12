@@ -2,7 +2,7 @@
 //! interactive prompts, or USB/network discovery) into a saved printer.
 
 use std::fmt;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::time::Duration;
 
 use crate::application::ApplicationError;
@@ -216,7 +216,15 @@ fn resolve_add(
             if !can_prompt && selector.is_none() {
                 return Err(CliError::UsbRegistrationRequiresInteractive);
             }
-            let candidates = usb_add_targets(inventory.list()?, configuration);
+            let printers = inventory.list()?;
+            if can_prompt {
+                write_configured_usb_note(&mut io::stderr().lock(), &printers, configuration)?;
+            }
+            let found_printers = !printers.is_empty();
+            let candidates = usb_add_targets(printers, configuration);
+            if selector.is_none() && found_printers && candidates.is_empty() {
+                return Err(CliError::AllUsbPrintersConfigured);
+            }
             ResolvedAddConnection::Usb(select_usb_target(
                 candidates,
                 selector.as_ref(),
@@ -301,7 +309,7 @@ fn select_usb_target(
 ) -> Result<UsbAddTarget, CliError> {
     let Some(selector) = selector else {
         if candidates.is_empty() {
-            return Err(CliError::NoUnconfiguredUsbPrinters);
+            return Err(CliError::NoConnectedUsbPrinters);
         }
         return prompter.usb_printer(configured_name, candidates);
     };
@@ -432,9 +440,9 @@ impl AddPrompter for InquireAddPrompter {
 fn usb_printer_prompt(configured_name: Option<&str>) -> String {
     match configured_name {
         Some(configured_name) => {
-            format!("Select the USB device to register as {configured_name:?}")
+            format!("Select a new USB printer to register as {configured_name:?} — type to filter")
         }
-        None => "Select the USB device to register".to_owned(),
+        None => "Select a new USB printer — type to filter".to_owned(),
     }
 }
 impl fmt::Display for PrinterTransport {
@@ -602,6 +610,33 @@ fn choose_discovered_printer(
         )),
     }
 }
+fn write_configured_usb_note(
+    output: &mut impl Write,
+    printers: &[UsbPrinter],
+    configuration: &PrinterConfiguration,
+) -> Result<(), CliError> {
+    let mut heading_written = false;
+    for configured in configuration.usb_printers().iter().filter(|configured| {
+        printers
+            .iter()
+            .any(|printer| configuration_matches(printer, configured))
+    }) {
+        if !heading_written {
+            writeln!(output, "Already configured:").map_err(CliError::WriteHumanOutput)?;
+            heading_written = true;
+        }
+        write!(output, "  {}", configured.name).map_err(CliError::WriteHumanOutput)?;
+        if let Some(profile) = &configured.profile {
+            write!(output, " · {profile}").map_err(CliError::WriteHumanOutput)?;
+        }
+        writeln!(output).map_err(CliError::WriteHumanOutput)?;
+    }
+    if heading_written {
+        writeln!(output).map_err(CliError::WriteHumanOutput)?;
+    }
+    Ok(())
+}
+
 fn usb_add_targets(
     printers: Vec<UsbPrinter>,
     configuration: &PrinterConfiguration,
@@ -681,7 +716,7 @@ mod tests {
     fn usb_selection_prompt_names_the_configured_alias_when_present() {
         assert_eq!(
             usb_printer_prompt(Some("nt5890k-usb")),
-            "Select the USB device to register as \"nt5890k-usb\""
+            "Select a new USB printer to register as \"nt5890k-usb\" — type to filter"
         );
     }
 
@@ -689,7 +724,7 @@ mod tests {
     fn usb_selection_prompt_is_neutral_before_an_alias_is_chosen() {
         assert_eq!(
             usb_printer_prompt(None),
-            "Select the USB device to register"
+            "Select a new USB printer — type to filter"
         );
     }
 
@@ -933,6 +968,114 @@ port = 9100
         .expect("the explicit name should remain available during USB selection");
 
         assert_eq!(resolved.name, "nt5890k-usb");
+    }
+
+    #[test]
+    fn usb_add_notes_only_connected_configured_printers_and_offers_only_new_targets() {
+        let configuration = PrinterConfiguration::parse(
+            r#"
+[counter]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+serial_number = "B120300001"
+interface_number = 0
+out_endpoint = "0x01"
+profile = "NT-5890K"
+
+[disconnected]
+transport = "usb"
+vendor_id = "0x0416"
+product_id = "0x5011"
+serial_number = "OFFLINE"
+interface_number = 0
+out_endpoint = "0x01"
+"#,
+        )
+        .unwrap();
+        let saved = netum_usb_printer(vec![0x01], vec![0x81]);
+        let mut new = saved.clone();
+        new.serial_number = Some("SECOND".to_owned());
+        new.address += 1;
+        let printers = vec![saved, new];
+        let mut output = Vec::new();
+        write_configured_usb_note(&mut output, &printers, &configuration).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(output, "Already configured:\n  counter · NT-5890K\n\n");
+        let targets = usb_add_targets(printers, &configuration);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].serial_number.as_deref(), Some("SECOND"));
+    }
+
+    #[test]
+    fn configured_usb_note_is_absent_when_no_connected_printer_is_configured() {
+        for printers in [Vec::new(), vec![netum_usb_printer(vec![0x01], vec![0x81])]] {
+            let mut output = Vec::new();
+            write_configured_usb_note(&mut output, &printers, &PrinterConfiguration::default())
+                .unwrap();
+            assert!(output.is_empty());
+        }
+    }
+
+    #[test]
+    fn configured_usb_note_shows_an_unprofiled_alias_only_once() {
+        let configuration = PrinterConfiguration::parse(
+            "[counter]\ntransport = \"usb\"\nvendor_id = \"0x0416\"\nproduct_id = \"0x5011\"\ninterface_number = 0\nout_endpoint = \"0x01\"\n",
+        ).unwrap();
+        let first = netum_usb_printer(vec![0x01], vec![0x81]);
+        let mut second = first.clone();
+        second.address += 1;
+        let mut output = Vec::new();
+        write_configured_usb_note(&mut output, &[first, second], &configuration).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "Already configured:\n  counter\n\n"
+        );
+    }
+
+    #[test]
+    fn usb_add_distinguishes_no_connected_printers_from_all_already_configured() {
+        let directory = temporary_directory("add-already-configured");
+        let path = directory.join("printers.toml");
+        let original = "[counter]\ntransport = \"usb\"\nvendor_id = \"0x0416\"\nproduct_id = \"0x5011\"\ninterface_number = 0\nout_endpoint = \"0x01\"\n";
+        fs::write(&path, original).unwrap();
+        for connected in [false, true] {
+            let arguments = AddPrinterArgs {
+                name: None,
+                transport: Some(PrinterTransport::Usb),
+                host: None,
+                port: None,
+                vendor_id: None,
+                product_id: None,
+                serial: None,
+                profile: None,
+                discover: false,
+                subnet: Vec::new(),
+                timeout: None,
+            };
+            let mut inventory = FixedInventory {
+                printers: if connected {
+                    vec![netum_usb_printer(vec![0x01], vec![0x81])]
+                } else {
+                    Vec::new()
+                },
+            };
+            let error = execute_add(
+                Some(&path),
+                arguments,
+                true,
+                &mut UnexpectedAddPrompter,
+                &mut inventory,
+            )
+            .unwrap_err();
+            if connected {
+                assert!(matches!(error, CliError::AllUsbPrintersConfigured));
+            } else {
+                assert!(matches!(error, CliError::NoConnectedUsbPrinters));
+            }
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

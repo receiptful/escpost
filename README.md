@@ -162,7 +162,13 @@ Use the root wrapper to run the containerized CLI with USB access:
 
 ```bash
 ./escpost printers list
+echo hello | ./escpost print -
 ```
+
+For piped printing in a terminal, the wrapper keeps receipt data on a separate
+stream so you can use the interactive printer picker without changing the bytes.
+When running without a terminal or redirecting the command's output, pass
+`--printer <NAME>` if several printers are configured.
 
 Run the Rust workspace tests in the same reproducible environment:
 
