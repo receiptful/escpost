@@ -49,11 +49,9 @@ pub(crate) struct Request {
     pub(crate) printer: ResolvedPrinter,
 }
 
-/// Facts about the target used for a completed print.
+/// Summary of a completed print.
 pub(crate) struct Response {
-    pub(crate) printer_name: Option<String>,
     pub(crate) bytes_sent: usize,
-    pub(crate) target: Target,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,13 +126,10 @@ pub(crate) fn resolve_target(request: ResolveRequest) -> application::Result<Res
 /// Transmit the caller's exact bytes to an already resolved target.
 ///
 /// This operation is deliberately presentation-free: callers choose names,
-/// load sources, and render the resulting target facts for their own transport.
+/// load sources, and present the destination and completion summary.
 pub(crate) async fn print(request: Request) -> application::Result<Response> {
     let bytes_sent = request.bytes.len();
-    let ResolvedPrinter {
-        printer_name,
-        target,
-    } = request.printer;
+    let target = request.printer.target;
     match &target {
         Target::Usb(target) => {
             let target = target.clone();
@@ -142,11 +137,7 @@ pub(crate) async fn print(request: Request) -> application::Result<Response> {
         }
         Target::Network(target) => send_network(target, &request.bytes).await?,
     }
-    Ok(Response {
-        printer_name,
-        bytes_sent,
-        target,
-    })
+    Ok(Response { bytes_sent })
 }
 
 async fn run_blocking_usb<T, Operation>(operation: Operation) -> application::Result<T>
@@ -166,10 +157,7 @@ pub(crate) async fn stream_stdin(
     printer: ResolvedPrinter,
     mut input: impl Read + Send + 'static,
 ) -> application::Result<Response> {
-    let ResolvedPrinter {
-        printer_name,
-        target,
-    } = printer;
+    let target = printer.target;
     let bytes_sent = match &target {
         Target::Usb(target) => {
             let target = target.clone();
@@ -201,11 +189,7 @@ pub(crate) async fn stream_stdin(
             .map_err(ApplicationError::PrintTaskFailed)??
         }
     };
-    Ok(Response {
-        printer_name,
-        bytes_sent,
-        target,
-    })
+    Ok(Response { bytes_sent })
 }
 
 fn forward_stdin(
@@ -232,20 +216,13 @@ async fn print_with_transport(
     transport: &mut impl UsbTransport,
 ) -> application::Result<Response> {
     let bytes_sent = request.bytes.len();
-    let ResolvedPrinter {
-        printer_name,
-        target,
-    } = request.printer;
+    let target = request.printer.target;
     match &target {
         Target::Usb(target) => transport.send(target, &request.bytes)?,
         Target::Network(target) => send_network(target, &request.bytes).await?,
     }
 
-    Ok(Response {
-        printer_name,
-        bytes_sent,
-        target,
-    })
+    Ok(Response { bytes_sent })
 }
 
 async fn send_network(target: &NetworkTarget, data: &[u8]) -> application::Result<()> {
@@ -602,6 +579,7 @@ out_endpoint = \"0x01\"
             config: Some(configuration),
         })
         .expect("the configured target should resolve");
+        assert_eq!(printer.printer_name, Some("counter".to_owned()));
         let response = print_with_transport(
             Request {
                 bytes: vec![0x1b, 0x40, 0x00, 0xff, 0x0a],
@@ -612,18 +590,7 @@ out_endpoint = \"0x01\"
         .await
         .expect("printing should succeed");
 
-        assert_eq!(response.printer_name, Some("counter".to_owned()));
         assert_eq!(response.bytes_sent, 5);
-        assert_eq!(
-            response.target,
-            Target::Usb(UsbTarget {
-                vendor_id: 0x0416,
-                product_id: 0x5011,
-                serial_number: Some("B120300001".to_owned()),
-                interface: 0,
-                out_endpoint: 0x01,
-            })
-        );
         assert_eq!(
             transport.request,
             Some((
@@ -678,6 +645,14 @@ port = {port}
             config: Some(configuration),
         })
         .expect("the configured target should resolve");
+        assert_eq!(printer.printer_name, Some("kitchen".to_owned()));
+        assert_eq!(
+            printer.target,
+            Target::Network(NetworkTarget {
+                host: "127.0.0.1".to_owned(),
+                port,
+            })
+        );
         let response = print(Request {
             bytes: vec![0x1b, b'@', 0x00, 0xff, b'\n'],
             printer,
@@ -685,15 +660,7 @@ port = {port}
         .await
         .expect("printing should succeed");
 
-        assert_eq!(response.printer_name, Some("kitchen".to_owned()));
         assert_eq!(response.bytes_sent, 5);
-        assert_eq!(
-            response.target,
-            Target::Network(NetworkTarget {
-                host: "127.0.0.1".to_owned(),
-                port,
-            })
-        );
         assert_eq!(
             receiver.join().expect("the receiver should finish"),
             vec![0x1b, b'@', 0x00, 0xff, b'\n']
@@ -731,7 +698,6 @@ port = {port}
         .await
         .expect("direct network printing should succeed");
 
-        assert_eq!(response.printer_name, None);
         assert_eq!(response.bytes_sent, bytes.len());
         assert_eq!(receiver.join().expect("the receiver should finish"), bytes);
     }

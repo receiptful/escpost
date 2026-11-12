@@ -174,6 +174,11 @@ pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(
         &mut InquirePrinterSelector,
         &mut InquirePrinterAdder,
     )?;
+    let printer = match &request {
+        PreparedPrint::Buffered(request) => &request.printer,
+        PreparedPrint::Stdin(printer) => printer,
+    };
+    present_destination(printer);
     let response = match request {
         PreparedPrint::Buffered(request) => print(request).await?,
         PreparedPrint::Stdin(printer) => {
@@ -192,7 +197,7 @@ pub(crate) async fn run(arguments: PrintArgs, non_interactive: bool) -> Result<(
         }
     };
 
-    present(&response);
+    eprintln!("Bytes sent: {}", response.bytes_sent);
     Ok(())
 }
 
@@ -252,11 +257,11 @@ fn prepare_request(
     }))
 }
 
-fn present(response: &super::Response) {
-    if let Some(printer_name) = &response.printer_name {
+fn present_destination(printer: &ResolvedPrinter) {
+    if let Some(printer_name) = &printer.printer_name {
         eprintln!("Printer: {printer_name}");
     }
-    match &response.target {
+    match &printer.target {
         Target::Usb(target) => {
             eprintln!("Transport: usb");
             eprintln!("USB target: {}", format_usb_target(target));
@@ -266,7 +271,6 @@ fn present(response: &super::Response) {
             eprintln!("Network target: {}", target.endpoint());
         }
     }
-    eprintln!("Bytes sent: {}", response.bytes_sent);
 }
 
 fn format_usb_target(target: &UsbTarget) -> String {

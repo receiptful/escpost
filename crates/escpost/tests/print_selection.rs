@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -19,6 +19,30 @@ fn raw_stdin_streams_successive_chunks_before_eof_on_one_connection() {
         }
         let mut child = command.spawn().unwrap();
         let mut stdin = child.stdin.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (messages, output) = std::sync::mpsc::channel();
+        let reader = thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                if messages.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        // Destination details must be visible before any input arrives, not
+        // merely appear in the right order after the producer closes stdin.
+        for expected in [
+            "Printer: kitchen".to_owned(),
+            "Transport: network".to_owned(),
+            format!("Network target: {}", fixture.printer.local_addr().unwrap()),
+            "Streaming stdin; Ctrl+C to stop.".to_owned(),
+        ] {
+            let line = output.recv_timeout(DEADLINE).unwrap_or_else(|error| {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("missing output before stdin EOF: {expected}: {error}");
+            });
+            assert_eq!(line, expected);
+        }
         let deadline = Instant::now() + DEADLINE;
         let mut stream = loop {
             match fixture.printer.accept() {
@@ -48,13 +72,14 @@ fn raw_stdin_streams_successive_chunks_before_eof_on_one_connection() {
         let mut second = [0; 9];
         stream.read_exact(&mut second).unwrap();
         assert_eq!(&second, b"second\x1dV\0");
+        assert!(output.try_recv().is_err(), "no byte summary before EOF");
         drop(stdin);
         wait_for_exit(&mut child);
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        assert!(child.wait().unwrap().success());
+        reader.join().unwrap();
+        assert_eq!(
+            output.into_iter().collect::<Vec<_>>(),
+            [format!("Bytes sent: {}", PAYLOAD.len() + second.len())]
         );
         assert_eq!(stream.read(&mut bytes).unwrap(), 0);
         fixture.assert_no_transfer();
