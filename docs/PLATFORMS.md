@@ -53,10 +53,32 @@ performed on Linux x86-64:
 - named Rust RAW TCP output has been exercised through the interactive Docker
   workflow and physically confirmed on paper with a connected Munbyn ITPP047.
 
-macOS and Windows builds have not yet been verified by ESCPost. The virtual IP
-printer and native Windows spooler are planned work. The Rust CLI, embedded
-web server, and direct-USB backend are implemented but still need native
-macOS/Windows verification.
+On 2026-11-11, the Windows builder verified the Rust workspace (excluding the
+separate Python binding) on Windows 11 Pro x64, version 10.0.26200. The working
+tree based on `318251b16693` passed 632 tests covering the CLI, loopback printing,
+telemetry, embedded web server, renderer, and unchanged golden images. The release
+executable passed rendering and embedded-web smoke checks, and its import table
+contains only Windows system DLLs. The unsigned ZIP and installer were produced
+and checksum-verified; automated installer checks covered install/reinstall,
+PATH ownership and opt-out, the shortcut, uninstall, and data preservation.
+
+The separate clean Windows 11 tester also passed installed-app acceptance on
+2026-11-11 (Windows 11 Pro x64, build 26200), using a standard user with no
+development tools. The installer SHA-256 was
+`64a782afbc85ee6c056128efa760acefde46c5e9926addee7ba7c9a4af6e9f26`.
+Run `20261111T183604Z-WvV6ry` passed 14 checks: visible wizard defaults,
+per-user installation, PATH after reboot, installed rendering, exact RAW TCP
+bytes, HTTP/assets, Edge rendering, the real shortcut and successful Ctrl+C
+exit, reinstall/PATH ownership and opt-out, uninstall, and preserved data.
+Local results and screenshots are retained under
+`packaging/windows/tester/.state/runs/<run>/evidence/`; reproduce with
+`just packaging windows verify INSTALLER`.
+Previous-release upgrade was not run because no previous installer was supplied.
+Browser-download reputation, portable ZIP behavior on a clean machine, and
+physical USB behavior remain release checks.
+
+macOS builds have not yet been verified by ESCPost. The virtual IP printer is
+implemented; the native Windows spooler remains planned work.
 
 ## Release artifacts
 
@@ -77,8 +99,9 @@ Rust only and needs no Bun or Node toolchain.
 
 The tap ships **no bottles**. Every install compiles from source on the user's
 machine. Bottles would remove that compile step, and adding them needs release
-CI that builds and tests on each native platform. Only Linux x86-64 has been
-verified end to end so far, which matches the evidence recorded above.
+CI that builds and tests on each native platform. The Homebrew source-install
+workflow has been verified on Linux x86-64; the Windows evidence above concerns
+the separate native builder.
 
 Initial release targets:
 
@@ -88,13 +111,22 @@ Initial release targets:
 | macOS | x86-64 | Homebrew formula (source build); bottle and release archive planned |
 | Linux | x86-64 | Homebrew formula (source build); bottle and release archive planned |
 | Linux | ARM64 | Release archive after native CI coverage |
-| Windows | x86-64 | Release archive; package-manager support later |
+| Windows | x86-64 | Unsigned ZIP and Inno Setup build workflow; public-release validation pending |
 | Windows | ARM64 | Consider after the x86-64 backend is verified |
 
 Once bottles exist, Homebrew chooses the one matching the operating system and
 architecture. Release CI must build and test each artifact on its native
 platform instead of assuming that successful cross-compilation proves runtime
 behavior.
+
+Windows packaging lives under [`packaging/windows/`](../packaging/windows/README.md)
+and is invoked with `just packaging windows build` (or `--dev` for a working-tree
+build). It uses a dedicated Compose-managed Windows 11 x64 VM. The per-user
+installer offers user PATH integration checked by default. Signing and the
+Windows RAW spooler are deferred. Unsigned downloads can trigger SmartScreen
+warnings or be blocked by Smart App Control or organization policy; the packaging
+guide describes the release checks and limits. This workflow does not by itself
+establish physical-printer compatibility.
 
 The native executable should embed:
 

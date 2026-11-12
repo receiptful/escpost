@@ -401,6 +401,11 @@ rules are specified in `CLI.md`.
       SSE messages, and a refresh after backend registration.
 - [ ] Extend `printers list` to Bluetooth and operating-system spooler
       transports as their backends are implemented. (`CLI-M02`)
+- [ ] Add a Windows RAW spooler backend for printing through existing Windows
+      printer queues without replacing their drivers. This is follow-up work
+      and is not required for the initial Windows executable and Inno Setup
+      installer; those retain the existing direct USB and RAW TCP backends.
+      See [Windows platform support](PLATFORMS.md#windows).
 - [ ] Add versioned `--json` inventory output. (`CLI-M04`)
 - [ ] Add `--status connected|unavailable` filtering when inventories become
       large enough to need it; keep sorting non-configurable.

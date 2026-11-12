@@ -14,7 +14,7 @@ use tokio::sync::OwnedMutexGuard;
 
 use crate::application::{self, ApplicationError};
 use crate::features::printing::{self, ResolveRequest};
-use crate::web::{WebState, error::ApiError, origin};
+use crate::web::{PrinterLocks, WebState, error::ApiError, origin};
 
 #[derive(Debug)]
 struct PrintRequest {
@@ -63,8 +63,8 @@ struct PrintResponse {
     job_id: String,
 }
 
-async fn printer_lock(state: &WebState, printer: &str) -> Arc<tokio::sync::Mutex<()>> {
-    let mut locks = state.printer_locks.lock().await;
+async fn printer_lock(locks: &PrinterLocks, printer: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = locks.lock().await;
     Arc::clone(
         locks
             .entry(printer.to_owned())
@@ -114,7 +114,7 @@ async fn print_job(
     })
     .map_err(ApiError::from_resolve_failure)?;
 
-    let lock = printer_lock(&state, &request.printer).await;
+    let lock = printer_lock(&state.printer_locks, &request.printer).await;
     let guard = lock.lock_owned().await;
     spawn_guarded_print(
         guard,
@@ -137,6 +137,7 @@ async fn print_job(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -145,7 +146,7 @@ mod tests {
     use tokio::sync::{Mutex, oneshot};
     use tokio::time::timeout;
 
-    use super::{decode_payload, spawn_guarded_print};
+    use super::{decode_payload, printer_lock, spawn_guarded_print};
     use crate::application::ApplicationError;
     use crate::web::error::ApiError;
 
@@ -221,8 +222,8 @@ mod tests {
     async fn cancelling_http_caller_keeps_printer_locked_until_physical_transfer_finishes() {
         // Defect caught: cancelling the HTTP awaiter drops its guard while an
         // already-started physical transfer continues in a detached task.
-        let printer_lock = Arc::new(Mutex::new(()));
-        let first_guard = Arc::clone(&printer_lock).lock_owned().await;
+        let locks = Arc::new(Mutex::new(HashMap::new()));
+        let first_guard = printer_lock(&locks, "counter").await.lock_owned().await;
         let (physical_started_tx, physical_started_rx) = oneshot::channel();
         let (release_physical_tx, release_physical_rx) = oneshot::channel();
 
@@ -239,6 +240,19 @@ mod tests {
             .await
             .expect("the physical transfer should start");
 
+        let second_lock = printer_lock(&locks, "counter").await;
+        assert!(
+            Arc::clone(&second_lock).try_lock_owned().is_err(),
+            "another request for the same printer must wait for its transfer"
+        );
+        assert!(
+            printer_lock(&locks, "kitchen")
+                .await
+                .try_lock_owned()
+                .is_ok(),
+            "an independent printer must remain available"
+        );
+
         caller.abort();
         assert!(
             caller
@@ -247,14 +261,14 @@ mod tests {
                 .is_cancelled()
         );
         assert!(
-            Arc::clone(&printer_lock).try_lock_owned().is_err(),
+            Arc::clone(&second_lock).try_lock_owned().is_err(),
             "a second job must not acquire the printer during the physical transfer"
         );
 
         release_physical_tx
             .send(())
             .expect("the physical transfer should still be running");
-        timeout(Duration::from_secs(1), printer_lock.lock_owned())
+        timeout(Duration::from_secs(1), second_lock.lock_owned())
             .await
             .expect("the printer should unlock after the physical transfer completes");
     }

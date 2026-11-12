@@ -1,0 +1,28 @@
+set default-list
+
+mod tester
+
+# Verify an existing installer on clean Windows (does not build).
+[positional-arguments]
+[working-directory: invocation_directory()]
+verify +args:
+    "{{justfile_directory()}}/packaging/windows/verify" "$@"
+
+# Build the unsigned Windows x64 ZIP and installer. Use --dev for a local build.
+[positional-arguments]
+[working-directory: invocation_directory()]
+build *args:
+    "{{justfile_directory()}}/packaging/windows/build" "$@"
+
+# Stop the builder VM, retaining its disk and caches.
+stop:
+    ./builder/run stop
+
+# Show the builder VM status.
+status:
+    ./builder/run status
+
+# Check release guards, source staging, and tester disk safeguards without Windows.
+test:
+    docker compose --project-directory ../.. -f ../../compose.yaml run --rm --no-deps -T test bash packaging/windows/tests/build.sh
+    docker compose --project-directory ../.. -f ../../compose.yaml run --rm --no-deps -T test bash packaging/windows/tests/tester.sh

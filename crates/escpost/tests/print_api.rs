@@ -289,10 +289,11 @@ fn configured_path_is_shared_by_inventory_stream_and_printing() {
 }
 
 #[test]
-fn two_concurrent_jobs_to_one_printer_arrive_whole_and_serialized() {
-    // Defect caught: two handlers open the same physical target concurrently.
-    // Large bodies back-pressure the first connection while the fake printer
-    // checks that a second connection has not arrived yet.
+fn two_concurrent_jobs_to_one_printer_arrive_whole() {
+    // Defect caught: concurrent requests mix or truncate job bytes. Socket
+    // buffering cannot prove serialization: Windows loopback can buffer both
+    // entire jobs before we read. The guarded-transfer unit test verifies
+    // serialization with a deliberately blocked operation instead.
     let directory = TemporaryDirectory::new("serialized");
     let (printer, printer_port) = fake_printer();
     let config = network_configuration(&directory, printer_port);
@@ -303,7 +304,7 @@ fn two_concurrent_jobs_to_one_printer_arrive_whole_and_serialized() {
     let second_payload = vec![b'B'; 8 * 1024 * 1024];
     let first_expected = first_payload.clone();
     let second_expected = second_payload.clone();
-    let received = thread::spawn(move || receive_serialized_pair(printer));
+    let received = receive_jobs(printer, 2);
 
     let first = thread::spawn(move || raw_print(api_port, "counter", &[], &first_payload));
     let second = thread::spawn(move || raw_print(api_port, "counter", &[], &second_payload));
@@ -311,14 +312,10 @@ fn two_concurrent_jobs_to_one_printer_arrive_whole_and_serialized() {
     let second = second
         .join()
         .expect("the second HTTP request should finish");
-    let (overlapped, mut jobs) = received.join().expect("the fake printer should finish");
+    let mut jobs = received.join().expect("the fake printer should finish");
 
     assert_eq!(response_status(&first), "HTTP/1.1 200 OK");
     assert_eq!(response_status(&second), "HTTP/1.1 200 OK");
-    assert!(
-        !overlapped,
-        "the second connection arrived before the first completed"
-    );
     jobs.sort();
     assert_eq!(jobs, vec![first_expected, second_expected]);
 }
@@ -534,34 +531,6 @@ fn accept_before_deadline(listener: &TcpListener) -> TcpStream {
             Err(error) => panic!("the fake printer should accept: {error}"),
         }
     }
-}
-
-fn receive_serialized_pair(listener: TcpListener) -> (bool, Vec<Vec<u8>>) {
-    let mut first = accept_before_deadline(&listener);
-    listener
-        .set_nonblocking(true)
-        .expect("the fake printer should be non-blocking");
-    thread::sleep(Duration::from_millis(200));
-    let early_second = match listener.accept() {
-        Ok((connection, _)) => Some(connection),
-        Err(error) if error.kind() == ErrorKind::WouldBlock => None,
-        Err(error) => panic!("the fake printer should inspect its queue: {error}"),
-    };
-
-    let mut first_bytes = Vec::new();
-    first
-        .read_to_end(&mut first_bytes)
-        .expect("the first print should close cleanly");
-    let overlapped = early_second.is_some();
-    let mut second = early_second.unwrap_or_else(|| accept_before_deadline(&listener));
-    second
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
-        .expect("the second print should have a deadline");
-    let mut second_bytes = Vec::new();
-    second
-        .read_to_end(&mut second_bytes)
-        .expect("the second print should close cleanly");
-    (overlapped, vec![first_bytes, second_bytes])
 }
 
 fn http_request(port: u16, method: &str, path: &str, headers: &[String], body: &[u8]) -> Vec<u8> {

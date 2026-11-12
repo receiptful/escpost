@@ -1,0 +1,5 @@
+# Production bundle
+/dist/
+
+# Installed dependencies
+/node_modules/

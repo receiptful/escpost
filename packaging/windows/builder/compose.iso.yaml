@@ -1,0 +1,9 @@
+services:
+  windows:
+    volumes:
+      - type: bind
+        source: ${WINDOWS_ISO_PATH:?Set a Windows ISO path}
+        target: /custom.iso
+        read_only: true
+        bind:
+          create_host_path: false

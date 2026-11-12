@@ -7,6 +7,9 @@ mod browser-extension
 # JavaScript SDK recipes: `just --list javascript-sdk`.
 mod javascript-sdk 'sdks/javascript'
 
+# Native distribution artifacts: `just --list packaging windows`.
+mod packaging
+
 # List available recipes.
 default:
     @just --list

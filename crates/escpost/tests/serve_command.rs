@@ -1072,6 +1072,7 @@ fn stop(child: &mut Child) {
 /// them. Those streams must not hold the server: Ctrl+C has to stop the command
 /// while a browser is still connected.
 #[test]
+#[cfg(unix)]
 fn serve_stops_on_an_interrupt_while_the_event_streams_are_open() {
     let mut child = start_serve_on_ephemeral_ports();
     let (_raw_port, web_port) = read_listen_ports(&mut child);
@@ -1094,6 +1095,7 @@ fn serve_stops_on_an_interrupt_while_the_event_streams_are_open() {
 
 /// Send SIGINT to the child, which is what the terminal does on Ctrl+C. `sh`'s
 /// builtin `kill` sends it, so the test needs no libc binding of its own.
+#[cfg(unix)]
 fn interrupt(child: &Child) {
     let identifier = child.id();
     let sent = Command::new("sh")
@@ -1104,6 +1106,7 @@ fn interrupt(child: &Child) {
 }
 
 /// Wait up to `patience` for the child to exit. Returns `None` while it runs.
+#[cfg(unix)]
 fn wait_for_exit(child: &mut Child, patience: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + patience;
     loop {

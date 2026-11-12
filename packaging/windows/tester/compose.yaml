@@ -1,0 +1,32 @@
+services:
+  windows:
+    image: dockurr/windows@sha256:9834a48a2a958e4826fad4e244dd16ffff9c48541078127d77639e5337847085
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:${ESCPOST_TESTER_VIEWER_PORT:-8027}:8006"
+      - "127.0.0.1:${ESCPOST_TESTER_SSH_PORT:-2233}:22"
+    environment:
+      VERSION: "11"
+      RAM_SIZE: "${ESCPOST_TESTER_RAM:-6G}"
+      CPU_CORES: "${ESCPOST_TESTER_CPUS:-4}"
+      DISK_SIZE: "${ESCPOST_TESTER_DISK:-64G}"
+      LANGUAGE: English
+      REGION: en-US
+      KEYBOARD: en-US
+      USERNAME: Tester
+      PASSWORD: ${WINDOWS_PASSWORD:?Run the tester entry point}
+    volumes:
+      - ./.state/storage:/storage
+      - ./.state/oem:/oem:ro
+      - type: bind
+        source: ${WINDOWS_ISO_PATH:?Select the shared Windows ISO}
+        target: /custom.iso
+        read_only: true
+        bind:
+          create_host_path: false
+    stop_grace_period: 2m
+    restart: "no"

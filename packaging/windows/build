@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+packaging=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$packaging/../.." && pwd)
+# shellcheck source=packaging/windows/common.sh
+source "$packaging/common.sh"
+mode=release
+output="$root/dist/windows"
+iso=
+while (( $# )); do
+    case "$1" in
+        --dev) mode=dev; shift ;;
+        --output|--windows-iso)
+            (( $# >= 2 )) && [[ -n "$2" ]] || die "$1 requires a path."
+            if [[ "$1" == --output ]]; then output="$2"; else iso="$2"; fi
+            shift 2 ;;
+        -h|--help)
+            cat <<'EOF'
+Usage: just packaging windows build [--dev] [--output PATH] [--windows-iso PATH]
+
+Build an unsigned Windows x64 ZIP, installer, and SHA-256 checksums.
+Default: a clean checkout tagged v<workspace version> is required.
+--dev builds the working tree with a commit/dirty suffix; nothing is published.
+--windows-iso selects a local installation ISO (remembered for this VM).
+Output defaults to dist/windows/. Existing artifacts are never overwritten.
+The first run installs a Windows VM and its build tools; allow ample time.
+EOF
+            exit 0 ;;
+        *) die "Unknown option: $1" ;;
+    esac
+done
+
+version=$(build_version "$root" "$mode")
+state="$packaging/builder/.state"
+lock_builder "$state"
+mkdir -p "$state/jobs" "$output"
+output=$(realpath "$output")
+for suffix in .zip -setup.exe -SHA256SUMS; do
+    [[ ! -e "$output/escpost-$version-windows-x64$suffix" ]] || die "Artifacts for $version already exist in $output. Choose another --output directory."
+done
+if [[ -n "$iso" ]]; then
+    [[ -f "$iso" ]] || die "Windows ISO does not exist: $iso"
+    realpath "$iso" > "$state/windows-iso.txt"
+fi
+
+job=$(mktemp -d "$state/jobs/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
+printf '%s\n' "$version" > "$job/version.txt"
+git -C "$root" rev-parse HEAD > "$job/commit.txt"
+printf 'Build log: %s/build.log\n' "$job"
+exec > >(tee "$job/build.log") 2>&1
+
+docker compose --project-directory "$root" -f "$root/compose.yaml" run --rm -T frontend-build
+[[ "$(build_version "$root" "$mode")" == "$version" ]] || die 'Checkout version changed during frontend build.'
+stage_sources "$root" "$job"
+[[ "$(build_version "$root" "$mode")" == "$version" ]] || die 'Checkout version changed during source staging.'
+"$packaging/builder/run" build "$job" "$output"

@@ -133,6 +133,15 @@ or anything that identifies you. Switch it off at any time with
 
 ## Development
 
+Windows x64 distribution builds use `just packaging windows build` from a
+clean release tag, or `just packaging windows build --dev` for a working-tree
+build. This produces an unsigned portable ZIP and per-user Inno Setup installer
+in `dist/windows/`. Run `just packaging windows verify INSTALLER` to test the
+finished installer on a separate clean Windows desktop, or
+`just packaging windows tester start --installer INSTALLER` to try it yourself.
+See [Windows packaging](packaging/windows/README.md) for
+builder requirements, verification, and unsigned-download limitations.
+
 Docker Compose is the canonical development workflow and requires neither Rust
 nor Bun on the host. Start the complete backend and frontend stack with:
 

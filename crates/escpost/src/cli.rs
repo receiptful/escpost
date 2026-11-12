@@ -24,6 +24,7 @@ pub(crate) fn parse_listener_address(value: &str) -> Result<SocketAddr, String> 
 #[derive(Debug, Parser)]
 #[command(
     name = "escpost",
+    bin_name = "escpost",
     version,
     about = "The ESC/POS Tools and Workbench",
     subcommand_required = true,

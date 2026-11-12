@@ -1,0 +1,27 @@
+services:
+  windows:
+    # Pin the VM runtime independently of the installed Windows/toolchain state.
+    image: dockurr/windows@sha256:9834a48a2a958e4826fad4e244dd16ffff9c48541078127d77639e5337847085
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:${ESCPOST_WINDOWS_VIEWER_PORT:-8026}:8006"
+      - "127.0.0.1:${ESCPOST_WINDOWS_SSH_PORT:-2232}:22"
+    environment:
+      VERSION: "11"
+      RAM_SIZE: "${ESCPOST_WINDOWS_RAM:-8G}"
+      CPU_CORES: "${ESCPOST_WINDOWS_CPUS:-4}"
+      DISK_SIZE: "${ESCPOST_WINDOWS_DISK:-96G}"
+      LANGUAGE: "English"
+      REGION: "en-US"
+      KEYBOARD: "en-US"
+      USERNAME: Builder
+      PASSWORD: ${WINDOWS_PASSWORD:?Run packaging/windows/build to initialize the builder}
+    volumes:
+      - ./.state/storage:/storage
+      - ./.state/oem:/oem:ro
+    stop_grace_period: 2m
+    restart: "no"

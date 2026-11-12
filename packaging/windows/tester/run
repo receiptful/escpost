@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=packaging/windows/common.sh
+source "$here/../common.sh"
+# shellcheck source=packaging/windows/tester/common.sh
+source "$here/common.sh"
+action=${1:-status}
+(( $# == 0 )) || shift
+installer='' previous=''
+case "$action" in start|stop|status|reset|verify) ;; *) die 'Expected start, stop, status, reset, or verify.' ;; esac
+if [[ "$action" == verify ]]; then
+    (( $# )) || die 'Usage: just packaging windows verify INSTALLER [--previous INSTALLER]'
+    installer=$1; shift
+fi
+while (( $# )); do
+    case "$1" in
+        --installer|--previous)
+            option=$1; shift
+            (( $# )) || die "$option requires a file."
+            if [[ "$option" == --installer && "$action" == start ]]; then installer=$1
+            elif [[ "$option" == --previous && "$action" == verify ]]; then previous=$1
+            else die "$option is not supported for $action"; fi
+            shift ;;
+        *) die "Unknown argument: $1" ;;
+    esac
+done
+for path in "$installer" "$previous"; do [[ -z "$path" ]] || validate_installer "$path"; done
+[[ -z "$installer" ]] || installer=$(realpath "$installer")
+[[ -z "$previous" ]] || previous=$(realpath "$previous")
+if [[ -n "$previous" ]]; then
+    [[ "$(sha256sum "$installer" | cut -d' ' -f1)" != "$(sha256sum "$previous" | cut -d' ' -f1)" ]] || die 'Previous and candidate installers are identical; that is a reinstall, not an upgrade.'
+fi
+state="$here/.state"
+if [[ "$action" == stop || "$action" == status ]]; then
+    [[ -f "$state/compose.env" ]] || { echo 'Windows tester has not been initialized.'; exit 0; }
+fi
+[[ "$action" == status ]] || lock_builder "$state"
+umask 077
+mkdir -p "$state" "$state/runs" "$state/input" "$state/oem" "$state/ssh"
+iso="$here/../.state/media/windows.iso"
+if [[ ! -f "$iso" && -f "$here/../builder/.state/windows-iso.txt" ]]; then iso=$(cat "$here/../builder/.state/windows-iso.txt"); fi
+if [[ "$action" != stop && "$action" != status ]]; then
+    [[ -f "$iso" ]] || die 'Windows ISO missing. Place it at packaging/windows/.state/media/windows.iso.'
+fi
+export WINDOWS_ISO_PATH
+WINDOWS_ISO_PATH=$(realpath -m "$iso")
+if [[ ! -f "$state/compose.env" ]]; then
+    printf 'WINDOWS_PASSWORD=%s\nESCPOST_TESTER_SSH_PORT=%s\nESCPOST_TESTER_VIEWER_PORT=%s\n' \
+        "$(openssl rand -hex 24)" "${ESCPOST_TESTER_SSH_PORT:-2233}" "${ESCPOST_TESTER_VIEWER_PORT:-8027}" > "$state/compose.env"
+fi
+project="escpost-tester-$(printf '%s' "$here" | sha256sum | cut -c1-12)"
+compose() { docker compose --project-name "$project" --env-file "$state/compose.env" -f "$here/compose.yaml" "$@"; }
+running() {
+    local ids id
+    ids=$(compose ps --all -q windows) || return
+    [[ -n "$ids" ]] || return 0
+    while IFS= read -r id; do
+        # Docker considers a paused VM running too. Never discard its RAM or
+        # disk merely because Compose filters it out of --status running.
+        docker inspect --format '{{if or .State.Running .State.Restarting}}{{.Id}}{{end}}' "$id" || return
+    done <<< "$ids"
+}
+case "$action" in
+    status) compose ps; exit ;;
+    stop) compose stop; exit ;;
+    reset|verify) require_stopped "$(running)" ;;
+esac
+port=${ESCPOST_TESTER_SSH_PORT:-$(sed -n 's/^ESCPOST_TESTER_SSH_PORT=//p' "$state/compose.env")}
+viewer=${ESCPOST_TESTER_VIEWER_PORT:-$(sed -n 's/^ESCPOST_TESTER_VIEWER_PORT=//p' "$state/compose.env")}
+key="$state/ssh/controller"
+if [[ ! -f "$key" ]]; then ssh-keygen -q -t ed25519 -N '' -C escpost-tester -f "$key"; fi
+options=(-i "$key" -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$state/ssh/known_hosts")
+remote() { ssh "${options[@]}" -p "$port" Controller@127.0.0.1 "$@"; }
+transfer() { scp "${options[@]}" -P "$port" "$@"; }
+wait_ssh() {
+    local deadline=$((SECONDS + ${1:-3600}))
+    until remote 'exit 0' >/dev/null 2>&1; do
+        [[ -n "$(running)" ]] || die 'Tester stopped before SSH was ready.'
+        (( SECONDS < deadline )) || die "Timed out waiting for tester. Inspect http://127.0.0.1:$viewer and C:\\oem-bootstrap.log."
+        printf 'Waiting for Windows tester SSH (%ss remaining)...\n' "$((deadline - SECONDS))"
+        sleep 15
+    done
+}
+ps() { remote "powershell.exe -NoProfile -NonInteractive -Command \"\$ErrorActionPreference = 'Stop'; $1\""; }
+sync_clock() {
+    # A snapshot can retain a stale clock/time zone. Refresh the readiness task
+    # after changing time so its boot identifier matches the current OS clock.
+    ps "Stop-ScheduledTask -TaskName 'ESCPost desktop'; Set-TimeZone -Id UTC; Set-Date -Date ([DateTime]::Parse('$(date -u +%Y-%m-%dT%H:%M:%SZ)').ToUniversalTime()) | Out-Null; Start-ScheduledTask -TaskName 'ESCPost desktop'"
+}
+# Bootstrap readiness is checked by a script to avoid shell/PowerShell quoting.
+wait_ready() {
+    local deadline=$((SECONDS + 300))
+    until remote 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\Acceptance\ready.ps1' >/dev/null 2>&1; do
+        (( SECONDS < deadline )) || die 'Standard-user desktop did not become ready.'
+        sleep 5
+    done
+}
+if [[ ! -f "$state/baseline/ready.json" ]]; then
+    mkdir -p "$state/storage"
+    cp "$here/oem/"* "$state/oem/"
+    cp "$key.pub" "$state/oem/controller_key.pub"
+    compose up -d
+    printf 'Installing clean Windows: http://127.0.0.1:%s\n' "$viewer"
+    wait_ssh
+    ps 'New-Item -ItemType Directory -Force baseline-harness | Out-Null'
+    transfer "$here/oem/"*.ps1 'Controller@127.0.0.1:baseline-harness/'
+    remote 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File baseline-harness/prepare.ps1'
+    # The first logon predates removing Tester from Administrators. Reboot so
+    # the desktop receives a real standard-user token before taking the baseline.
+    remote 'shutdown.exe /r /t 2' >/dev/null
+    sleep 15
+    wait_ssh 600
+    wait_ready
+    ps 'Get-Content C:\Acceptance\provisioned.json' > "$state/baseline-metadata.json"
+    compose stop
+    [[ -z "$(running)" ]] || die 'Cannot seal a running VM.'
+    [[ ! -e "$state/baseline.partial" ]] || die 'An incomplete baseline exists; inspect baseline.partial.'
+    mkdir -p "$state/baseline.partial/storage"
+    cp -a --reflink=auto --sparse=always "$state/storage/." "$state/baseline.partial/storage/"
+    cp "$state/baseline-metadata.json" "$state/baseline.partial/ready.json"
+    sha256sum "$WINDOWS_ISO_PATH" > "$state/baseline.partial/windows-iso.sha256"
+    (cd "$here" && sha256sum oem/*.ps1) > "$state/baseline.partial/harness.sha256"
+    mv "$state/baseline.partial" "$state/baseline"
+fi
+if [[ "$action" == reset || "$action" == verify ]]; then
+    compose down
+    restore_baseline "$state"
+    rm -f "$state/mode"
+    [[ "$action" != reset ]] || { echo 'Clean tester restored. Start it when ready.'; exit 0; }
+fi
+compose up -d
+wait_ssh 600
+sync_clock
+wait_ready
+printf 'Windows tester desktop: http://127.0.0.1:%s\n' "$viewer"
+if [[ "$action" == start ]]; then
+    if [[ -n "$installer" ]]; then
+        transfer "$installer" 'Controller@127.0.0.1:installer.exe'
+        ps 'New-Item -ItemType Directory -Force C:\Users\Tester\Desktop\Installers | Out-Null; Copy-Item C:\Users\Controller\installer.exe C:\Users\Tester\Desktop\Installers\ESCPost-setup.exe -Force'
+        echo 'Installer: Windows desktop → Installers → ESCPost-setup.exe'
+    fi
+    printf 'manual\n' > "$state/mode"
+    exit 0
+fi
+printf 'verify\n' > "$state/mode"
+# Acceptance orchestration is sourced after lifecycle setup, sharing its locked
+# state and SSH functions without spawning a second VM manager.
+# shellcheck source=packaging/windows/tester/verify.sh
+source "$here/verify.sh"

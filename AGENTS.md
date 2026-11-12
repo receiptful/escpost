@@ -10,6 +10,15 @@ are not installed there. All builds, tests, linting, and the CLI run inside the
 working tree at `/workspace` and caches `cargo` state in named volumes, so
 incremental builds stay fast across invocations.
 
+Windows packaging is the platform-specific exception: `just packaging windows
+build` builds the frontend with the existing Compose service, then runs Rust
+builds/tests and Inno Setup inside a dedicated Compose-managed Windows VM.
+`just packaging windows verify INSTALLER` tests the finished installer in a
+separate clean Windows VM, with a standard-user desktop and no development tools.
+Neither workflow invokes host Rust or Python. See
+[`packaging/windows/README.md`](packaging/windows/README.md) for the workflow,
+VM state, and validation requirements.
+
 Build the image once (and after changing the `Dockerfile`):
 
 ```bash

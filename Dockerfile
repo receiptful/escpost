@@ -39,6 +39,7 @@ RUN \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install --yes --no-install-recommends \
+        git \
         libusb-1.0-0 \
         python3 \
         python3-dev \

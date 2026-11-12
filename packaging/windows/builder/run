@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+builder=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+state="$builder/.state"
+# shellcheck source=packaging/windows/common.sh
+source "$builder/../common.sh"
+action=${1:-status}
+case "$action" in start|build|stop|status) ;; *) die 'Expected start, build, stop, or status.' ;; esac
+if [[ "$action" == status || "$action" == stop ]]; then
+    [[ -f "$state/compose.env" ]] || { echo 'Windows builder has not been initialized.'; exit 0; }
+fi
+if [[ "$action" != status ]]; then lock_builder "$state"; fi
+umask 077
+mkdir -p "$state/ssh" "$state/storage" "$state/oem" "$state/jobs"
+if [[ ! -f "$state/compose.env" ]]; then
+    printf 'WINDOWS_PASSWORD=%s\n' "$(openssl rand -hex 24)" > "$state/compose.env"
+    printf 'ESCPOST_WINDOWS_SSH_PORT=%s\nESCPOST_WINDOWS_VIEWER_PORT=%s\n' \
+        "${ESCPOST_WINDOWS_SSH_PORT:-2232}" "${ESCPOST_WINDOWS_VIEWER_PORT:-8026}" >> "$state/compose.env"
+fi
+project="escpost-windows-$(printf '%s' "$builder" | sha256sum | cut -c1-12)"
+compose_args=(--project-name "$project" --env-file "$state/compose.env" -f "$builder/compose.yaml")
+if [[ ! -f "$state/windows-iso.txt" && -f "$builder/../.state/media/windows.iso" ]]; then
+    realpath "$builder/../.state/media/windows.iso" > "$state/windows-iso.txt"
+fi
+if [[ -f "$state/windows-iso.txt" ]]; then
+    WINDOWS_ISO_PATH=$(cat "$state/windows-iso.txt")
+    export WINDOWS_ISO_PATH
+    if [[ "$action" == start || "$action" == build ]]; then
+        [[ -f "$WINDOWS_ISO_PATH" ]] || die "Saved Windows ISO is missing: $WINDOWS_ISO_PATH"
+    fi
+    compose_args+=(-f "$builder/compose.iso.yaml")
+fi
+compose() { docker compose "${compose_args[@]}" "$@"; }
+case "$action" in
+    status) compose ps; exit ;;
+    stop) compose stop; exit ;;
+esac
+
+docker run --rm --device=/dev/kvm --device=/dev/net/tun alpine:3.21 \
+    sh -c 'test -c /dev/kvm && test -c /dev/net/tun' || die 'The Docker host needs KVM and /dev/net/tun.'
+key="$state/ssh/builder"
+if [[ ! -f "$key" ]]; then ssh-keygen -q -t ed25519 -N '' -C escpost-windows-builder -f "$key"; fi
+cp "$builder/oem/"* "$state/oem/"
+cp "$key.pub" "$state/oem/builder_key.pub"
+port=${ESCPOST_WINDOWS_SSH_PORT:-$(sed -n 's/^ESCPOST_WINDOWS_SSH_PORT=//p' "$state/compose.env")}
+viewer=${ESCPOST_WINDOWS_VIEWER_PORT:-$(sed -n 's/^ESCPOST_WINDOWS_VIEWER_PORT=//p' "$state/compose.env")}
+ssh_options=(-i "$key" -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$state/ssh/known_hosts")
+remote() { ssh "${ssh_options[@]}" -p "$port" Builder@127.0.0.1 "$@"; }
+upload() { scp "${ssh_options[@]}" -P "$port" "$@"; }
+
+compose up -d
+printf 'Windows setup/desktop: http://127.0.0.1:%s\n' "$viewer"
+deadline=$((SECONDS + 3600))
+until remote 'exit 0' >/dev/null 2>&1; do
+    [[ -n "$(compose ps --status running -q windows)" ]] || { compose logs --tail 40; die 'Windows VM stopped.'; }
+    (( SECONDS < deadline )) || die 'Timed out waiting for Windows SSH. Inspect the VM desktop and C:\oem-bootstrap.log.'
+    printf 'Waiting for Windows SSH (%ss remaining)...\n' "$((deadline - SECONDS))"
+    sleep 15
+done
+[[ "$action" == build ]] || exit 0
+[[ $# == 3 ]] || die 'Internal usage: builder/run build JOB_DIRECTORY OUTPUT_DIRECTORY'
+job=$(realpath "$2")
+output=$(realpath "$3")
+job_id=$(basename "$job")
+[[ "$job_id" =~ ^[a-zA-Z0-9_-]+$ ]] || die 'Invalid build job identifier.'
+version=$(cat "$job/version.txt")
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-dev\.[a-f0-9]+(-dirty)?)?$ ]] || die 'Invalid artifact version.'
+
+remote "powershell.exe -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Force -Path incoming/$job_id | Out-Null\""
+upload "$job/source.tar.gz" "$job/source.sha256" "$job/version.txt" "$job/commit.txt" \
+    "$builder/guest/"*.ps1 "$builder/toolchain.json" "Builder@127.0.0.1:incoming/$job_id/"
+# Stream both bootstrap and build logs into the entry point's retained build.log.
+remote "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File incoming/$job_id/bootstrap.ps1"
+remote "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File incoming/$job_id/build.ps1 -JobId $job_id"
+
+download=$(mktemp -d "$output/.incoming-$job_id-XXXXXX")
+trap 'rm -rf "$download"' EXIT
+prefix="escpost-$version-windows-x64"
+for suffix in .zip -setup.exe -SHA256SUMS; do
+    upload "Builder@127.0.0.1:artifacts/$job_id/$prefix$suffix" "$download/"
+    [[ -s "$download/$prefix$suffix" ]] || die 'Empty build artifact.'
+done
+(cd "$download" && sha256sum --check "$prefix-SHA256SUMS")
+for suffix in .zip -setup.exe -SHA256SUMS; do
+    [[ ! -e "$output/$prefix$suffix" ]] || die "Refusing to overwrite $output/$prefix$suffix"
+done
+# The checksums arrive last and serve as the completion marker for a release set.
+for suffix in .zip -setup.exe -SHA256SUMS; do mv "$download/$prefix$suffix" "$output/"; done
+printf 'Unsigned Windows artifacts ready in %s\n' "$output"

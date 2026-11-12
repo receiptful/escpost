@@ -3,8 +3,6 @@
 
 # Distribution artifacts
 /dist/
-/crates/escpost/frontend/dist/
-/crates/escpost/frontend/node_modules/
 
 # Generated test output
 /.test-output/

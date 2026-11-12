@@ -30,7 +30,12 @@ struct PixelDifference {
 #[test]
 fn conformance_cases_match_their_golden_pngs() {
     let repository = repository_root();
-    let cases_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases");
+    // Match repository_root's canonical form (including Windows' \\?\ prefix)
+    // so the comparison report can strip the repository prefix reliably.
+    let cases_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/cases")
+        .canonicalize()
+        .expect("the conformance cases directory should exist");
     let output_root = repository.join(".test-output");
     let mut case_directories = find_case_directories(&cases_root);
     case_directories.sort();

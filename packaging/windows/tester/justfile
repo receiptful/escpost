@@ -1,0 +1,19 @@
+set default-list
+
+# Start/resume the desktop; optionally stage an installer.
+[positional-arguments]
+[working-directory: invocation_directory()]
+start *args:
+    "{{justfile_directory()}}/packaging/windows/tester/run" start "$@"
+
+# Stop without discarding the Windows session's disk.
+stop:
+    ./run stop
+
+# Inspect the tester VM.
+status:
+    ./run status
+
+# Discard the stopped tester's changes and restore clean Windows.
+reset:
+    ./run reset
