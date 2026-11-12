@@ -1,10 +1,14 @@
 set default-list
 
-# Start/resume the desktop; optionally stage an installer.
+# Start/resume the desktop; optionally stage an installer or select USB with --usb [DEVICE].
 [positional-arguments]
 [working-directory: invocation_directory()]
 start *args:
     "{{justfile_directory()}}/packaging/windows/tester/run" start "$@"
+
+# List Linux host USB devices and their identifiers, without starting Windows.
+usb-list:
+    ./run usb-list
 
 # Stop without discarding the Windows session's disk.
 stop:

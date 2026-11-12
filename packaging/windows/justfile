@@ -26,3 +26,4 @@ status:
 test:
     docker compose --project-directory ../.. -f ../../compose.yaml run --rm --no-deps -T test bash packaging/windows/tests/build.sh
     docker compose --project-directory ../.. -f ../../compose.yaml run --rm --no-deps -T test bash packaging/windows/tests/tester.sh
+    docker compose --project-directory ../.. -f ../../compose.yaml run --rm --no-deps -T test bash packaging/windows/tests/usb.sh

@@ -1,0 +1,16 @@
+services:
+  windows:
+    environment:
+      ARGUMENTS: ${ESCPOST_TESTER_USB_ARGUMENTS:?Select a USB device with tester start --usb}
+    labels:
+      dev.escpost.usb-device: ${ESCPOST_TESTER_USB_SELECTION:?Select a USB device}
+    # A bus mount and USB-only device rule survive USB re-enumeration. QEMU
+    # forwards only the selected physical port and VID/PID into Windows.
+    volumes:
+      - type: bind
+        source: /dev/bus/usb
+        target: /dev/bus/usb
+        bind:
+          create_host_path: false
+    device_cgroup_rules:
+      - 'c 189:* rw'

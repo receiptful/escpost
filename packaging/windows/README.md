@@ -262,6 +262,62 @@ are saved. Resource overrides are `ESCPOST_TESTER_RAM` (`6G`),
 `ESCPOST_TESTER_CPUS` (`4`), and `ESCPOST_TESTER_DISK` (`64G`). Use different ports
 for simultaneous worktrees. First-boot logs are in `C:\oem-bootstrap.log`.
 
+### Testing a host-connected USB printer
+
+USB passthrough is optional and currently requires a native Linux host with a
+local Docker engine. Docker Desktop and remote Docker engines are not supported.
+No host Rust, Python, or `lsusb` installation is needed: discovery reads Linux
+sysfs. The picker lists non-hub devices with their physical port identifier,
+vendor/product IDs, manufacturer, and product name where available. It does not
+filter by printer class, since some printers identify as serial or vendor devices.
+
+```bash
+# Inspect devices without starting Windows.
+just packaging windows tester usb-list
+
+# Select a device interactively, then start/resume the tester.
+just packaging windows tester start --usb
+
+# Use a physical port identifier from that list for repeatable/scripted starts.
+just packaging windows tester start --usb 3-3
+```
+
+Only one device is selected. Its bus/physical port and vendor/product IDs are
+matched together, so identical printers at different ports remain distinct and
+an unrelated device plugged into the selected port is not forwarded. The current
+device is validated on each start; moving it to another port or changing the
+host's USB topology requires selecting its new identifier. Reconnecting the same
+model at the same port is supported without relying on its changing device address.
+
+Changing or removing USB attachment while Windows is running or paused is refused.
+Stop explicitly, then start with the new selection. Starting without `--usb`
+starts without USB; the selection is not silently remembered for future starts.
+These commands preserve the Windows disk and installed application:
+
+```bash
+just packaging windows tester stop
+just packaging windows tester start --usb 3-3
+
+# Later, return the device to the host and resume without USB.
+just packaging windows tester stop
+just packaging windows tester start
+```
+
+Windows controls the device while attached, so host applications must not use it
+simultaneously. The optional Compose override exposes the USB bus to the container;
+QEMU forwards only the selected device to the guest. Windows may initially choose
+a vendor or USB printing driver. ESCPost's direct USB backend needs WinUSB on the
+printer interface; arranging passthrough does not install or replace that driver.
+Driver changes inside Windows require administrator access and affect the tester
+disk, not the Linux host. Once configured, run `escpost printers list` or use the
+workbench to register and print to the printer.
+
+First-use provisioning always creates and seals the clean baseline **without USB**,
+then attaches the selected device when starting the working disk. `reset` and
+automatic installer verification also run without USB; they discard any drivers
+installed into the working disk. This keeps hardware experiments separate from
+clean-installer acceptance.
+
 ### Remaining public-release checks
 
 The automatic tester receives its installer locally, so it does not establish

@@ -5,16 +5,25 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$here/../common.sh"
 # shellcheck source=packaging/windows/tester/common.sh
 source "$here/common.sh"
+# shellcheck source=packaging/windows/tester/usb.sh
+source "$here/usb.sh"
 action=${1:-status}
 (( $# == 0 )) || shift
 installer='' previous=''
-case "$action" in start|stop|status|reset|verify) ;; *) die 'Expected start, stop, status, reset, or verify.' ;; esac
+usb_requested=false usb_device='' usb_selection=''
+case "$action" in start|stop|status|reset|verify|usb-list) ;; *) die 'Expected start, stop, status, reset, verify, or usb-list.' ;; esac
 if [[ "$action" == verify ]]; then
     (( $# )) || die 'Usage: just packaging windows verify INSTALLER [--previous INSTALLER]'
     installer=$1; shift
 fi
 while (( $# )); do
     case "$1" in
+        --usb)
+            [[ "$action" == start ]] || die '--usb is only supported for tester start.'
+            [[ "$usb_requested" == false ]] || die 'Select only one USB device.'
+            usb_requested=true
+            shift
+            if (( $# )) && [[ "$1" != --* ]]; then usb_device=$1; shift; fi ;;
         --installer|--previous)
             option=$1; shift
             (( $# )) || die "$option requires a file."
@@ -25,6 +34,14 @@ while (( $# )); do
         *) die "Unknown argument: $1" ;;
     esac
 done
+if [[ "$action" == usb-list || "$usb_requested" == true ]]; then
+    [[ "$(uname -s)" == Linux ]] || die 'Tester USB passthrough currently requires a Linux host.'
+    [[ "$action" != usb-list ]] || { usb_list; exit; }
+    usb_select "$usb_device"
+    usb_require_local_docker
+    printf 'Selected USB device: '
+    usb_describe
+fi
 for path in "$installer" "$previous"; do [[ -z "$path" ]] || validate_installer "$path"; done
 [[ -z "$installer" ]] || installer=$(realpath "$installer")
 [[ -z "$previous" ]] || previous=$(realpath "$previous")
@@ -50,7 +67,8 @@ if [[ ! -f "$state/compose.env" ]]; then
         "$(openssl rand -hex 24)" "${ESCPOST_TESTER_SSH_PORT:-2233}" "${ESCPOST_TESTER_VIEWER_PORT:-8027}" > "$state/compose.env"
 fi
 project="escpost-tester-$(printf '%s' "$here" | sha256sum | cut -c1-12)"
-compose() { docker compose --project-name "$project" --env-file "$state/compose.env" -f "$here/compose.yaml" "$@"; }
+compose_files=(-f "$here/compose.yaml")
+compose() { docker compose --project-name "$project" --env-file "$state/compose.env" "${compose_files[@]}" "$@"; }
 running() {
     local ids id
     ids=$(compose ps --all -q windows) || return
@@ -64,7 +82,14 @@ running() {
 case "$action" in
     status) compose ps; exit ;;
     stop) compose stop; exit ;;
-    reset|verify) require_stopped "$(running)" ;;
+    reset|verify) running_ids=$(running); require_stopped "$running_ids" ;;
+    start)
+        running_ids=$(running)
+        current_usb=''
+        if [[ -n "$running_ids" ]]; then
+            current_usb=$(docker inspect --format '{{index .Config.Labels "dev.escpost.usb-device"}}' "$running_ids")
+        fi
+        usb_require_same_attachment "$running_ids" "$current_usb" "$usb_selection" ;;
 esac
 port=${ESCPOST_TESTER_SSH_PORT:-$(sed -n 's/^ESCPOST_TESTER_SSH_PORT=//p' "$state/compose.env")}
 viewer=${ESCPOST_TESTER_VIEWER_PORT:-$(sed -n 's/^ESCPOST_TESTER_VIEWER_PORT=//p' "$state/compose.env")}
@@ -129,11 +154,26 @@ if [[ "$action" == reset || "$action" == verify ]]; then
     rm -f "$state/mode"
     [[ "$action" != reset ]] || { echo 'Clean tester restored. Start it when ready.'; exit 0; }
 fi
-compose up -d
+if [[ "$usb_requested" == true ]]; then
+    # Recheck after potentially lengthy baseline provisioning. Never seal a
+    # baseline with host USB attached, or substitute a different device.
+    usb_read_device "$usb_id" || die 'Selected USB device disappeared before Windows could start.'
+    [[ "$usb_selection" == "$usb_id:$usb_vendor:$usb_product" ]] || die 'The device at the selected USB port changed. Select it again.'
+    export ESCPOST_TESTER_USB_SELECTION="$usb_selection"
+    export ESCPOST_TESTER_USB_ARGUMENTS="-device usb-host,hostbus=$usb_bus,hostport=$usb_port,vendorid=0x$usb_vendor,productid=0x$usb_product"
+    compose_files+=(-f "$here/compose.usb.yaml")
+fi
+# A matching start resumes the existing desktop without recreating a running
+# container. USB changes were rejected above and require an explicit stop.
+if [[ "$action" == start && -n "$running_ids" ]]; then compose up -d --no-recreate
+else compose up -d; fi
 wait_ssh 600
 sync_clock
 wait_ready
 printf 'Windows tester desktop: http://127.0.0.1:%s\n' "$viewer"
+if [[ "$usb_requested" == true ]]; then
+    printf 'USB attached: %s (reuse with --usb %s). Windows may need WinUSB for ESCPost; host printing is unavailable while attached.\n' "$usb_selection" "$usb_id"
+fi
 if [[ "$action" == start ]]; then
     if [[ -n "$installer" ]]; then
         transfer "$installer" 'Controller@127.0.0.1:installer.exe'

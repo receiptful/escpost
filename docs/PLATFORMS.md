@@ -77,6 +77,17 @@ Previous-release upgrade was not run because no previous installer was supplied.
 Browser-download reputation, portable ZIP behavior on a clean machine, and
 physical USB behavior remain release checks.
 
+On 2026-11-12, the Linux-hosted Windows tester forwarded the connected NT-5890K
+(`0416:5011`, host USB port `3-3`) into Windows 11 Pro x64, build 26200.
+The installed ESCPost executable discovered interface 0 and endpoints `0x03`
+(OUT) and `0x81` (IN) as the non-administrator Tester user. Windows had assigned
+Microsoft's `usbprint` driver; a direct USB print attempt failed with
+"incompatible driver is installed for this device". No driver was replaced and
+physical printing is not verified. Evidence is retained locally under
+`packaging/windows/tester/.state/runs/usb-20261112-BXfwYk/`. Reproduce discovery
+with `just packaging windows tester start --usb`, then
+`escpost printers discover --transport usb` inside Windows.
+
 macOS builds have not yet been verified by ESCPost. The virtual IP printer is
 implemented; the native Windows spooler remains planned work.
 
@@ -334,8 +345,9 @@ Expected limitations:
 
 ### Windows direct USB
 
-Implemented but unverified advanced output backend. Discovery and
-bidirectional protocol testing remain planned Rust work.
+Implemented but unverified advanced output backend. Discovery has been verified
+for the NT-5890K in the Windows tester; physical output and bidirectional
+protocol behavior still need hardware verification with a compatible driver.
 
 Known caveats:
 
@@ -357,6 +369,12 @@ Docker Desktop runs Linux containers inside a virtual machine. Passing a
 Windows USB printer into the current Linux Compose service is not a supported
 hardware workflow. Use a host-native Windows executable after its direct-USB
 path is verified.
+
+The separate Windows tester runs under QEMU on a **Linux host**, and can forward
+a selected host USB device into its Windows guest. Use
+`just packaging windows tester start --usb`; see the
+[tester USB workflow](../packaging/windows/README.md#testing-a-host-connected-usb-printer).
+This does not add USB support to Docker Desktop on a Windows host.
 
 ## Known-issue register
 
