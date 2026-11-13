@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
-  <title id="title">ESCPost web preview placeholder</title>
-  <desc id="desc">Replace this file with a screenshot of the ESCPost browser workbench.</desc>
-  <rect width="1600" height="900" fill="#07182d"/>
-  <rect x="40" y="40" width="1520" height="820" fill="none" stroke="#21d5c6" stroke-width="2" stroke-dasharray="12 12"/>
-  <text x="800" y="390" fill="#ffffff" font-family="monospace" font-size="58" font-weight="700" text-anchor="middle">WEB WORKBENCH SCREENSHOT</text>
-  <text x="800" y="475" fill="#21d5c6" font-family="monospace" font-size="30" text-anchor="middle">PLACEHOLDER · 1600 × 900</text>
-</svg>

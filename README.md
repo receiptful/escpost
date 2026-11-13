@@ -6,30 +6,43 @@
   </picture>
 </p>
 
-ESCPost is a Rust-based command-line toolbox and reusable library for building,
-testing, and debugging ESC/POS integrations. Render ESC/POS receipt and label
-data without a printer, or connect an ERP or POS application to ESCPost as if
-it were a network printer. Capture and preview its print jobs, then print to
-physical USB and network printers from the same CLI.
+ESCPost lets you build, test, and debug ESC/POS receipt and label printing
+without a printer on your desk. It is one open-source command-line tool with a
+browser workbench, plus libraries for Rust, Python, and JavaScript.
 
-## Your complete ESC/POS Toolbox
+## Is this for you?
+
+- **You waste paper on each test.**
+  Render ESC/POS bytes to a PNG at printer resolution.
+- **Your ERP or POS prints garbage and you cannot see why.**
+  Point it at ESCPost as a network printer. The workbench shows each job live
+  and maps each command to the exact area it printed.
+- **You do not know which printers are on the network.**
+  ESCPost finds USB and network printers and registers them for you.
+- **Each printer model behaves differently.**
+  A profile catalog holds the geometry and capabilities of each device. You
+  can calibrate a profile against your own printer.
+- **You must print from a script or a CI job.**
+  One CLI and a local HTTP API send raw bytes to USB and network printers. On
+  Windows, USB printing needs no driver replacement.
+- **Your web application must print receipts.**
+  The JavaScript SDK and browser extension print from a web page to a local
+  printer. A compatibility shim lets a page that uses QZ Tray keep its `qz.*`
+  calls.
+- **You want the renderer inside your own application.**
+  Use the Rust crates or the Python binding.
 
 <p align="center">
-  <img src="docs/assets/readme/features.png" alt="Overview of ESCPost's six core features" width="800">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/workbench_dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/workbench_light.png">
+    <img src="docs/assets/readme/workbench_light.png" alt="The ESCPost workbench: a rendered receipt beside its ESC/POS command list, with one command highlighted on the receipt" width="100%">
+  </picture>
 </p>
 
-| Feature | What it provides |
-|---|---|
-| **CLI and libraries** | A Rust CLI, reusable crates for processing ESC/POS data and printer profiles, and a Python API. |
-| **Virtual IP printer** | Redirect an ERP or POS application to ESCPost as a RAW TCP network printer, then capture and inspect its print jobs in your browser, in real time. |
-| **USB and IP printers** | Automatically discover connected USB printers, configure IP network printers, and test and calibrate each printer's profile. |
-| **Printer profiles** | Device-specific geometry, capabilities, defaults, and calibrated behavior. |
-| **PNG and web preview** | Printer-resolution PNG output, multi-sheet jobs, integer zoom, antialiasing, and browser inspection through the virtual printer. |
-| **Cloud printing** | Planned native integration with [Receiptful](https://receiptful.io); today, Receiptful is available separately for thermal-printer delivery, job history, and managed cloud printing. |
+## Quick start
 
-## Render and capture ESC/POS data
-
-Install the ESCPost CLI with Homebrew:
+Install the CLI with Homebrew:
 
 ```bash
 brew install receiptful/tap/escpost
@@ -41,192 +54,93 @@ Or from crates.io with Rust 1.89 or newer:
 cargo install escpost
 ```
 
-See [Development](#development) to build ESCPost from the source checkout.
-
-Render raw ESC/POS bytes, readable hexadecimal input, or stdin to PNG:
+Render ESC/POS data to a PNG. The input can be raw bytes, readable hexadecimal
+text, or stdin:
 
 ```bash
 escpost render receipt.bin > receipt.png
 ```
 
-To preview jobs in the browser, start the virtual printer and workbench:
+Start the virtual printer and the workbench:
 
 ```bash
-escpost serve \
-  --listen 127.0.0.1:9100 \
-  --web-listen 127.0.0.1:9000 \
-  --profile REFERENCE
+escpost serve --listen 9100 --web-listen 9000
 ```
 
-Send an existing ESC/POS source directly to that virtual printer:
+Point your application at `127.0.0.1:9100` as a network printer, or send a
+file yourself:
 
 ```bash
-escpost print receipt.hex --network 127.0.0.1:9100
+escpost print receipt.bin --network 9100
 ```
 
-### Raw browser printing
-
-To expose the local print API without the embedded web application, run
-`escpost serve` with a web listener and API-only mode:
+Find your physical printers, register one, and print to it:
 
 ```bash
-escpost serve --web-listen 127.0.0.1:9000 --no-web-app
+escpost printers discover
+escpost printers add
+escpost print receipt.bin
 ```
 
-For a printer configured with the exact name `counter`, submit the ESC/POS
-file as raw bytes:
+The [CLI reference](docs/CLI.md) describes each command and option.
 
-```bash
-curl -X POST 'http://127.0.0.1:9000/api/print?printer=counter' \
-  -H 'Content-Type: application/octet-stream' \
-  --data-binary @receipt.bin
-```
+## What ESCPost covers, and what it does not
 
-The `printer` value must be the exact configured printer name. Requests from
-ordinary browser origins are rejected; browser-extension origins and local
-program calls are allowed. This origin filter constrains which browser pages
-may send a request; it is not authentication.
+ESCPost implements the commonly used ESC/POS commands: text and layout, common
+single-byte code pages, bit and raster images, one-dimensional barcodes,
+GS1-128, QR codes, feeds, and cuts. Each cut starts a new sheet. The
+[command coverage](docs/COMMAND_COVERAGE.md) matrix lists each command and how
+it was validated.
 
-<p align="center">
-  <img src="docs/assets/readme/web-preview.svg" alt="Placeholder for the ESCPost browser workbench" width="100%">
-</p>
-
-## Supported ESC/POS features
-
-ESCPost currently implements all commonly used ESC/POS commands, including
-profile-driven text and layout, common single-byte code pages, bit and raster
-images, native one-dimensional barcodes, GS1-128, automatic Code 128, Model 2
-QR codes, feeds, and cuts. Supported cuts produce separate ordered sheets.
-
-Previews reproduce printable geometry and precise placement at the printer's
-native resolution—not paper texture or an exact reproduction of proprietary
-printer ROM glyphs. Use the virtual `REFERENCE` profile for generic previews,
-or a physical profile for device-specific geometry and capabilities.
-
-See [command coverage](docs/COMMAND_COVERAGE.md) for the detailed implementation
-and validation matrix.
+- A preview shows the printable geometry and the exact position of each dot.
+  It does not show paper texture or the proprietary ROM fonts of a printer.
+- Linux and Windows are verified with physical printers. The Windows installer
+  is not yet released to the public. macOS installs through Homebrew but is
+  not yet verified. See [platform support](docs/PLATFORMS.md).
+- Printers connect through USB or RAW TCP. Serial and Bluetooth are
+  planned.
+- Cloud printing is planned. Until then,
+  [Receiptful](https://receiptful.io) supplies managed cloud printing as a
+  separate product.
 
 ## Libraries
 
-The CLI is backed by reusable Rust crates for applications that need to process
-ESC/POS data directly, plus a Python binding to the same preview engine. The
-Rust crates are published on crates.io; the Python package remains available
-from the source workspace and has not yet been published to PyPI.
-
-| Library or API | Available today |
+| Library | Use it to |
 |---|---|
-| [`escpost-render`](crates/escpost-render) | Convert ESC/POS data into ordered PNG sheets using a selected printer profile. Results include warnings, device events, and reproducible profile information. |
-| [`escpost-profiles`](crates/escpost-profiles) | Resolve profiles from the embedded catalog, inspect profile capabilities, and read, write, compile, or synthesize canonical profiles. |
-| [`escpost-python`](python) | Call the Rust preview engine from Python and receive the rendered PNG sheets. |
+| [`escpost-render`](crates/escpost-render) (Rust) | Convert ESC/POS data into PNG sheets with a selected printer profile. Results include warnings and device events. |
+| [`escpost-profiles`](crates/escpost-profiles) (Rust) | Find printer profiles in the embedded catalog, read their capabilities, and compile your own. |
+| [`escpost-python`](python) (Python) | Call the same renderer from Python. Not yet on PyPI; build it from this repository. |
+| [`@receiptful.io/escpost`](sdks/javascript) (JavaScript) | List printers and print raw bytes from a web page, through the [browser extension](browser-extension). Includes the QZ Tray shim. |
 
-The virtual IP printer, browser workbench, and USB or RAW TCP printer management
-are currently CLI features; they are not yet exposed as reusable library APIs.
-
-## Usage data
-
-On the first interactive run the CLI asks whether it may share anonymous
-usage data: the command name, option names, success or error kind, duration,
-version, and platform. Never receipts, file names, printer names, addresses,
-or anything that identifies you. Switch it off at any time with
-`escpost telemetry off`, `DO_NOT_TRACK=1`, or `ESCPOST_TELEMETRY=0`. Details:
-<https://escpost.dev/dataprivacy>, reference: [`docs/CLI.md`](docs/CLI.md#usage-data).
-
-## Development
-
-Windows x64 distribution builds use `just packaging windows build` from a
-clean release tag, or `just packaging windows build --dev` for a working-tree
-build. This produces an unsigned portable ZIP and per-user Inno Setup installer
-in `dist/windows/`. Run `just packaging windows verify INSTALLER` to test the
-finished installer on a separate clean Windows desktop, or
-`just packaging windows tester start --installer INSTALLER` to try it yourself.
-See [Windows packaging](packaging/windows/README.md) for
-builder requirements, verification, and unsigned-download limitations.
-
-Docker Compose is the canonical development workflow and requires neither Rust
-nor Bun on the host. Start the complete backend and frontend stack with:
-
-```bash
-docker compose up
-```
-
-Backend source changes restart the Rust process. Vite serves the frontend at
-`http://127.0.0.1:5173/` with hot reload and proxies API requests to the
-backend. To provide a discoverable RAW TCP printer without physical hardware,
-run this in another terminal:
-
-```bash
-docker compose up dummy-printer
-```
-
-Use the root wrapper to run the containerized CLI with USB access:
-
-```bash
-./escpost printers list
-echo hello | ./escpost print
-```
-
-For piped printing in a terminal, the wrapper keeps receipt data on a separate
-stream so you can use the interactive printer picker without changing the bytes.
-When running without a terminal or redirecting the command's output, pass
-`--printer <NAME>` if several printers are configured.
-
-Run the Rust workspace tests in the same reproducible environment:
-
-```bash
-docker compose run --rm test cargo test --workspace
-```
-
-The workbench provides five read-only routes:
-
-- `/` — Overview
-- `/jobs` — current print job, sheets, command trace, and annotations
-- `/printers` — configured printer inventory
-- `/profiles` — complete printer-profile catalog
-- `/calibration` — calibration guidance
-
-For a production-like run of the embedded frontend without development
-watchers, use `docker compose run --rm -e ESCPOST_WATCH=0 escpost serve`.
-
-Native development requires Rust and Bun on the host. `just` is optional, but
-we recommend installing it to run the repository tasks below; their underlying
-commands can also be invoked directly:
-
-| Task | Command |
-|---|---|
-| Build the release CLI | `just build` |
-| Run the tests | `just test` |
-| Run the CLI | `just run serve` |
-| Run the development stack | `just dev` |
-
-The native build compiles the frontend first and produces
-`target/release/escpost`. To install that checkout on `PATH`:
-
-```bash
-cargo install --path crates/escpost
-```
-
-`just dev` provides Vite HMR and uses Watchexec, when available, to restart the
-Rust server after backend changes. If Watchexec is missing, it offers to install
-it locally under `target/dev-tools`.
-
-Additional tasks:
-
-- `just docker-cargo-clean` clears the shared container build cache.
-- `just generate-profile-pack` regenerates the canonical printer-profile pack.
-- `cd python && just test` builds and exercises the Python binding.
-- `just --list` shows every recipe.
+The virtual printer, the workbench, and printer management are CLI features.
+They are not available as library APIs.
 
 ## Documentation
 
-- [CLI reference](docs/CLI.md) — inputs, output modes, commands, and automation behavior
-- [Command coverage](docs/COMMAND_COVERAGE.md) — implemented protocol surface and validation
-- [Printer profiles](docs/PROFILE_SCHEMA.md) — profile schema, enrichment, and corrections
-- [Architecture](docs/ARCHITECTURE.md) — crate boundaries and render pipeline
-- [Command tracing](docs/TRACING.md) — tracer architecture and command-effect semantics
-- [Platform support](docs/PLATFORMS.md) — release targets and transport caveats
-- [Testing and calibration](docs/TESTING.md) — conformance cases, golden images, and physical printers
-- [Design decisions](docs/DESIGN_DECISIONS.md) — accepted technical decisions and rationale
-- [Roadmap](docs/TODO.md) — planned developer-tool capabilities
+- [CLI reference](docs/CLI.md) — commands, inputs, the workbench, and the print API
+- [Command coverage](docs/COMMAND_COVERAGE.md) — implemented commands and their validation
+- [Printer profiles](docs/PROFILE_SCHEMA.md) — profile schema and corrections
+- [Platform support](docs/PLATFORMS.md) — operating systems and connection types
+- [Architecture](docs/ARCHITECTURE.md) — crates and the render pipeline
+- [Command tracing](docs/TRACING.md) — how the workbench maps commands to print areas
+- [Testing and calibration](docs/TESTING.md) — test layers, golden images, and physical printers
+- [Design decisions](docs/DESIGN_DECISIONS.md) — accepted decisions and their reasons
+- [Roadmap](docs/TODO.md) — planned work
+- [Manifesto](MANIFESTO.md) — why ESCPost exists
+
+## Contributing
+
+Docker Compose runs the full development stack; you need no Rust or Bun on
+your computer. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Usage data
+
+On the first interactive run, the CLI asks if it may share anonymous usage
+data: the command name, option names, success or error kind, duration,
+version, and platform. It never sends receipts, file names, printer names,
+addresses, or anything that identifies you. Switch it off at any time with
+`escpost telemetry off`, `DO_NOT_TRACK=1`, or `ESCPOST_TELEMETRY=0`. Details:
+<https://escpost.dev/dataprivacy>, reference: [`docs/CLI.md`](docs/CLI.md#usage-data).
 
 ## License
 

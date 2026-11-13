@@ -901,6 +901,41 @@ printer dots.
 Port 9100 has no authentication or encryption. Binding either listener to a
 non-loopback address can expose receipt data and should be deliberate.
 
+### Workbench pages
+
+The web application has five pages:
+
+- `/` — Overview
+- `/jobs` — current print job, sheets, command trace, and annotations
+- `/printers` — configured printers and printer discovery
+- `/profiles` — complete printer-profile catalog
+- `/calibration` — calibration guidance
+
+### Raw print API
+
+To expose the local print API without the web application, run `serve` with a
+web listener and API-only mode:
+
+```bash
+escpost serve --web-listen 127.0.0.1:9000 --no-web-app
+```
+
+For a printer configured with the exact name `counter`, submit the ESC/POS
+file as raw bytes:
+
+```bash
+curl -X POST 'http://127.0.0.1:9000/api/print?printer=counter' \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @receipt.bin
+```
+
+The `printer` value must be the exact configured printer name. Requests from
+ordinary browser origins are rejected; browser-extension origins and local
+program calls are allowed. This origin filter constrains which browser pages
+may send a request; it is not authentication. A web page prints through the
+[JavaScript SDK](../sdks/javascript) and the
+[browser extension](../browser-extension) instead.
+
 ## `escpost telemetry`
 
 ```text
