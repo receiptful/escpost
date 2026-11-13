@@ -56,31 +56,73 @@ usb_list() {
     done
 }
 
+usb_parse_choices() {
+    local choice="$1" number
+    local -a numbers=()
+    local -A seen=()
+    # Commas and/or whitespace separate numbers. Reject malformed lists before
+    # resolving any entry, including duplicate devices and numeric overflow.
+    [[ "$choice" =~ ^[[:space:]]*[1-9][0-9]{0,5}([[:space:]]*,[[:space:]]*[1-9][0-9]{0,5}|[[:space:]]+[1-9][0-9]{0,5})*[[:space:]]*$ ]] || return 1
+    read -r -a numbers <<< "${choice//,/ }"
+    usb_selected=()
+    for number in "${numbers[@]}"; do
+        (( number <= ${#usb_devices[@]} )) || return 1
+        [[ ! -v "seen[$number]" ]] || return 1
+        seen[$number]=1
+        usb_selected+=("${usb_devices[$((number - 1))]}")
+    done
+}
+
+usb_resolve_selection() {
+    local sysfs="$1" identifier
+    local -A seen=()
+    ((${#usb_selected[@]})) || die 'Select at least one USB device.'
+    for identifier in "${usb_selected[@]}"; do
+        usb_read_device "$identifier" "$sysfs" || die "USB device '$identifier' is absent, is a hub, or has invalid descriptors. Run tester usb-list again."
+        [[ ! -v "seen[$identifier]" ]] || die "USB device '$identifier' was selected more than once."
+        seen[$identifier]=1
+    done
+    # Canonical order makes a reordered selection match an existing VM. Keep
+    # the single-device label format compatible with already-running testers.
+    mapfile -t usb_selected < <(printf '%s\n' "${usb_selected[@]}" | LC_ALL=C sort)
+    usb_selection=''
+    usb_arguments=''
+    for identifier in "${usb_selected[@]}"; do
+        usb_read_device "$identifier" "$sysfs" || die "USB device '$identifier' changed during selection. Select it again."
+        usb_selection+="${usb_selection:+,}$usb_id:$usb_vendor:$usb_product"
+        usb_arguments+="${usb_arguments:+ }-device usb-host,hostbus=$usb_bus,hostport=$usb_port,vendorid=0x$usb_vendor,productid=0x$usb_product"
+    done
+}
+
 usb_select() {
-    local requested="$1" sysfs="${2:-/sys/bus/usb/devices}" index choice
-    if [[ -z "$requested" ]]; then
-        [[ -t 0 ]] || die 'The USB picker needs a terminal. Use tester usb-list, then start --usb DEVICE.'
+    local sysfs="$1" index choice
+    shift
+    usb_selected=("$@")
+    if ((${#usb_selected[@]} == 0)); then
+        [[ -t 0 ]] || die 'The USB picker needs a terminal. Use tester usb-list, then repeat --usb DEVICE for each device.'
         usb_scan "$sysfs"
         ((${#usb_devices[@]})) || die 'No selectable USB devices found on this Linux host.'
-        printf 'Select the USB device to give Windows (q cancels):\n' >&2
+        printf 'Select USB devices to give Windows (q cancels):\n' >&2
         for index in "${!usb_devices[@]}"; do
             usb_read_device "${usb_devices[$index]}" "$sysfs" || continue
             printf '%d) ' "$((index + 1))" >&2
             usb_describe "$sysfs" >&2
         done
         while true; do
-            printf 'Device number: ' >&2
+            printf 'Device numbers (for example 1 3 or 1,3): ' >&2
             read -r choice || die 'USB selection cancelled.'
             [[ "$choice" != q && "$choice" != Q ]] || die 'USB selection cancelled.'
-            if [[ "$choice" =~ ^[1-9][0-9]{0,5}$ ]] && ((choice <= ${#usb_devices[@]})); then
-                requested=${usb_devices[$((choice - 1))]}
-                break
-            fi
-            printf 'Choose a listed number, or q to cancel.\n' >&2
+            if usb_parse_choices "$choice"; then break; fi
+            printf 'Choose distinct listed numbers separated by spaces or commas, or q to cancel.\n' >&2
         done
     fi
-    usb_read_device "$requested" "$sysfs" || die "USB device '$requested' is absent, is a hub, or has invalid descriptors. Run tester usb-list again."
-    usb_selection="$usb_id:$usb_vendor:$usb_product"
+    usb_resolve_selection "$sysfs"
+}
+
+usb_revalidate() {
+    local previous="$usb_selection"
+    usb_resolve_selection "$1"
+    [[ "$usb_selection" == "$previous" ]] || die 'A device at a selected USB port changed. Select the devices again.'
 }
 
 usb_require_same_attachment() {

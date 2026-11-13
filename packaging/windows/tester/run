@@ -10,7 +10,8 @@ source "$here/usb.sh"
 action=${1:-status}
 (( $# == 0 )) || shift
 installer='' previous=''
-usb_requested=false usb_device='' usb_selection=''
+usb_requested=false usb_picker_requested=false usb_selection=''
+usb_requested_devices=()
 case "$action" in start|stop|status|reset|verify|usb-list) ;; *) die 'Expected start, stop, status, reset, verify, or usb-list.' ;; esac
 if [[ "$action" == verify ]]; then
     (( $# )) || die 'Usage: just packaging windows verify INSTALLER [--previous INSTALLER]'
@@ -20,10 +21,13 @@ while (( $# )); do
     case "$1" in
         --usb)
             [[ "$action" == start ]] || die '--usb is only supported for tester start.'
-            [[ "$usb_requested" == false ]] || die 'Select only one USB device.'
             usb_requested=true
             shift
-            if (( $# )) && [[ "$1" != --* ]]; then usb_device=$1; shift; fi ;;
+            if (( $# )) && [[ "$1" != --* ]]; then
+                usb_requested_devices+=("$1"); shift
+            else
+                usb_picker_requested=true
+            fi ;;
         --installer|--previous)
             option=$1; shift
             (( $# )) || die "$option requires a file."
@@ -34,13 +38,19 @@ while (( $# )); do
         *) die "Unknown argument: $1" ;;
     esac
 done
+if [[ "$usb_picker_requested" == true ]] && ((${#usb_requested_devices[@]})); then
+    die 'Use --usb alone for the picker, or repeat --usb DEVICE for explicit selections.'
+fi
 if [[ "$action" == usb-list || "$usb_requested" == true ]]; then
     [[ "$(uname -s)" == Linux ]] || die 'Tester USB passthrough currently requires a Linux host.'
     [[ "$action" != usb-list ]] || { usb_list; exit; }
-    usb_select "$usb_device"
+    usb_select /sys/bus/usb/devices "${usb_requested_devices[@]}"
     usb_require_local_docker
-    printf 'Selected USB device: '
-    usb_describe
+    printf 'Selected USB devices:\n'
+    for identifier in "${usb_selected[@]}"; do
+        usb_read_device "$identifier" || die "Selected USB device '$identifier' disappeared."
+        usb_describe
+    done
 fi
 for path in "$installer" "$previous"; do [[ -z "$path" ]] || validate_installer "$path"; done
 [[ -z "$installer" ]] || installer=$(realpath "$installer")
@@ -157,10 +167,9 @@ fi
 if [[ "$usb_requested" == true ]]; then
     # Recheck after potentially lengthy baseline provisioning. Never seal a
     # baseline with host USB attached, or substitute a different device.
-    usb_read_device "$usb_id" || die 'Selected USB device disappeared before Windows could start.'
-    [[ "$usb_selection" == "$usb_id:$usb_vendor:$usb_product" ]] || die 'The device at the selected USB port changed. Select it again.'
+    usb_revalidate /sys/bus/usb/devices
     export ESCPOST_TESTER_USB_SELECTION="$usb_selection"
-    export ESCPOST_TESTER_USB_ARGUMENTS="-device usb-host,hostbus=$usb_bus,hostport=$usb_port,vendorid=0x$usb_vendor,productid=0x$usb_product"
+    export ESCPOST_TESTER_USB_ARGUMENTS="$usb_arguments"
     compose_files+=(-f "$here/compose.usb.yaml")
 fi
 # A matching start resumes the existing desktop without recreating a running
@@ -172,7 +181,9 @@ sync_clock
 wait_ready
 printf 'Windows tester desktop: http://127.0.0.1:%s\n' "$viewer"
 if [[ "$usb_requested" == true ]]; then
-    printf 'USB attached: %s (reuse with --usb %s). Host printing is unavailable while attached to Windows.\n' "$usb_selection" "$usb_id"
+    printf 'USB attached: %s\nReuse with:' "$usb_selection"
+    printf ' --usb %s' "${usb_selected[@]}"
+    printf '\nHost printing is unavailable for these devices while attached to Windows.\n'
 fi
 if [[ "$action" == start ]]; then
     if [[ -n "$installer" ]]; then

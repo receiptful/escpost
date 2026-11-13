@@ -45,8 +45,10 @@ Tester must already be logged in. It expects the desktop directory above:
 The second command stops the spooler and restores its original running state in
 `finally`. Both commands preserve evidence and refuse to overwrite a prior run.
 The actual printing still runs as Tester. Repeat for the
-second printer (`0483:5743` on our test hardware) after switching USB passthrough
-with the existing tester stop/start commands. Neither operation resets the VM.
+second printer (`0483:5743` on our test hardware). Both can be attached together
+with repeated `--usb DEVICE` options, then checked one after another without
+restarting Windows. Changing the attachment set uses the tester stop/start
+commands and preserves the VM disk.
 
 The harness kills a command that has not exited within 15 seconds after EOF.
 Native tests in `escpost-usbprint` separately exercise binary writes, stalled-I/O

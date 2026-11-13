@@ -1,6 +1,6 @@
 set default-list
 
-# Start/resume the desktop; optionally stage an installer or select USB with --usb [DEVICE].
+# Start/resume the desktop; --usb opens a picker, or repeat --usb DEVICE for several devices.
 [positional-arguments]
 [working-directory: invocation_directory()]
 start *args:

@@ -376,7 +376,7 @@ Windows USB printer into the current Linux Compose service is not a supported
 hardware workflow. Use the host-native Windows executable for direct USB output.
 
 The separate Windows tester runs under QEMU on a **Linux host**, and can forward
-a selected host USB device into its Windows guest. Use
+selected host USB devices into its Windows guest. Use
 `just packaging windows tester start --usb`; see the
 [tester USB workflow](../packaging/windows/README.md#testing-a-host-connected-usb-printer).
 This does not add USB support to Docker Desktop on a Windows host.

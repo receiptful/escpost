@@ -1,11 +1,12 @@
 services:
   windows:
     environment:
-      ARGUMENTS: ${ESCPOST_TESTER_USB_ARGUMENTS:?Select a USB device with tester start --usb}
+      ARGUMENTS: ${ESCPOST_TESTER_USB_ARGUMENTS:?Select USB devices with tester start --usb}
     labels:
-      dev.escpost.usb-device: ${ESCPOST_TESTER_USB_SELECTION:?Select a USB device}
+      # Retain this label name for compatibility with single-device testers.
+      dev.escpost.usb-device: ${ESCPOST_TESTER_USB_SELECTION:?Select USB devices}
     # A bus mount and USB-only device rule survive USB re-enumeration. QEMU
-    # forwards only the selected physical port and VID/PID into Windows.
+    # forwards only the selected physical ports and VID/PID pairs into Windows.
     volumes:
       - type: bind
         source: /dev/bus/usb

@@ -276,37 +276,43 @@ filter by printer class, since some printers identify as serial or vendor device
 # Inspect devices without starting Windows.
 just packaging windows tester usb-list
 
-# Select a device interactively, then start/resume the tester.
+# Select devices interactively, then start/resume the tester.
+# Enter numbers separated by spaces or commas, for example 1 3 or 1,3.
 just packaging windows tester start --usb
 
 # Use a physical port identifier from that list for repeatable/scripted starts.
 just packaging windows tester start --usb 3-3
+
+# Forward both printers together (use the identifiers from your own usb-list).
+just packaging windows tester start --usb 3-3 --usb 3-2
 ```
 
-Only one device is selected. Its bus/physical port and vendor/product IDs are
-matched together, so identical printers at different ports remain distinct and
-an unrelated device plugged into the selected port is not forwarded. The current
-device is validated on each start; moving it to another port or changing the
-host's USB topology requires selecting its new identifier. Reconnecting the same
-model at the same port is supported without relying on its changing device address.
+Each selected device's bus/physical port and vendor/product IDs are matched
+together, so identical printers at different ports remain distinct and an
+unrelated device plugged into a selected port is not forwarded. Duplicate
+selections are rejected. Selection order does not matter when resuming a VM.
+Every device is validated on each start and again before attachment; moving it
+to another port or changing the host's USB topology requires selecting its new
+identifier. Reconnecting the same model at the same port is supported without
+relying on its changing device address.
 
-Changing or removing USB attachment while Windows is running or paused is refused.
+Adding, changing, or removing USB attachments while Windows is running or paused is refused.
 Stop explicitly, then start with the new selection. Starting without `--usb`
 starts without USB; the selection is not silently remembered for future starts.
 These commands preserve the Windows disk and installed application:
 
 ```bash
 just packaging windows tester stop
-just packaging windows tester start --usb 3-3
+just packaging windows tester start --usb 3-3 --usb 3-2
 
-# Later, return the device to the host and resume without USB.
+# Later, return the devices to the host and resume without USB.
 just packaging windows tester stop
 just packaging windows tester start
 ```
 
-Windows controls the device while attached, so host applications must not use it
+Windows controls the selected devices while attached, so host applications must not use them
 simultaneously. The optional Compose override exposes the USB bus to the container;
-QEMU forwards only the selected device to the guest. Windows may initially choose
+QEMU forwards only the selected devices to the guest. Windows may initially choose
 a vendor or USB printing driver. ESCPost automatically uses `usbprint.sys` for
 compatible printer interfaces and retains WinUSB support for devices already
 using it. Neither passthrough nor ESCPost installs or replaces a driver.
@@ -318,7 +324,7 @@ see [the USBPRINT checks](tester/probes/README.md). They use a separately copied
 executable and an isolated printer configuration.
 
 First-use provisioning always creates and seals the clean baseline **without USB**,
-then attaches the selected device when starting the working disk. `reset` and
+then attaches the selected devices when starting the working disk. `reset` and
 automatic installer verification also run without USB; they discard any drivers
 installed into the working disk. This keeps hardware experiments separate from
 clean-installer acceptance.
