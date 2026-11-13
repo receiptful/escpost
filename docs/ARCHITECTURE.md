@@ -23,7 +23,7 @@ model.
 
 ## Workspace boundaries
 
-The Rust workspace contains four crates:
+The Rust workspace contains five crates:
 
 - `escpost-profiles` imports, enriches, validates, and loads printer
   profiles.
@@ -33,6 +33,8 @@ The Rust workspace contains four crates:
   embedded local web app, named USB and RAW TCP output, passive printer
   inventory, and platform-native machine configuration.
 - `escpost-python` exposes coarse-grained rendering functions through PyO3.
+- `escpost-usbprint` isolates Windows USB printer enumeration and cancellable
+  device writes behind a safe Rust API.
 
 The rendering crate performs pure computation and depends on no
 operating-system interface — no networking, hardware, filesystem, or clock
@@ -179,6 +181,7 @@ renderer or require a printer profile.
 ```text
 configured printer name → target preflight → load and decode source
                                                    ├── nusb bulk OUT
+                                                   ├── Windows USBPRINT
                                                    └── RAW TCP socket
 ```
 
@@ -193,6 +196,27 @@ the interface is released. The optional configured serial number distinguishes
 devices with equal VID/PID values. A buffered bulk writer waits for every
 submitted transfer to complete and applies a ten-second timeout to each
 blocking transfer.
+
+On Windows, physical device selection still uses `nusb` and the saved VID/PID,
+serial, interface, and endpoint. Before claiming the interface, the transport
+looks for a matching live USBPRINT device interface. The existing Windows
+`usbprint.sys` driver then carries the bytes directly, without a print queue or
+driver replacement. Devices without a matching USBPRINT function continue
+through nusb/WinUSB. A failed open or transfer never triggers backend fallback.
+
+The `escpost-usbprint` crate isolates native Windows FFI behind safe enumeration
+and `Write` APIs. A separate crate preserves the application's
+`unsafe_code = "forbid"` policy: only the wrapper's private native module allows
+unsafe code. The application retains printer selection and configuration;
+the wrapper owns native enumeration and I/O resource lifetimes. It is compiled
+into the same executable, with no extra DLL or helper program to distribute.
+See the [crate README](../crates/escpost-usbprint/README.md) for the safety contract
+and independent native tests. Composite functions are matched within the selected
+device's own tree. The configured endpoint must match the printer interface's
+single bulk OUT endpoint. Each overlapped write has a ten-second deadline;
+timeout/error cleanup cancels and drains pending I/O before releasing its owned
+buffers. A failed writer refuses further writes. This path is shared by CLI
+file/stdin printing and HTTP printing. Spooler queue integration is deferred.
 
 The RAW TCP implementation connects directly to the configured host and port,
 writes the source bytes once, and shuts down the connection without a separate

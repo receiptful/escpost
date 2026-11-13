@@ -1,0 +1,16 @@
+[package]
+name = "escpost-usbprint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Safe Windows USB printer device access for ESCPost"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_System_Pipes"] }
+
+# The application keeps its workspace-wide unsafe-code prohibition. Only this
+# crate's private native module may call the Windows APIs, behind a safe API.
+[lints.rust]
+unsafe_code = "deny"

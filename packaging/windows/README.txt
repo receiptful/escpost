@@ -35,10 +35,12 @@ a verified publisher signature. A new unsigned version may show warnings again.
 
 Printing and configuration
 --------------------------
-RAW TCP and direct USB printing are included. On Windows the USB interface
-needs WinUSB; replacing its vendor driver can disrupt ordinary Windows printing.
-The installer does not install or replace printer drivers. Printing through
-existing Windows printer queues (the Windows spooler) is not supported yet.
+RAW TCP and direct USB printing are included. Compatible USB printers use
+Windows' built-in USB printing driver (usbprint.sys) automatically. No separate
+driver or print queue setup is needed. Devices already using WinUSB keep that
+driver. Neither ESCPost nor the installer installs or replaces printer drivers.
+Printing through existing Windows queues (the spooler) is not supported yet;
+avoid simultaneous printing to the same device from other applications.
 
 Configuration defaults to %APPDATA%\receiptful\escpost\config\ and is preserved
 on upgrades and uninstall. Uninstall removes only the PATH entry it added.

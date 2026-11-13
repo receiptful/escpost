@@ -239,6 +239,9 @@ while printf 'Hello\n\n\n'; do sleep 2; done | escpost print
 Chunks are not receipt boundaries: the producer supplies any initialization,
 line feeds, or cuts. The printer may buffer data until it receives those commands.
 An input or printer error stops the stream without replaying bytes already sent.
+On Windows, compatible USB printers use the built-in `usbprint.sys` driver
+automatically; ordinary USB configurations work without a print queue or driver
+replacement. Devices already using WinUSB continue to use that driver.
 Files and `--format hex` stdin remain buffered, so decoding errors are reported
 before any bytes are printed.
 

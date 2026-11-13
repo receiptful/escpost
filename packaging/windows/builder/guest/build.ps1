@@ -33,7 +33,7 @@ try {
     # dep-info can otherwise keep pointing at a previous, retained snapshot.
     # Rebuild our crates; keep downloaded and compiled third-party dependencies.
     Invoke-Checked $cargo @("+$($toolchain.rust)", 'clean', '--target', $target,
-        '-p', 'escpost', '-p', 'escpost-render', '-p', 'escpost-profiles')
+        '-p', 'escpost', '-p', 'escpost-render', '-p', 'escpost-profiles', '-p', 'escpost-usbprint')
     Invoke-Checked $cargo @("+$($toolchain.rust)", 'test', '--locked', '--no-fail-fast', '--workspace', '--exclude', 'escpost-python', '--target', $target)
     Invoke-Checked $cargo @("+$($toolchain.rust)", 'build', '--locked', '--release', '-p', 'escpost', '--target', $target)
     $exe = Join-Path $env:CARGO_TARGET_DIR "$target\release\escpost.exe"

@@ -241,6 +241,7 @@ impl CliError {
 
     /// Delegate USB-open permission classification to the factual application
     /// failure. Adapter failures cannot represent this condition.
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn is_permission_denied_usb_open(&self) -> bool {
         match self {
             Self::Application(error) => error.is_permission_denied_usb_open(),

@@ -147,9 +147,10 @@ in `%APPDATA%\receiptful\escpost\config`. Open a new terminal after installation
 Inno Setup handles running applications through its normal close-applications
 workflow; the installer does not kill every process named `escpost.exe`.
 
-Direct USB and RAW TCP remain part of the executable. Windows direct USB requires
-WinUSB and physical testing with the target printer. The installer does not
-replace printer drivers. The Windows spooler backend is deferred in
+Direct USB and RAW TCP remain part of the executable. For USB printer-class
+devices, ESCPost uses Windows' built-in `usbprint.sys` driver directly, without
+a print queue or driver replacement. Devices already using WinUSB retain the
+existing backend. The Windows spooler backend is deferred in
 [`docs/TODO.md`](../../docs/TODO.md).
 
 ## Unsigned distribution
@@ -306,11 +307,15 @@ just packaging windows tester start
 Windows controls the device while attached, so host applications must not use it
 simultaneously. The optional Compose override exposes the USB bus to the container;
 QEMU forwards only the selected device to the guest. Windows may initially choose
-a vendor or USB printing driver. ESCPost's direct USB backend needs WinUSB on the
-printer interface; arranging passthrough does not install or replace that driver.
-Driver changes inside Windows require administrator access and affect the tester
-disk, not the Linux host. Once configured, run `escpost printers list` or use the
+a vendor or USB printing driver. ESCPost automatically uses `usbprint.sys` for
+compatible printer interfaces and retains WinUSB support for devices already
+using it. Neither passthrough nor ESCPost installs or replaces a driver.
+Once configured, run `escpost printers list` or use the
 workbench to register and print to the printer.
+
+For repeatable physical checks through Windows' built-in USB printer driver,
+see [the USBPRINT checks](tester/probes/README.md). They use a separately copied
+executable and an isolated printer configuration.
 
 First-use provisioning always creates and seals the clean baseline **without USB**,
 then attaches the selected device when starting the working disk. `reset` and

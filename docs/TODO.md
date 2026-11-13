@@ -405,6 +405,8 @@ rules are specified in `CLI.md`.
       printer queues without replacing their drivers. This is follow-up work
       and is not required for the initial Windows executable and Inno Setup
       installer; those retain the existing direct USB and RAW TCP backends.
+      Include coordination with concurrent Windows queue jobs; direct USBPRINT
+      output does not provide queue serialization.
       See [Windows platform support](PLATFORMS.md#windows).
 - [ ] Add versioned `--json` inventory output. (`CLI-M04`)
 - [ ] Add `--status connected|unavailable` filtering when inventories become

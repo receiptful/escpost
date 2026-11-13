@@ -9,6 +9,12 @@ use thiserror::Error;
 /// recovery guidance when they translate an application failure for a user.
 #[derive(Debug, Error)]
 pub(crate) enum ApplicationError {
+    #[cfg(windows)]
+    #[error("Windows USB printer {operation} failed: {source}")]
+    WindowsUsbPrinter {
+        operation: &'static str,
+        source: std::io::Error,
+    },
     #[error("could not load the embedded printer profiles: {0}")]
     LoadProfiles(String),
 

@@ -172,7 +172,7 @@ sync_clock
 wait_ready
 printf 'Windows tester desktop: http://127.0.0.1:%s\n' "$viewer"
 if [[ "$usb_requested" == true ]]; then
-    printf 'USB attached: %s (reuse with --usb %s). Windows may need WinUSB for ESCPost; host printing is unavailable while attached.\n' "$usb_selection" "$usb_id"
+    printf 'USB attached: %s (reuse with --usb %s). Host printing is unavailable while attached to Windows.\n' "$usb_selection" "$usb_id"
 fi
 if [[ "$action" == start ]]; then
     if [[ -n "$installer" ]]; then

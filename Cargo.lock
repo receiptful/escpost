@@ -512,6 +512,7 @@ dependencies = [
  "directories",
  "escpost-profiles",
  "escpost-render",
+ "escpost-usbprint",
  "futures-core",
  "if-addrs",
  "indicatif",
@@ -567,6 +568,13 @@ dependencies = [
  "serde",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "escpost-usbprint"
+version = "0.4.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

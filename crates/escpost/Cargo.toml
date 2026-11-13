@@ -72,6 +72,7 @@ rustix.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winsafe.workspace = true
+escpost-usbprint.workspace = true
 
 # test-util unlocks tokio's mock clock (`start_paused`/`time::pause`), used to
 # drive retry-delay tests deterministically instead of waiting on real time.

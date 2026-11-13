@@ -15,6 +15,8 @@ use crate::configuration::{self, ConfiguredPrinter};
 
 pub(crate) mod cli;
 pub(crate) mod http;
+#[cfg(windows)]
+mod usbprint;
 
 const USB_WRITE_BUFFER_BYTES: usize = 16 * 1024;
 const STREAM_READ_BUFFER_BYTES: usize = 16 * 1024;
@@ -133,7 +135,7 @@ pub(crate) async fn print(request: Request) -> application::Result<Response> {
     match &target {
         Target::Usb(target) => {
             let target = target.clone();
-            run_blocking_usb(move || NusbTransport.send(&target, &request.bytes)).await?;
+            run_blocking_usb(move || UsbDeviceTransport.send(&target, &request.bytes)).await?;
         }
         Target::Network(target) => send_network(target, &request.bytes).await?,
     }
@@ -265,16 +267,40 @@ async fn write_network_chunk(
     })
 }
 
-struct NusbTransport;
+struct UsbDeviceTransport;
 
-impl UsbTransport for NusbTransport {
+impl UsbTransport for UsbDeviceTransport {
     fn send(&mut self, target: &UsbTarget, data: &[u8]) -> application::Result<()> {
         let mut writer = open_usb_writer(target)?;
         write_usb_chunk(&mut writer, target, data)
     }
 }
 
-fn open_usb_writer(target: &UsbTarget) -> application::Result<nusb::io::EndpointWrite<Bulk>> {
+enum UsbWriter {
+    Direct(nusb::io::EndpointWrite<Bulk>),
+    #[cfg(windows)]
+    Windows(escpost_usbprint::Writer),
+}
+
+impl Write for UsbWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Direct(writer) => writer.write(bytes),
+            #[cfg(windows)]
+            Self::Windows(writer) => writer.write(bytes),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Direct(writer) => writer.flush(),
+            #[cfg(windows)]
+            Self::Windows(writer) => writer.flush(),
+        }
+    }
+}
+
+fn open_usb_writer(target: &UsbTarget) -> application::Result<UsbWriter> {
     let matches: Vec<_> = nusb::list_devices()
         .wait()
         .map_err(ApplicationError::EnumerateUsb)?
@@ -296,6 +322,12 @@ fn open_usb_writer(target: &UsbTarget) -> application::Result<nusb::io::Endpoint
             product_id: target.product_id,
             source: source.into(),
         })?;
+    // Select the native driver before sending anything. A failed open or write
+    // must never trigger a fallback that might duplicate part of a receipt.
+    #[cfg(windows)]
+    if let Some(writer) = usbprint::open(&device_info, &device, target)? {
+        return Ok(UsbWriter::Windows(writer));
+    }
     // On Linux this temporarily detaches a kernel driver such as usblp.
     // nusb reattaches that driver when the claimed interface is dropped.
     let interface = device
@@ -312,9 +344,11 @@ fn open_usb_writer(target: &UsbTarget) -> application::Result<nusb::io::Endpoint
             endpoint: target.out_endpoint,
             source: source.into(),
         })?;
-    Ok(endpoint
-        .writer(USB_WRITE_BUFFER_BYTES)
-        .with_write_timeout(USB_TRANSFER_TIMEOUT))
+    Ok(UsbWriter::Direct(
+        endpoint
+            .writer(USB_WRITE_BUFFER_BYTES)
+            .with_write_timeout(USB_TRANSFER_TIMEOUT),
+    ))
 }
 
 fn write_usb_chunk(

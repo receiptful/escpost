@@ -4,6 +4,7 @@ members = [
     "crates/escpost",
     "python/rust",
     "crates/escpost-profiles",
+    "crates/escpost-usbprint",
 ]
 resolver = "3"
 
@@ -22,6 +23,7 @@ directories = "6.0.0"
 encoding_rs = "0.8.35"
 escpost-profiles = { version = "0.4.0", path = "crates/escpost-profiles" }
 escpost-render = { version = "0.4.0", path = "crates/escpost-render" }
+escpost-usbprint = { version = "0.4.0", path = "crates/escpost-usbprint" }
 fontdue = "0.9.3"
 futures-core = "0.3"
 if-addrs = "0.14"
@@ -48,6 +50,7 @@ toml = "1.1"
 uuid = { version = "1", features = ["v4"] }
 vt100 = "0.15.2"
 winsafe = { version = "0.0.29", features = ["kernel"] }
+windows-sys = "0.61.2"
 webbrowser = { version = "1.2.1", features = ["hardened"] }
 
 [workspace.lints.rust]

@@ -83,10 +83,16 @@ The installed ESCPost executable discovered interface 0 and endpoints `0x03`
 (OUT) and `0x81` (IN) as the non-administrator Tester user. Windows had assigned
 Microsoft's `usbprint` driver; a direct USB print attempt failed with
 "incompatible driver is installed for this device". No driver was replaced and
-physical printing is not verified. Evidence is retained locally under
+physical printing was not verified in that initial run. Evidence is retained locally under
 `packaging/windows/tester/.state/runs/usb-20261112-BXfwYk/`. Reproduce discovery
 with `just packaging windows tester start --usb`, then
 `escpost printers discover --transport usb` inside Windows.
+
+Later on 2026-11-12, direct `usbprint.sys` output was physically confirmed on
+both NT-5890K (`0416:5011`) and MUNBYN/Printer-80 (`0483:5743`) in the Windows 11
+tester. File and streaming writes passed as the standard Tester user with the
+spooler running and stopped, without installing or replacing a driver. See the
+[physical test record](../packaging/windows/tester/probes/RESULTS.md).
 
 macOS builds have not yet been verified by ESCPost. The virtual IP printer is
 implemented; the native Windows spooler remains planned work.
@@ -323,7 +329,7 @@ problems.
 
 ### Windows RAW spooler
 
-Planned default for printing to an installed Windows printer.
+Planned follow-up for printing through an installed Windows printer queue.
 
 The equivalent python-escpos backend uses the native Win32 printing API to open
 a configured printer, start a document with data type `RAW`, and write the
@@ -334,7 +340,7 @@ Expected advantages:
 - works with a printer already visible in Windows;
 - avoids replacing its driver;
 - coexists with ordinary Windows printing workflows; and
-- offers the lowest-friction ESCPost installation.
+- coordinates queued jobs with other Windows applications.
 
 Expected limitations:
 
@@ -345,30 +351,29 @@ Expected limitations:
 
 ### Windows direct USB
 
-Implemented but unverified advanced output backend. Discovery has been verified
-for the NT-5890K in the Windows tester; physical output and bidirectional
-protocol behavior still need hardware verification with a compatible driver.
+USB printer-class devices use Windows' built-in `usbprint.sys` driver directly.
+There is no queue setup, driver replacement, or separate helper app. Use the
+ordinary USB registration and printing commands; configuration remains
+`transport = "usb"` with VID/PID, serial, interface, and endpoint.
 
-Known caveats:
+The transport selects a live USBPRINT interface on the uniquely matched physical
+device, validates the configured interface/endpoint, and writes through Windows
+overlapped I/O. Each transfer has a ten-second deadline. Cancellation drains
+pending operations before releasing buffers; a malfunctioning kernel driver can
+delay cleanup. No data is replayed after a transfer error.
 
-- The current `nusb` backend uses the Windows USB API without a libusb DLL.
-- The printer interface normally needs a compatible WinUSB or libusbK driver.
-- Installing WinUSB with a tool such as Zadig can replace the driver used by
-  the ordinary Windows printer queue.
-- WinUSB generally permits only one application to own the interface at a
-  time.
-- Direct USB mode must show a clear warning before asking a developer to
-  change drivers.
+Devices already using WinUSB keep the nusb path. ESCPost chooses the backend
+before opening a transfer and never changes the device's driver. Both paths use
+only Windows system DLLs. Bidirectional USBPRINT status is not implemented.
 
-ESCPost should default to the spooler when both paths are possible. Direct USB
-should be an explicit developer choice.
+The spooler need not be running or stopped for direct output. Coordination with
+concurrent Windows queue jobs remains deferred with the spooler backend.
 
 ### Containers
 
 Docker Desktop runs Linux containers inside a virtual machine. Passing a
 Windows USB printer into the current Linux Compose service is not a supported
-hardware workflow. Use a host-native Windows executable after its direct-USB
-path is verified.
+hardware workflow. Use the host-native Windows executable for direct USB output.
 
 The separate Windows tester runs under QEMU on a **Linux host**, and can forward
 a selected host USB device into its Windows guest. Use
@@ -388,8 +393,8 @@ belong in the issue tracker.
 | Linux RAW TCP | Verified through Docker with physical Munbyn ITPP047 output | Generic TCP success alone cannot confirm paper output | Add optional model-specific status checks separately from printing |
 | macOS direct USB | Unverified | Backend packaging and interface claiming need hardware evidence | Test the host-native Rust binary |
 | macOS Docker USB | Unsupported for the physical workflow | Docker Desktop does not mirror Linux host USB access | Use the host-native binary |
-| Windows spooler | Planned | RAW byte preservation and completion semantics need tests | Make this the default Windows print path |
-| Windows direct USB | Implemented, unverified | May require replacing the printer driver with WinUSB | Verify named USB output through the native Rust executable |
+| Windows spooler | Planned | RAW byte preservation and completion semantics need tests | Add queue integration separately |
+| Windows direct USB | Verified on two printers with USBPRINT | Concurrent queue jobs and broader hardware coverage remain unverified | Use the built-in driver without manual setup |
 | Windows direct USB status | Unverified | Driver and exclusive-access behavior vary | Test replies on representative printers |
 | Windows Docker USB | Unsupported for the physical workflow | Printer is outside the Linux VM | Use the host-native binary |
 | Classic Bluetooth serial | Planned | OS pairing and RFCOMM naming vary | Treat an exposed port as serial |
