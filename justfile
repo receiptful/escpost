@@ -101,7 +101,54 @@ publish version: (_require-release-branch) (_require-clean-worktree) (set-versio
      printf '  - pushed the commit and the tag to origin\n'; \
      printf '  - published the crates to crates.io\n'; \
      printf '\nNext: run `just release {{version}}` in receiptful/homebrew-tap\n'; \
-     printf 'to point the Homebrew formula at this release.\n'
+     printf 'to point the Homebrew formula at this release.\n'; \
+     printf 'For Windows: `just packaging windows build`, verify the installer,\n'; \
+     printf 'then `just gh-release {{version}}`.\n'
+
+# Cut the GitHub release for a tag that `just publish` already pushed, and
+# attach the Windows artifacts that `just packaging windows build` made from
+# that tag. It builds nothing: a release filename has no `-dev` suffix, and the
+# build makes such a file only from a clean checkout at the tag.
+#
+# Resumable: the release is created when it is missing; a second run replaces
+# the attached files.
+[doc("Create the GitHub release for a pushed tag and attach the Windows installer.")]
+gh-release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version={{quote(version)}}
+    tag="v$version"
+    directory=dist/windows
+    base="escpost-$version-windows-x64"
+    files=("$base-setup.exe" "$base.zip" "$base-SHA256SUMS")
+
+    for file in "${files[@]}"; do
+        test -f "$directory/$file" || {
+            echo "Missing $directory/$file."
+            echo
+            echo "Build and verify the Windows artifacts from the tag, then run this again:"
+            echo
+            echo "    git checkout $tag"
+            echo "    just packaging windows build"
+            echo "    just packaging windows verify $directory/$base-setup.exe"
+            echo "    just gh-release $version"
+            exit 1
+        }
+    done
+    (cd "$directory" && sha256sum --check --quiet "$base-SHA256SUMS")
+    git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null || {
+        echo "Tag $tag is not on origin. Run 'just publish $version' first."
+        exit 1
+    }
+
+    assets=("${files[@]/#/$directory/}")
+    if gh release view "$tag" > /dev/null 2>&1; then
+        gh release upload "$tag" "${assets[@]}" --clobber
+    else
+        gh release create "$tag" "${assets[@]}" --verify-tag --title "$version" \
+            --generate-notes --notes "The Windows installer and ZIP are not code-signed. SmartScreen can show a warning for an unknown publisher; see [packaging/windows/README.md](https://github.com/receiptful/escpost/blob/$tag/packaging/windows/README.md)."
+    fi
+    gh release view "$tag" --json url --jq .url
 
 # Releases are cut from main: the recipe commits, tags, and pushes, so running
 # it elsewhere would tag the wrong history. Being behind the remote is refused
