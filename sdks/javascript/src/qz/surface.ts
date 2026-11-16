@@ -149,10 +149,59 @@ export async function printerGeometry(client: EscpostClient, printer: Printer): 
   return profiles.find((profile) => profile.id === printer.profile);
 }
 
+/**
+ * How long one `printers.list()` answer serves the shim, counted from when it
+ * arrives. escpost serve contacts every saved printer for each list, which
+ * takes seconds when a network printer is unreachable, and a QZ page asks for
+ * the list twice per receipt: `qz.printers.find()`, then `qz.print()`. Five
+ * seconds is how often escpost serve's own printer monitor refreshes the list.
+ */
+export const PRINTER_LIST_REUSE_MS = 5_000;
+
+/**
+ * `client.printers.list()`, reused for PRINTER_LIST_REUSE_MS. Callers that ask
+ * while a request is on its way share it. A failed request is never reused,
+ * and `forget()` makes the next caller ask ESCPost again.
+ */
+function reusedPrinterList(client: EscpostClient) {
+  type Answer = { printers: Promise<Printer[]>; receivedAt?: number };
+  let latest: Answer | undefined;
+
+  const isFresh = (answer: Answer | undefined): answer is Answer =>
+    answer !== undefined &&
+    (answer.receivedAt === undefined || Date.now() - answer.receivedAt < PRINTER_LIST_REUSE_MS);
+
+  return {
+    get(): Promise<Printer[]> {
+      if (isFresh(latest)) return latest.printers;
+      const answer: Answer = {
+        printers: client.printers.list().then(({ printers }) => {
+          answer.receivedAt = Date.now();
+          return printers;
+        }),
+      };
+      answer.printers.catch(() => {
+        if (latest === answer) latest = undefined;
+      });
+      latest = answer;
+      return answer.printers;
+    },
+
+    forget(): void {
+      latest = undefined;
+    },
+  };
+}
+
 /** Resolve the printer the page asked for, then draw the job for it and send its bytes. */
-async function sendJob(client: EscpostClient, config: ShimConfig, elements: unknown[]): Promise<void> {
+async function sendJob(
+  client: EscpostClient,
+  listPrinters: () => Promise<Printer[]>,
+  config: ShimConfig,
+  elements: unknown[],
+): Promise<void> {
   const requested = printerNameFrom(config.getPrinter());
-  const { printers } = await client.printers.list();
+  const printers = await listPrinters();
   const resolved = matchPrinter(requested, printers);
   if (resolved === undefined) throw unknownPrinter(requested, printers);
 
@@ -169,6 +218,7 @@ export function createQzShim(client: EscpostClient = escpost) {
   let connected = false;
   let closedCallbacks: Array<(event: unknown) => void> = [];
   let errorCallbacks: Array<(event: unknown) => void> = [];
+  const printerList = reusedPrinterList(client);
 
   function assertActive(): void {
     // The same words qz-tray.js:797 uses, so an integration matching on the message still matches.
@@ -196,8 +246,10 @@ export function createQzShim(client: EscpostClient = escpost) {
       const config = configList[Math.min(index, configList.length - 1)]!;
       const elements = dataList[Math.min(index, dataList.length - 1)]!;
       try {
-        await sendJob(client, config, elements);
+        await sendJob(client, printerList.get, config, elements);
       } catch (error) {
+        // The printer may have been unplugged or renamed: the next job asks ESCPost again.
+        printerList.forget();
         if (!resumeOnError) throw error;
         errors.push(error);
       }
@@ -231,6 +283,7 @@ export function createQzShim(client: EscpostClient = escpost) {
       disconnect(): Promise<void> {
         if (!connected) return Promise.reject(new Error("No open connection with QZ Tray"));
         connected = false;
+        printerList.forget();
         for (const callback of closedCallbacks) callback({ type: "close", code: 1000, reason: "" });
         return Promise.resolve();
       },
@@ -275,7 +328,7 @@ export function createQzShim(client: EscpostClient = escpost) {
       // QZ's optional signature and timestamp arguments are accepted and ignored.
       async find(query?: string | null, ..._signing: unknown[]): Promise<string[] | string> {
         assertActive();
-        const { printers } = await client.printers.list();
+        const printers = await printerList.get();
         if (query === undefined || query === null) return printers.map((printer) => printer.name);
 
         const matched = matchPrinter(query, printers);
@@ -286,7 +339,7 @@ export function createQzShim(client: EscpostClient = escpost) {
       // ESCPost has no default printer, so the first connected one plays that role.
       async getDefault(..._signing: unknown[]): Promise<string | null> {
         assertActive();
-        const { printers } = await client.printers.list();
+        const printers = await printerList.get();
         return printers.find((printer) => printer.availability === "connected")?.name ?? null;
       },
 
