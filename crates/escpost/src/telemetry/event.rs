@@ -100,15 +100,18 @@ pub(crate) fn flag_names(matches: &ArgMatches) -> Vec<String> {
 
 fn collect_flag_names(command: &Command, matches: &ArgMatches, names: &mut BTreeSet<String>) {
     for id in matches.ids() {
-        if matches.value_source(id.as_str()) != Some(ValueSource::CommandLine) {
-            continue;
-        }
+        // Clap copies a global option into every level, also into levels above
+        // the one that defines it. Ask only about ids this level defines: a
+        // debug build of clap panics on any other id.
         let Some(argument) = command
             .get_arguments()
             .find(|argument| argument.get_id() == id)
         else {
             continue;
         };
+        if matches.value_source(id.as_str()) != Some(ValueSource::CommandLine) {
+            continue;
+        }
         if let Some(long) = argument.get_long() {
             names.insert(long.to_owned());
         }
@@ -201,6 +204,21 @@ mod tests {
         let flags = flag_names(&matches);
 
         assert_eq!(flags, ["non-interactive", "subnet"]);
+    }
+
+    #[test]
+    fn a_global_option_of_a_subcommand_is_a_flag() {
+        // `--config` is global from `printers` down. Clap also copies it up to
+        // the root level, where no argument has that id; a debug build of clap
+        // panics when it is asked about an id the level does not have.
+        for arguments in [
+            ["escpost", "printers", "list", "--config", "printers.toml"],
+            ["escpost", "printers", "--config", "printers.toml", "list"],
+        ] {
+            let matches = matches_for(&arguments);
+
+            assert_eq!(flag_names(&matches), ["config"]);
+        }
     }
 
     #[test]
