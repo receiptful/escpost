@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+"""Write the "What's Changed" notes for a release tag to stdout.
+
+GitHub's generated notes list merged pull requests only, so a commit that was
+pushed to main without a pull request is missing from them. This builds one
+list from the commits between the previous tag and this tag: a pull request
+links to the pull request, a direct commit links to the commit.
+
+A direct commit is listed only when it changes shipped code. Changes to tests
+of the packaging, to documents, and to repository tooling are left out, and so
+is the commit that sets the version. Edit the release on GitHub when the list
+needs a different selection.
+"""
+
+import json
+import re
+import subprocess
+import sys
+
+
+# A direct commit must touch one of these to be in the notes.
+SHIPPED_PATHS = ("crates", "sdks", "browser-extension", "python")
+PULL_REQUEST = re.compile(r"^(.*) \(#([0-9]+)\)$")
+# `feat(cli): `, `fix: `: the list reads better without the prefix.
+PREFIX = re.compile(r"^[a-z]+(\([a-z0-9-]+\))?!?: ")
+
+
+def run(*command: str) -> str:
+    return subprocess.run(command, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def api(path: str, *fields: str) -> dict:
+    arguments = [argument for field in fields for argument in ("-f", field)]
+    return json.loads(run("gh", "api", path, *arguments))
+
+
+def title(subject: str) -> str:
+    subject = PREFIX.sub("", subject)
+    return subject[:1].upper() + subject[1:]
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(f"usage: {sys.argv[0].split('/')[-1]} TAG", file=sys.stderr)
+        return 2
+    tag = argv[0]
+    version = tag.removeprefix("v")
+    previous = run("git", "describe", "--tags", "--abbrev=0", f"{tag}^")
+    repository = run("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    url = f"https://github.com/{repository}"
+
+    log = run("git", "log", "--no-merges", "--reverse", "--format=%H%x09%s", f"{previous}..{tag}")
+    shipped = set(
+        run("git", "log", "--no-merges", "--format=%H", f"{previous}..{tag}", "--", *SHIPPED_PATHS).split()
+    )
+
+    lines = []
+    for entry in log.splitlines():
+        commit, subject = entry.split("\t", 1)
+        pull_request = PULL_REQUEST.match(subject)
+        if pull_request:
+            subject, link = pull_request.group(1), f"{url}/pull/{pull_request.group(2)}"
+        elif commit not in shipped or subject.endswith(f" {version}"):
+            continue
+        else:
+            link = f"{url}/commit/{commit[:7]}"
+        author = api(f"repos/{repository}/commits/{commit}").get("author") or {}
+        by = f" by @{author['login']}" if author.get("login") else ""
+        lines.append(f"* {title(subject)}{by} in {link}")
+
+    # GitHub still writes the parts it knows best: the new contributors and
+    # the link to the full comparison.
+    generated = api(
+        f"repos/{repository}/releases/generate-notes",
+        f"tag_name={tag}",
+        f"previous_tag_name={previous}",
+    )["body"].replace("\r\n", "\n")
+    tail = ""
+    for heading in ("## New Contributors", "**Full Changelog**"):
+        if heading in generated:
+            tail = generated[generated.index(heading) :]
+            break
+
+    print("## What's Changed")
+    print("\n".join(lines))
+    if tail:
+        print()
+        print(tail.rstrip())
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (ValueError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", "") or ""
+        print(f"error: {error}\n{detail}".rstrip(), file=sys.stderr)
+        sys.exit(1)

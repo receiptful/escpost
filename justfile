@@ -144,11 +144,15 @@ gh-release version:
     assets=("${files[@]/#/$directory/}")
     if gh release view "$tag" > /dev/null 2>&1; then
         gh release upload "$tag" "${assets[@]}" --clobber
+        gh release view "$tag" --json url --jq .url
     else
+        # GitHub's generated notes list pull requests only. This list also has
+        # the commits that were pushed to main without one.
+        changes=$(scripts/release-notes "$tag")
+        unsigned="The Windows installer and ZIP are not code-signed. SmartScreen can show a warning for an unknown publisher; see [packaging/windows/README.md](https://github.com/receiptful/escpost/blob/$tag/packaging/windows/README.md)."
         gh release create "$tag" "${assets[@]}" --verify-tag --title "$version" \
-            --generate-notes --notes "The Windows installer and ZIP are not code-signed. SmartScreen can show a warning for an unknown publisher; see [packaging/windows/README.md](https://github.com/receiptful/escpost/blob/$tag/packaging/windows/README.md)."
+            --notes "$unsigned"$'\n\n'"$changes"
     fi
-    gh release view "$tag" --json url --jq .url
 
 # Releases are cut from main: the recipe commits, tags, and pushes, so running
 # it elsewhere would tag the wrong history. Being behind the remote is refused
