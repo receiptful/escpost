@@ -20,8 +20,8 @@ data.
 
 The extension ID is part of this protocol because Chrome requires websites to
 locate the extension iframe. Unpacked builds use the public `key` in the
-Chrome manifest so their ID is stable. A Chrome Web Store release must update
-that public key and the SDK's default extension ID together.
+Chrome manifest so their ID is stable. That key gives the ID that the SDK uses
+by default, thus an unpacked build and the SDK agree without configuration.
 
 Making the bridge page available to HTTP and HTTPS sites does not authorize
 printing. The bridge reads the parent origin from the browser's message event,
