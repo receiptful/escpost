@@ -97,10 +97,10 @@ publish version='' source_ref='':
       exit 0
     fi
 
-    bun install --frozen-lockfile
-    bun run test
-    bun run typecheck
-    npm publish --dry-run --access public
+    # Test and build with the pinned container runtime, as in local development.
+    # Skip npm's prepack hook so it does not rebuild with the host toolchain.
+    docker compose run --rm test
+    npm publish --dry-run --ignore-scripts --access public
 
     printf '\nPublish %s@%s from %s to npm? [y/N] ' "$package_name" "$requested_version" "$source_ref"
     read -r reply
@@ -109,4 +109,4 @@ publish version='' source_ref='':
       *) echo "Aborted."; exit 1 ;;
     esac
 
-    npm publish --access public
+    npm publish --ignore-scripts --access public
