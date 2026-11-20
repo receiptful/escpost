@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vitest";
-import { createQzShim, installQzShim, printerGeometry, type EscpostClient } from "../src/qz/surface";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createQzShim,
+  installQzShim,
+  printerGeometry,
+  PRINTER_LIST_REUSE_MS,
+  type EscpostClient,
+} from "../src/qz/surface";
 import type { Printer, PrinterProfile } from "../src/index";
 
 function printer(name: string, availability: Printer["availability"] = "connected", profile: string | null = null): Printer {
@@ -30,9 +36,14 @@ function fakeClient(options: {
   printers?: Printer[];
   profiles?: PrinterProfile[];
   printErrors?: Record<string, Error>;
+  /** Moves the clock forward this much while ESCPost answers each printer list. */
+  listTakesMs?: number;
+  /** How many printer lists fail before one succeeds. */
+  listFailures?: number;
 } = {}) {
   const calls: Array<{ method: string; argument?: unknown }> = [];
   const printers = options.printers ?? PRINTERS;
+  let listFailures = options.listFailures ?? 0;
   const client: EscpostClient = {
     async isAvailable() {
       calls.push({ method: "isAvailable" });
@@ -41,6 +52,11 @@ function fakeClient(options: {
     printers: {
       async list() {
         calls.push({ method: "printers.list" });
+        if (options.listTakesMs !== undefined) vi.setSystemTime(Date.now() + options.listTakesMs);
+        if (listFailures > 0) {
+          listFailures -= 1;
+          throw new Error("escpost serve stopped");
+        }
         return { updatedAt: "2026-10-15T00:00:00Z", warning: null, printers };
       },
       subscribe() {
@@ -272,6 +288,70 @@ describe("printing", () => {
     expect(options.units).toBe("in");
     expect(options.colorType).toBe("color");
     expect("spool" in options).toBe(true);
+  });
+});
+
+describe("reusing the printer list", () => {
+  // Only the clock is faked: the shim's promises still run.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const listCalls = (calls: Array<{ method: string }>) => calls.filter((call) => call.method === "printers.list").length;
+
+  it("asks ESCPost once for printers.find followed by qz.print, the usual QZ page", async () => {
+    const { qz, calls, printed } = await connectedShim();
+    const found = await qz.printers.find("TM-T20");
+    await qz.print(qz.configs.create(found), ["\x1b@"]);
+    expect(listCalls(calls)).toBe(1);
+    expect(printed()).toHaveLength(1);
+  });
+
+  it("counts the reuse from the answer, so a slow list still serves the print that follows", async () => {
+    const { qz, calls } = await connectedShim({ listTakesMs: PRINTER_LIST_REUSE_MS });
+    await qz.printers.find("TM-T20");
+    await qz.print(qz.configs.create("TM-T20"), ["\x1b@"]);
+    expect(listCalls(calls)).toBe(1);
+  });
+
+  it("asks ESCPost again once the answer is older than the reuse time", async () => {
+    const { qz, calls } = await connectedShim();
+    await qz.printers.find("TM-T20");
+    vi.setSystemTime(Date.now() + PRINTER_LIST_REUSE_MS);
+    await qz.print(qz.configs.create("TM-T20"), ["\x1b@"]);
+    expect(listCalls(calls)).toBe(2);
+  });
+
+  it("shares one request between calls made while it is on its way", async () => {
+    const { qz, calls } = await connectedShim();
+    await Promise.all([qz.printers.find(), qz.printers.getDefault(), qz.printers.find("Kitchen")]);
+    expect(listCalls(calls)).toBe(1);
+  });
+
+  it("does not reuse a failed list", async () => {
+    const { qz, calls } = await connectedShim({ listFailures: 1 });
+    await expect(qz.printers.find()).rejects.toThrow("escpost serve stopped");
+    await expect(qz.printers.find()).resolves.toEqual(["TM-T20", "Kitchen"]);
+    expect(listCalls(calls)).toBe(2);
+  });
+
+  it("asks ESCPost again after a failed print, in case the printer was unplugged", async () => {
+    const { qz, calls } = await connectedShim({ printErrors: { "TM-T20": new Error("TM-T20 is offline") } });
+    await expect(qz.print(qz.configs.create("TM-T20"), ["\x1b@"])).rejects.toThrow("TM-T20 is offline");
+    await qz.print(qz.configs.create("Kitchen"), ["\x1b@"]);
+    expect(listCalls(calls)).toBe(2);
+  });
+
+  it("asks ESCPost again after disconnect and connect", async () => {
+    const { qz, calls } = await connectedShim();
+    await qz.printers.find();
+    await qz.websocket.disconnect();
+    await qz.websocket.connect();
+    await qz.printers.find();
+    expect(listCalls(calls)).toBe(2);
   });
 });
 
